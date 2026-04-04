@@ -51,7 +51,8 @@ ws.onopen = () => {
     request_id: "req_hello_1",
     sent_at: new Date().toISOString(),
     payload: {
-      device_id: "macbook-main",
+      agent_id: "macbook-main:chat-codex",
+      machine_id: "macbook-main",
       hostname: "MacBook-Pro",
       version: "0.1.0",
       projects: [{ project_id: "chat-codex", root: "/Users/yuminghao/Downloads/chat-codex" }]
@@ -78,7 +79,7 @@ ws.onmessage = (e) => {
 curl -s http://127.0.0.1:8080/api/tasks \
   -H 'Content-Type: application/json' \
   -d '{
-    "device_id":"macbook-main",
+    "agent_id":"macbook-main:chat-codex",
     "project_id":"chat-codex",
     "parts":[
       {"type":"text","text":"继续实现设备连接模块"},
@@ -154,7 +155,8 @@ export OPENCODE_CONFIG_CONTENT='{
   "small_model": "xcodebest/gpt-5.4-mini"
 }'
 export OPENCODE_RELAY_URL=http://127.0.0.1:8080
-export OPENCODE_RELAY_DEVICE_ID=macbook-main
+export OPENCODE_RELAY_AGENT_ID=macbook-main:chat-codex
+export OPENCODE_RELAY_MACHINE_ID=macbook-main
 export OPENCODE_RELAY_PROJECT_ID=chat-codex
 export OPENCODE_RELAY_PROJECT_ROOT=/Users/yuminghao/Downloads/chat-codex
 export OPENCODE_SERVER_PASSWORD=
@@ -173,7 +175,7 @@ bun run src/index.ts serve --hostname 127.0.0.1 --port 4096
 curl -s http://127.0.0.1:8080/api/tasks \
   -H 'Content-Type: application/json' \
   -d '{
-    "device_id":"macbook-main",
+    "agent_id":"macbook-main:chat-codex",
     "project_id":"chat-codex",
     "parts":[
       {"type":"text","text":"请只回复: ok"}
@@ -224,7 +226,8 @@ ws.onopen = () => {
     request_id: "req_hello_approval_1",
     sent_at: new Date().toISOString(),
     payload: {
-      device_id: "approval-device",
+      agent_id: "approval-device:chat-codex",
+      machine_id: "approval-device",
       hostname: "Approval-Mock",
       version: "0.2.0",
       projects: [{ project_id: "chat-codex", root: "/Users/yuminghao/Downloads/chat-codex" }]
@@ -291,7 +294,7 @@ setTimeout(() => {}, 120000);
 curl -s http://127.0.0.1:8080/api/tasks \
   -H 'Content-Type: application/json' \
   -d '{
-    "device_id":"approval-device",
+    "agent_id":"approval-device:chat-codex",
     "project_id":"chat-codex",
     "parts":[{"type":"text","text":"测试审批流"}]
   }'
@@ -352,7 +355,8 @@ ws.onopen = () => {
     request_id: "req_hello_auto_1",
     sent_at: new Date().toISOString(),
     payload: {
-      device_id: "auto-approval-device",
+      agent_id: "auto-approval-device:chat-codex",
+      machine_id: "auto-approval-device",
       hostname: "Auto-Approval-Mock",
       version: "0.2.0",
       projects: [{ project_id: "chat-codex", root: "/Users/yuminghao/Downloads/chat-codex" }]
@@ -397,7 +401,7 @@ setTimeout(() => {}, 120000);
 curl -s http://127.0.0.1:8080/api/tasks \
   -H 'Content-Type: application/json' \
   -d '{
-    "device_id":"auto-approval-device",
+    "agent_id":"auto-approval-device:chat-codex",
     "project_id":"chat-codex",
     "parts":[{"type":"text","text":"测试自动审批事件"}]
   }'
@@ -471,7 +475,8 @@ export OPENCODE_CONFIG_CONTENT='{
   "logLevel": "DEBUG"
 }'
 export OPENCODE_RELAY_URL=http://127.0.0.1:8080
-export OPENCODE_RELAY_DEVICE_ID=macbook-main
+export OPENCODE_RELAY_AGENT_ID=macbook-main:chat-codex
+export OPENCODE_RELAY_MACHINE_ID=macbook-main
 export OPENCODE_RELAY_PROJECT_ID=chat-codex
 export OPENCODE_RELAY_PROJECT_ROOT=/Users/yuminghao/Downloads/chat-codex
 export OPENCODE_RELAY_PERMISSION_MODE=ask
@@ -493,7 +498,7 @@ rm -f /Users/yuminghao/Downloads/chat-codex/real-ask-approval.txt
 curl -s http://127.0.0.1:8080/api/tasks \
   -H 'Content-Type: application/json' \
   -d '{
-    "device_id":"macbook-main",
+    "agent_id":"macbook-main:chat-codex",
     "project_id":"chat-codex",
     "parts":[
       {
@@ -540,3 +545,208 @@ cat /Users/yuminghao/Downloads/chat-codex/real-ask-approval.txt
 
 - 2026-04-04 已验证真实 `serve` 审批链路 `waiting_approval -> approval_requested -> approval_applied -> completed`
 - 2026-04-04 已验证文件 `/Users/yuminghao/Downloads/chat-codex/real-ask-approval.txt` 被真实写入，内容为 `approved-by-real-ask`
+
+## 8. 验证多机多 agent 模型下的 agent 注册与按 agent 投递
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+再启动一个最小 agent 客户端：
+
+```bash
+node -e '
+const ws = new WebSocket("ws://127.0.0.1:8080/ws/device");
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "device.hello",
+    request_id: "req_hello_agent_1",
+    sent_at: new Date().toISOString(),
+    payload: {
+      agent_id: "macbook-main:project-a",
+      machine_id: "macbook-main",
+      hostname: "MacBook-Pro",
+      version: "0.3.0",
+      projects: [{ project_id: "project-a", root: "/Users/yuminghao/project-a" }]
+    }
+  }));
+};
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data.toString());
+  if (msg.type !== "task.run") return;
+  ws.send(JSON.stringify({
+    type: "task.started",
+    request_id: "req_started_agent_1",
+    sent_at: new Date().toISOString(),
+    payload: { task_id: msg.payload.task_id, session_id: "sess_agent_1" }
+  }));
+  ws.send(JSON.stringify({
+    type: "task.delta",
+    request_id: "req_delta_agent_1",
+    sent_at: new Date().toISOString(),
+    payload: { task_id: msg.payload.task_id, content: "agent working" }
+  }));
+  setTimeout(() => {
+    ws.send(JSON.stringify({
+      type: "task.completed",
+      request_id: "req_completed_agent_1",
+      sent_at: new Date().toISOString(),
+      payload: { task_id: msg.payload.task_id, session_id: "sess_agent_1", result: "done-by-agent" }
+    }));
+  }, 200);
+};
+setTimeout(() => {}, 120000);
+'
+```
+
+查询在线 agent：
+
+```bash
+curl -s http://127.0.0.1:8080/api/agents
+```
+
+然后按 `agent_id` 创建任务：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agent_id":"macbook-main:project-a",
+    "project_id":"project-a",
+    "parts":[{"type":"text","text":"请只回复 done-by-agent"}]
+  }'
+```
+
+记录返回的 `task_id` 后，查询任务和事件流：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
+```
+
+预期结果：
+
+- `GET /api/agents` 返回在线 `agent`
+- agent 列表中包含 `agent_id`、`machine_id`、`projects`
+- 创建任务接口必须使用 `agent_id`
+- 任务结果中包含 `agent_id`
+- 任务结果中包含 `machine_id`
+- 任务结果中包含 `project_root`
+- 最终状态为 `completed`
+- 最终 `result` 为 `done-by-agent`
+
+本次实测结果：
+
+- 2026-04-04 已验证 `GET /api/agents` 返回在线 agent
+- 2026-04-04 已验证 `POST /api/tasks` 按 `agent_id` 投递成功
+
+## 9. 验证真实 my-opencode serve 使用 agent 协议注册与投递
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+再在目录 `/Users/yuminghao/Downloads/chat-codex/my-opencode/packages/opencode` 下启动真实 `serve`：
+
+```bash
+export OPENCODE_CONFIG_CONTENT='{
+  "enabled_providers": ["xcodebest"],
+  "provider": {
+    "xcodebest": {
+      "name": "xcodebest",
+      "api": "https://api.xcode.best/v1",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "<YOUR_API_KEY>",
+        "baseURL": "https://api.xcode.best/v1"
+      },
+      "models": {
+        "gpt-5.4-mini": {
+          "name": "gpt-5.4-mini",
+          "id": "gpt-5.4-mini",
+          "tool_call": true,
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "permission": {
+        "bash": "ask",
+        "edit": "ask",
+        "read": "allow",
+        "list": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "todowrite": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    }
+  },
+  "model": "xcodebest/gpt-5.4-mini",
+  "small_model": "xcodebest/gpt-5.4-mini",
+  "logLevel": "DEBUG"
+}'
+export OPENCODE_RELAY_URL=http://127.0.0.1:8080
+export OPENCODE_RELAY_AGENT_ID=macbook-main:chat-codex
+export OPENCODE_RELAY_MACHINE_ID=macbook-main
+export OPENCODE_RELAY_PROJECT_ID=chat-codex
+export OPENCODE_RELAY_PROJECT_ROOT=/Users/yuminghao/Downloads/chat-codex
+export OPENCODE_RELAY_PERMISSION_MODE=ask
+export OPENCODE_SERVER_PASSWORD=
+export OPENCODE_DISABLE_DEFAULT_PLUGINS=1
+export OPENCODE_DISABLE_MODELS_FETCH=1
+export OPENCODE_DISABLE_AUTOUPDATE=1
+export OPENCODE_DISABLE_PROJECT_CONFIG=1
+export OPENCODE_DISABLE_CLAUDE_CODE=1
+export BUN_INSTALL_CACHE_DIR=/opt/homebrew/lib/node_cache
+bun run src/index.ts serve --hostname 127.0.0.1 --port 4096
+```
+
+确认在线 agent：
+
+```bash
+curl -s http://127.0.0.1:8080/api/agents
+```
+
+然后按 `agent_id` 创建一个真实文本任务：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agent_id":"macbook-main:chat-codex",
+    "project_id":"chat-codex",
+    "parts":[{"type":"text","text":"请只回复: ok-agent"}]
+  }'
+```
+
+记录返回的 `task_id` 后，查询结果和事件流：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
+```
+
+预期结果：
+
+- `GET /api/agents` 返回 `agent_id=macbook-main:chat-codex`
+- agent 列表中包含 `machine_id=macbook-main`
+- 创建任务返回中包含 `agent_id`
+- 创建任务返回中包含 `project_root`
+- 最终任务状态为 `completed`
+- 最终 `result` 为 `ok-agent`
+
+本次实测结果：
+
+- 2026-04-04 已验证真实 `serve` 用 `agent_id + machine_id` 注册成功
+- 2026-04-04 已验证真实文本任务 `task_1775279062624247000` 返回 `result=ok-agent`

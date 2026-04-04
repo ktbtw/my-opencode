@@ -32,6 +32,7 @@ func (a *App) Router() http.Handler {
 	h := api.New(a.store, a.broker)
 
 	r.Get("/healthz", h.Health)
+	r.Get("/api/agents", h.ListAgents)
 	r.Post("/api/tasks", h.CreateTask)
 	r.Get("/api/tasks/{taskID}", h.GetTask)
 	r.Get("/api/tasks/{taskID}/events", h.TaskEvents)
@@ -68,20 +69,29 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var hello model.HelloPayload
-	if err := json.Unmarshal(body, &hello); err != nil || hello.DeviceID == "" {
+	if err := json.Unmarshal(body, &hello); err != nil || (hello.AgentID == "" && hello.DeviceID == "") {
 		c.Write(ctx, websocket.MessageText, []byte(`{"type":"error","payload":{"error":"invalid payload"}}`))
 		return
 	}
 
-	a.broker.Add(c, hello)
-	defer a.broker.Remove(hello.DeviceID)
+	agentID := hello.AgentID
+	if agentID == "" {
+		agentID = hello.DeviceID
+	}
+	if agentID == "" {
+		c.Write(ctx, websocket.MessageText, []byte(`{"type":"error","payload":{"error":"missing agent_id"}}`))
+		return
+	}
+
+	device := a.broker.Add(c, hello)
+	defer a.broker.Remove(agentID)
 
 	msg := model.Envelope{
 		Type:      "device.welcome",
 		RequestID: env.RequestID,
 		SentAt:    time.Now().UTC().Format(time.RFC3339),
 		Payload: model.WelcomePayload{
-			DeviceID:             hello.DeviceID,
+			AgentID:              device.ID,
 			HeartbeatIntervalSec: 15,
 		},
 	}
@@ -96,7 +106,7 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		if err := a.handle(hello.DeviceID, buf); err != nil {
+		if err := a.handle(device.ID, buf); err != nil {
 			fail := fmt.Sprintf(`{"type":"error","payload":{"error":%q}}`, err.Error())
 			if c.Write(ctx, websocket.MessageText, []byte(fail)) != nil {
 				return
@@ -105,7 +115,7 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *App) handle(deviceID string, buf []byte) error {
+func (a *App) handle(agentID string, buf []byte) error {
 	var env model.Envelope
 	if err := json.Unmarshal(buf, &env); err != nil {
 		return err
@@ -122,7 +132,7 @@ func (a *App) handle(deviceID string, buf []byte) error {
 		if err := json.Unmarshal(body, &msg); err != nil {
 			return err
 		}
-		a.broker.Touch(deviceID)
+		a.broker.Touch(agentID, msg.RunningTaskID)
 		return nil
 	case "task.started":
 		var msg model.StartedPayload

@@ -15,13 +15,15 @@ import (
 var ErrOffline = errors.New("device offline")
 
 type Device struct {
-	ID       string
-	Hostname string
-	Version  string
-	Projects []model.HelloProject
-	SeenAt   time.Time
-	conn     *websocket.Conn
-	mu       sync.Mutex
+	ID          string
+	MachineID   string
+	Hostname    string
+	Version     string
+	Projects    []model.HelloProject
+	SeenAt      time.Time
+	CurrentTask string
+	conn        *websocket.Conn
+	mu          sync.Mutex
 }
 
 type Broker struct {
@@ -38,23 +40,37 @@ func New() *Broker {
 func (b *Broker) Add(conn *websocket.Conn, hello model.HelloPayload) *Device {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	dev := &Device{
-		ID:       hello.DeviceID,
-		Hostname: hello.Hostname,
-		Version:  hello.Version,
-		Projects: hello.Projects,
-		SeenAt:   time.Now().UTC(),
-		conn:     conn,
+	id := hello.AgentID
+	if id == "" {
+		id = hello.DeviceID
 	}
-	b.devices[hello.DeviceID] = dev
+	machineID := hello.MachineID
+	if machineID == "" {
+		if hello.Hostname != "" {
+			machineID = hello.Hostname
+		} else {
+			machineID = id
+		}
+	}
+	dev := &Device{
+		ID:        id,
+		MachineID: machineID,
+		Hostname:  hello.Hostname,
+		Version:   hello.Version,
+		Projects:  hello.Projects,
+		SeenAt:    time.Now().UTC(),
+		conn:      conn,
+	}
+	b.devices[id] = dev
 	return dev
 }
 
-func (b *Broker) Touch(id string) {
+func (b *Broker) Touch(id, currentTask string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if dev, ok := b.devices[id]; ok {
 		dev.SeenAt = time.Now().UTC()
+		dev.CurrentTask = currentTask
 	}
 }
 
@@ -69,6 +85,26 @@ func (b *Broker) Has(id string) bool {
 	defer b.mu.RUnlock()
 	_, ok := b.devices[id]
 	return ok
+}
+
+func (b *Broker) Get(id string) (model.Agent, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	dev, ok := b.devices[id]
+	if !ok {
+		return model.Agent{}, false
+	}
+	return snapshot(dev), true
+}
+
+func (b *Broker) List() []model.Agent {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	out := make([]model.Agent, 0, len(b.devices))
+	for _, dev := range b.devices {
+		out = append(out, snapshot(dev))
+	}
+	return out
 }
 
 func (b *Broker) Dispatch(ctx context.Context, deviceID string, env model.Envelope) error {
@@ -86,4 +122,18 @@ func (b *Broker) Dispatch(ctx context.Context, deviceID string, env model.Envelo
 		return err
 	}
 	return dev.conn.Write(ctx, websocket.MessageText, buf)
+}
+
+func snapshot(dev *Device) model.Agent {
+	projects := make([]model.HelloProject, len(dev.Projects))
+	copy(projects, dev.Projects)
+	return model.Agent{
+		ID:          dev.ID,
+		MachineID:   dev.MachineID,
+		Hostname:    dev.Hostname,
+		Version:     dev.Version,
+		Projects:    projects,
+		SeenAt:      dev.SeenAt,
+		CurrentTask: dev.CurrentTask,
+	}
 }

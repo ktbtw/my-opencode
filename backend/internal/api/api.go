@@ -21,7 +21,7 @@ type API struct {
 }
 
 type createTaskReq struct {
-	DeviceID  string            `json:"device_id"`
+	AgentID   string            `json:"agent_id"`
 	ProjectID string            `json:"project_id"`
 	Parts     []model.Part      `json:"parts"`
 	SessionID string            `json:"session_id"`
@@ -42,6 +42,10 @@ func (a *API) Health(w http.ResponseWriter, _ *http.Request) {
 	write(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (a *API) ListAgents(w http.ResponseWriter, _ *http.Request) {
+	write(w, http.StatusOK, a.broker.List())
+}
+
 func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 	var req createTaskReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -53,16 +57,28 @@ func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	if req.DeviceID == "" || req.ProjectID == "" {
+	if req.AgentID == "" || req.ProjectID == "" {
 		write(w, http.StatusBadRequest, map[string]string{"error": "missing required fields"})
 		return
 	}
-	if !a.broker.Has(req.DeviceID) {
-		write(w, http.StatusConflict, map[string]string{"error": "device offline"})
+	agent, ok := a.broker.Get(req.AgentID)
+	if !ok {
+		write(w, http.StatusConflict, map[string]string{"error": "agent offline"})
+		return
+	}
+	projectRoot := ""
+	for _, item := range agent.Projects {
+		if item.ProjectID == req.ProjectID {
+			projectRoot = item.Root
+			break
+		}
+	}
+	if projectRoot == "" {
+		write(w, http.StatusBadRequest, map[string]string{"error": "agent does not own project"})
 		return
 	}
 
-	task := a.store.CreateTask(req.DeviceID, req.ProjectID, req.SessionID, parts)
+	task := a.store.CreateTask(req.AgentID, agent.MachineID, req.ProjectID, projectRoot, req.SessionID, parts)
 	a.store.SetStatus(task.ID, model.TaskDispatched)
 	a.store.AddEvent(task.ID, model.Event{
 		TaskID:  task.ID,
@@ -77,7 +93,8 @@ func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 		SentAt:    time.Now().UTC().Format(time.RFC3339),
 		Payload: model.RunPayload{
 			TaskID:    task.ID,
-			DeviceID:  req.DeviceID,
+			AgentID:   req.AgentID,
+			MachineID: agent.MachineID,
 			ProjectID: req.ProjectID,
 			SessionID: req.SessionID,
 			Parts:     parts,
@@ -85,7 +102,7 @@ func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if err := a.broker.Dispatch(context.Background(), req.DeviceID, env); err != nil {
+	if err := a.broker.Dispatch(context.Background(), req.AgentID, env); err != nil {
 		a.store.Fail(task.ID, req.SessionID, err.Error())
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
@@ -142,7 +159,7 @@ func (a *API) CancelTask(w http.ResponseWriter, r *http.Request) {
 			TaskID: task.ID,
 		},
 	}
-	_ = a.broker.Dispatch(context.Background(), task.DeviceID, env)
+	_ = a.broker.Dispatch(context.Background(), task.AgentID, env)
 
 	a.store.AddEvent(task.ID, model.Event{
 		TaskID:  task.ID,
@@ -195,7 +212,7 @@ func (a *API) ApproveTask(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if err := a.broker.Dispatch(context.Background(), task.DeviceID, env); err != nil {
+	if err := a.broker.Dispatch(context.Background(), task.AgentID, env); err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}

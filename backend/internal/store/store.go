@@ -23,21 +23,23 @@ func NewMemory() *Memory {
 	}
 }
 
-func (m *Memory) CreateTask(deviceID, projectID, sessionID string, parts []model.Part) *model.Task {
+func (m *Memory) CreateTask(agentID, machineID, projectID, projectRoot, sessionID string, parts []model.Part) *model.Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	id := fmt.Sprintf("task_%d", time.Now().UnixNano())
 	now := time.Now().UTC()
 	task := &model.Task{
-		ID:        id,
-		DeviceID:  deviceID,
-		ProjectID: projectID,
-		SessionID: sessionID,
-		Parts:     cloneParts(parts),
-		Status:    model.TaskPending,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          id,
+		AgentID:     agentID,
+		MachineID:   machineID,
+		ProjectID:   projectID,
+		ProjectRoot: projectRoot,
+		SessionID:   sessionID,
+		Parts:       cloneParts(parts),
+		Status:      model.TaskPending,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	m.tasks[id] = task
 	m.events[id] = []model.Event{}

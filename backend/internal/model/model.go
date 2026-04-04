@@ -15,17 +15,19 @@ const (
 )
 
 type Task struct {
-	ID        string     `json:"task_id"`
-	DeviceID  string     `json:"device_id"`
-	ProjectID string     `json:"project_id"`
-	SessionID string     `json:"session_id,omitempty"`
-	Approval  *Approval  `json:"approval,omitempty"`
-	Parts     []Part     `json:"parts,omitempty"`
-	Status    TaskStatus `json:"status"`
-	Result    string     `json:"result,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID          string     `json:"task_id"`
+	AgentID     string     `json:"agent_id"`
+	MachineID   string     `json:"machine_id,omitempty"`
+	ProjectID   string     `json:"project_id"`
+	ProjectRoot string     `json:"project_root,omitempty"`
+	SessionID   string     `json:"session_id,omitempty"`
+	Approval    *Approval  `json:"approval,omitempty"`
+	Parts       []Part     `json:"parts,omitempty"`
+	Status      TaskStatus `json:"status"`
+	Result      string     `json:"result,omitempty"`
+	Error       string     `json:"error,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 type Approval struct {
@@ -76,31 +78,44 @@ type Envelope struct {
 	Payload   any    `json:"payload"`
 }
 
+type Agent struct {
+	ID          string         `json:"agent_id"`
+	MachineID   string         `json:"machine_id"`
+	Hostname    string         `json:"hostname"`
+	Version     string         `json:"version"`
+	Projects    []HelloProject `json:"projects,omitempty"`
+	SeenAt      time.Time      `json:"seen_at"`
+	CurrentTask string         `json:"current_task_id,omitempty"`
+}
+
 type HelloProject struct {
 	ProjectID string `json:"project_id"`
 	Root      string `json:"root"`
 }
 
 type HelloPayload struct {
-	DeviceID string         `json:"device_id"`
-	Hostname string         `json:"hostname"`
-	Version  string         `json:"version"`
-	Projects []HelloProject `json:"projects"`
+	AgentID   string         `json:"agent_id,omitempty"`
+	MachineID string         `json:"machine_id,omitempty"`
+	DeviceID  string         `json:"device_id,omitempty"`
+	Hostname  string         `json:"hostname"`
+	Version   string         `json:"version"`
+	Projects  []HelloProject `json:"projects"`
 }
 
 type WelcomePayload struct {
-	DeviceID             string `json:"device_id"`
+	AgentID              string `json:"agent_id"`
 	HeartbeatIntervalSec int    `json:"heartbeat_interval_sec"`
 }
 
 type HeartbeatPayload struct {
-	DeviceID      string `json:"device_id"`
+	AgentID       string `json:"agent_id,omitempty"`
 	RunningTaskID string `json:"running_task_id,omitempty"`
 }
 
 type RunPayload struct {
 	TaskID    string            `json:"task_id"`
-	DeviceID  string            `json:"device_id"`
+	AgentID   string            `json:"agent_id"`
+	MachineID string            `json:"machine_id,omitempty"`
 	ProjectID string            `json:"project_id"`
 	SessionID string            `json:"session_id,omitempty"`
 	Parts     []Part            `json:"parts,omitempty"`
