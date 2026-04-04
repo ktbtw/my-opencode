@@ -39,6 +39,26 @@ type TaskFilter struct {
 	Limit     int
 }
 
+type Session struct {
+	ID         string    `json:"session_id"`
+	AgentID    string    `json:"agent_id"`
+	MachineID  string    `json:"machine_id"`
+	ProjectID  string    `json:"project_id"`
+	Status     string    `json:"status"`
+	LastTaskID string    `json:"last_task_id,omitempty"`
+	Summary    string    `json:"summary,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type SessionFilter struct {
+	AgentID   string
+	MachineID string
+	ProjectID string
+	Status    string
+	Limit     int
+}
+
 type Approval struct {
 	PermissionID string   `json:"permission_id"`
 	Permission   string   `json:"permission"`

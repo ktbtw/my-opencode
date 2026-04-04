@@ -307,6 +307,98 @@ curl -s 'http://127.0.0.1:8080/api/tasks?agent_id=macbook-main:tasks-demo&status
 - 2026-04-04 已验证 `GET /api/tasks` 可返回真实完成任务
 - 2026-04-04 已验证任务记录在后端重启后仍可从 MySQL 查回
 
+## 4.2 验证会话列表接口与 MySQL 持久化
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+再启动一个最小会话设备客户端：
+
+```bash
+node -e '
+const ws = new WebSocket("ws://127.0.0.1:8080/ws/device");
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "device.hello",
+    request_id: "req_sessions_module_1",
+    sent_at: new Date().toISOString(),
+    payload: {
+      agent_id: "macbook-main:sessions-demo",
+      machine_id: "macbook-main",
+      hostname: "MacBook-Air",
+      version: "0.4.0",
+      projects: [{ project_id: "chat-codex", root: "/Users/yuminghao/Downloads/chat-codex" }]
+    }
+  }));
+};
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data.toString());
+  if (msg.type !== "task.run") return;
+  const base = { request_id: msg.request_id, sent_at: new Date().toISOString() };
+  const text = (msg.payload.parts || []).filter((x) => x.type === "text").map((x) => x.text).join("\\n");
+  const sessionId = msg.payload.session_id || "sess_sessions_demo_1";
+  ws.send(JSON.stringify({ type: "task.started", ...base, payload: { task_id: msg.payload.task_id, session_id: sessionId } }));
+  ws.send(JSON.stringify({ type: "task.delta", ...base, payload: { task_id: msg.payload.task_id, content: "会话处理中: " + text } }));
+  setTimeout(() => {
+    ws.send(JSON.stringify({ type: "task.completed", ...base, payload: { task_id: msg.payload.task_id, session_id: sessionId, result: "会话完成: " + text } }));
+  }, 200);
+};
+setInterval(() => {
+  ws.send(JSON.stringify({
+    type: "device.heartbeat",
+    request_id: "hb_" + Date.now(),
+    sent_at: new Date().toISOString(),
+    payload: { agent_id: "macbook-main:sessions-demo", running_task_id: "" }
+  }));
+}, 5000);
+'
+```
+
+创建一个带 `session_id` 的任务：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agent_id":"macbook-main:sessions-demo",
+    "project_id":"chat-codex",
+    "session_id":"sess_sessions_demo_1",
+    "parts":[
+      {"type":"text","text":"请记录这条会话摘要"}
+    ]
+  }'
+```
+
+查询任务与会话：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -s 'http://127.0.0.1:8080/api/sessions?agent_id=macbook-main:sessions-demo&limit=10'
+```
+
+重启后端后再次查询会话列表：
+
+```bash
+curl -s 'http://127.0.0.1:8080/api/sessions?agent_id=macbook-main:sessions-demo&limit=10'
+```
+
+预期结果：
+
+- 任务最终为 `completed`
+- 返回结果中包含同一个 `session_id`
+- `GET /api/sessions` 可查到该会话
+- 会话记录中包含 `last_task_id`
+- 会话记录中包含摘要 `summary`
+- 后端重启后会话记录仍可从 MySQL 查回
+
+本次实测结果：
+
+- 2026-04-04 已验证 `GET /api/sessions` 返回真实会话记录
+- 2026-04-04 已验证会话记录在后端重启后仍可从 MySQL 查回
+
 ## 5. 验证后端审批链路
 
 先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：

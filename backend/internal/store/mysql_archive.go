@@ -246,6 +246,109 @@ FROM tasks
 	return tasks, rows.Err()
 }
 
+func (m *MySQLArchive) UpsertSession(session *model.Session) error {
+	if session == nil {
+		return nil
+	}
+
+	query := `
+INSERT INTO sessions (
+  session_id, agent_id, machine_id, project_id, status, last_task_id, summary, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+  agent_id = VALUES(agent_id),
+  machine_id = VALUES(machine_id),
+  project_id = VALUES(project_id),
+  status = VALUES(status),
+  last_task_id = VALUES(last_task_id),
+  summary = VALUES(summary),
+  updated_at = VALUES(updated_at)
+`
+	_, err := m.db.Exec(
+		query,
+		session.ID,
+		session.AgentID,
+		session.MachineID,
+		session.ProjectID,
+		session.Status,
+		nullString(session.LastTaskID),
+		nullString(session.Summary),
+		session.CreatedAt.UTC(),
+		session.UpdatedAt.UTC(),
+	)
+	return err
+}
+
+func (m *MySQLArchive) ListSessions(filter model.SessionFilter) ([]*model.Session, error) {
+	query := `
+SELECT session_id, agent_id, machine_id, project_id, status, last_task_id, summary, created_at, updated_at
+FROM sessions
+`
+	clauses := make([]string, 0, 4)
+	args := make([]any, 0, 5)
+	if filter.AgentID != "" {
+		clauses = append(clauses, "agent_id = ?")
+		args = append(args, filter.AgentID)
+	}
+	if filter.MachineID != "" {
+		clauses = append(clauses, "machine_id = ?")
+		args = append(args, filter.MachineID)
+	}
+	if filter.ProjectID != "" {
+		clauses = append(clauses, "project_id = ?")
+		args = append(args, filter.ProjectID)
+	}
+	if filter.Status != "" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, filter.Status)
+	}
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY updated_at DESC"
+	if filter.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []*model.Session
+	for rows.Next() {
+		var (
+			session    model.Session
+			lastTaskID sql.NullString
+			summary    sql.NullString
+		)
+		if err := rows.Scan(
+			&session.ID,
+			&session.AgentID,
+			&session.MachineID,
+			&session.ProjectID,
+			&session.Status,
+			&lastTaskID,
+			&summary,
+			&session.CreatedAt,
+			&session.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if lastTaskID.Valid {
+			session.LastTaskID = lastTaskID.String
+		}
+		if summary.Valid {
+			session.Summary = summary.String
+		}
+		sessions = append(sessions, &session)
+	}
+
+	return sessions, rows.Err()
+}
+
 func (m *MySQLArchive) Close() error {
 	if m == nil || m.db == nil {
 		return nil

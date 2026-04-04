@@ -41,6 +41,7 @@ func (a *App) Router() http.Handler {
 	r.Get("/healthz", h.Health)
 	r.Get("/api/agents", h.ListAgents)
 	r.Get("/api/tasks", h.ListTasks)
+	r.Get("/api/sessions", h.ListSessions)
 	r.Post("/api/tasks", h.CreateTask)
 	r.Get("/api/tasks/{taskID}", h.GetTask)
 	r.Get("/api/tasks/{taskID}/events", h.TaskEvents)
@@ -161,6 +162,7 @@ func (a *App) handle(agentID string, buf []byte) error {
 			return err
 		}
 		a.store.SetStatus(msg.TaskID, model.TaskRunning)
+		a.store.TrackSession(msg.TaskID, msg.SessionID, "active", "任务运行中")
 		a.store.AddEvent(msg.TaskID, model.Event{
 			TaskID:    msg.TaskID,
 			Type:      "started",
@@ -186,6 +188,7 @@ func (a *App) handle(agentID string, buf []byte) error {
 			return err
 		}
 		a.store.Complete(msg.TaskID, msg.SessionID, msg.Result)
+		a.store.TrackSession(msg.TaskID, msg.SessionID, "active", msg.Result)
 		a.store.AddEvent(msg.TaskID, model.Event{
 			TaskID:    msg.TaskID,
 			Type:      "completed",
@@ -205,6 +208,7 @@ func (a *App) handle(agentID string, buf []byte) error {
 			Patterns:     msg.Patterns,
 			Metadata:     msg.Metadata,
 		})
+		a.store.TrackSession(msg.TaskID, msg.SessionID, "waiting_approval", "等待审批")
 		a.store.AddEvent(msg.TaskID, model.Event{
 			TaskID:       msg.TaskID,
 			Type:         "waiting_approval",
@@ -223,6 +227,7 @@ func (a *App) handle(agentID string, buf []byte) error {
 			return err
 		}
 		a.store.Resume(msg.TaskID, msg.SessionID)
+		a.store.TrackSession(msg.TaskID, msg.SessionID, "active", "审批已通过")
 		a.store.AddEvent(msg.TaskID, model.Event{
 			TaskID:       msg.TaskID,
 			Type:         "approval_applied",
@@ -255,6 +260,7 @@ func (a *App) handle(agentID string, buf []byte) error {
 			return err
 		}
 		a.store.Fail(msg.TaskID, msg.SessionID, msg.Error)
+		a.store.TrackSession(msg.TaskID, msg.SessionID, "error", msg.Error)
 		a.store.AddEvent(msg.TaskID, model.Event{
 			TaskID:    msg.TaskID,
 			Type:      "failed",

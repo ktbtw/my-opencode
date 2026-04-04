@@ -14,7 +14,7 @@ type Memory struct {
 	mu       sync.RWMutex
 	tasks    map[string]*model.Task
 	events   map[string][]model.Event
-	sessions map[string]string
+	sessions map[string]*model.Session
 	archive  TaskArchive
 }
 
@@ -25,7 +25,7 @@ func NewMemory(archive TaskArchive) *Memory {
 	return &Memory{
 		tasks:    map[string]*model.Task{},
 		events:   map[string][]model.Event{},
-		sessions: map[string]string{},
+		sessions: map[string]*model.Session{},
 		archive:  archive,
 	}
 }
@@ -113,9 +113,9 @@ func (m *Memory) Resume(id, sessionID string) (*model.Task, bool) {
 
 func (m *Memory) Complete(id, sessionID, result string) (*model.Task, bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	task, ok := m.tasks[id]
 	if !ok {
+		m.mu.Unlock()
 		return nil, false
 	}
 	task.Status = model.TaskCompleted
@@ -123,19 +123,18 @@ func (m *Memory) Complete(id, sessionID, result string) (*model.Task, bool) {
 	task.SessionID = sessionID
 	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
-	if sessionID != "" {
-		m.sessions[id] = sessionID
-	}
 	out := clone(task)
+	m.mu.Unlock()
 	m.persistTask(out)
+	m.touchSession(out, "active", result)
 	return out, true
 }
 
 func (m *Memory) Fail(id, sessionID, msg string) (*model.Task, bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	task, ok := m.tasks[id]
 	if !ok {
+		m.mu.Unlock()
 		return nil, false
 	}
 	task.Status = model.TaskFailed
@@ -143,26 +142,27 @@ func (m *Memory) Fail(id, sessionID, msg string) (*model.Task, bool) {
 	task.SessionID = sessionID
 	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
-	if sessionID != "" {
-		m.sessions[id] = sessionID
-	}
 	out := clone(task)
+	m.mu.Unlock()
 	m.persistTask(out)
+	m.touchSession(out, "error", msg)
 	return out, true
 }
 
 func (m *Memory) Cancel(id string) (*model.Task, bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	task, ok := m.tasks[id]
 	if !ok {
+		m.mu.Unlock()
 		return nil, false
 	}
 	task.Status = model.TaskCancelled
 	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
 	out := clone(task)
+	m.mu.Unlock()
 	m.persistTask(out)
+	m.touchSession(out, "cancelled", task.Error)
 	return out, true
 }
 
@@ -228,9 +228,102 @@ func (m *Memory) ListTasks(filter model.TaskFilter) ([]*model.Task, error) {
 	return out, nil
 }
 
+func (m *Memory) ListSessions(filter model.SessionFilter) ([]*model.Session, error) {
+	if sessions, err := m.archive.ListSessions(filter); err == nil && sessions != nil {
+		return sessions, nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]*model.Session, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		if filter.AgentID != "" && session.AgentID != filter.AgentID {
+			continue
+		}
+		if filter.MachineID != "" && session.MachineID != filter.MachineID {
+			continue
+		}
+		if filter.ProjectID != "" && session.ProjectID != filter.ProjectID {
+			continue
+		}
+		if filter.Status != "" && session.Status != filter.Status {
+			continue
+		}
+		out = append(out, cloneSession(session))
+	}
+
+	slices.SortFunc(out, func(a, b *model.Session) int {
+		switch {
+		case a.UpdatedAt.After(b.UpdatedAt):
+			return -1
+		case a.UpdatedAt.Before(b.UpdatedAt):
+			return 1
+		default:
+			return 0
+		}
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (m *Memory) TrackSession(taskID, sessionID, status, summary string) {
+	if sessionID == "" || taskID == "" {
+		return
+	}
+	task, ok := m.GetTask(taskID)
+	if !ok {
+		return
+	}
+	task.SessionID = sessionID
+	m.touchSession(task, status, summary)
+}
+
 func (m *Memory) persistTask(task *model.Task) {
 	if err := m.archive.UpsertTask(task); err != nil {
 		log.Printf("upsert task archive failed: %v", err)
+	}
+}
+
+func (m *Memory) touchSession(task *model.Task, status, summary string) {
+	if task == nil || task.SessionID == "" {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now().UTC()
+	session, ok := m.sessions[task.SessionID]
+	if !ok {
+		session = &model.Session{
+			ID:        task.SessionID,
+			AgentID:   task.AgentID,
+			MachineID: task.MachineID,
+			ProjectID: task.ProjectID,
+			Status:    status,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		m.sessions[task.SessionID] = session
+	}
+	session.AgentID = task.AgentID
+	session.MachineID = task.MachineID
+	session.ProjectID = task.ProjectID
+	session.Status = status
+	session.LastTaskID = task.ID
+	if summary != "" {
+		session.Summary = summary
+	}
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
+	session.UpdatedAt = now
+
+	if err := m.archive.UpsertSession(cloneSession(session)); err != nil {
+		log.Printf("upsert session archive failed: %v", err)
 	}
 }
 
@@ -259,4 +352,12 @@ func cloneParts(parts []model.Part) []model.Part {
 	out := make([]model.Part, len(parts))
 	copy(out, parts)
 	return out
+}
+
+func cloneSession(session *model.Session) *model.Session {
+	if session == nil {
+		return nil
+	}
+	cp := *session
+	return &cp
 }
