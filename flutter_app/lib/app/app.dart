@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/theme/app_theme.dart';
-import '../features/chat/presentation/chat_home_page.dart';
+import '../modules/console/presentation/console_shell_page.dart';
 
-class ChatCodexApp extends StatelessWidget {
+class ChatCodexApp extends ConsumerWidget {
   const ChatCodexApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
-      title: 'Chat Codex',
+      title: 'Chat Codex Console',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      home: const ChatHomePage(),
+      home: const ConsoleShellPage(),
     );
   }
 }
