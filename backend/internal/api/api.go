@@ -28,6 +28,12 @@ type createTaskReq struct {
 	Metadata  map[string]string `json:"metadata"`
 }
 
+type approveTaskReq struct {
+	PermissionID string `json:"permission_id"`
+	Reply        string `json:"reply"`
+	Message      string `json:"message"`
+}
+
 func New(store *store.Memory, broker *broker.Broker) *API {
 	return &API{store: store, broker: broker}
 }
@@ -146,6 +152,66 @@ func (a *API) CancelTask(w http.ResponseWriter, r *http.Request) {
 	})
 
 	write(w, http.StatusOK, task)
+}
+
+func (a *API) ApproveTask(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "taskID")
+	task, ok := a.store.GetTask(taskID)
+	if !ok {
+		write(w, http.StatusNotFound, map[string]string{"error": "task not found"})
+		return
+	}
+	if task.Status != model.TaskWaitingApproval || task.Approval == nil {
+		write(w, http.StatusConflict, map[string]string{"error": "task is not waiting approval"})
+		return
+	}
+
+	var req approveTaskReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		write(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if req.Reply != "once" && req.Reply != "always" && req.Reply != "reject" {
+		write(w, http.StatusBadRequest, map[string]string{"error": "invalid reply"})
+		return
+	}
+	if req.PermissionID == "" {
+		req.PermissionID = task.Approval.PermissionID
+	}
+	if req.PermissionID != task.Approval.PermissionID {
+		write(w, http.StatusBadRequest, map[string]string{"error": "permission_id mismatch"})
+		return
+	}
+
+	env := model.Envelope{
+		Type:      "task.approval_response",
+		RequestID: fmt.Sprintf("req_approval_%s", task.ID),
+		SentAt:    time.Now().UTC().Format(time.RFC3339),
+		Payload: model.ApprovalResponsePayload{
+			TaskID:       task.ID,
+			PermissionID: req.PermissionID,
+			Reply:        req.Reply,
+			Message:      req.Message,
+		},
+	}
+
+	if err := a.broker.Dispatch(context.Background(), task.DeviceID, env); err != nil {
+		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+
+	a.store.AddEvent(task.ID, model.Event{
+		TaskID:       task.ID,
+		Type:         "approval_requested",
+		SessionID:    task.SessionID,
+		PermissionID: req.PermissionID,
+		Reply:        req.Reply,
+		Content:      "approval response dispatched",
+		SentAt:       time.Now().UTC(),
+	})
+
+	task, _ = a.store.GetTask(task.ID)
+	write(w, http.StatusAccepted, task)
 }
 
 func write(w http.ResponseWriter, code int, body any) {

@@ -5,12 +5,13 @@ import "time"
 type TaskStatus string
 
 const (
-	TaskPending    TaskStatus = "pending"
-	TaskDispatched TaskStatus = "dispatched"
-	TaskRunning    TaskStatus = "running"
-	TaskCompleted  TaskStatus = "completed"
-	TaskFailed     TaskStatus = "failed"
-	TaskCancelled  TaskStatus = "cancelled"
+	TaskPending         TaskStatus = "pending"
+	TaskDispatched      TaskStatus = "dispatched"
+	TaskRunning         TaskStatus = "running"
+	TaskWaitingApproval TaskStatus = "waiting_approval"
+	TaskCompleted       TaskStatus = "completed"
+	TaskFailed          TaskStatus = "failed"
+	TaskCancelled       TaskStatus = "cancelled"
 )
 
 type Task struct {
@@ -18,12 +19,20 @@ type Task struct {
 	DeviceID  string     `json:"device_id"`
 	ProjectID string     `json:"project_id"`
 	SessionID string     `json:"session_id,omitempty"`
+	Approval  *Approval  `json:"approval,omitempty"`
 	Parts     []Part     `json:"parts,omitempty"`
 	Status    TaskStatus `json:"status"`
 	Result    string     `json:"result,omitempty"`
 	Error     string     `json:"error,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+type Approval struct {
+	PermissionID string   `json:"permission_id"`
+	Permission   string   `json:"permission"`
+	Patterns     []string `json:"patterns,omitempty"`
+	Metadata     any      `json:"metadata,omitempty"`
 }
 
 type Part struct {
@@ -47,12 +56,17 @@ type PartModel struct {
 }
 
 type Event struct {
-	TaskID    string    `json:"task_id"`
-	Type      string    `json:"type"`
-	Content   string    `json:"content,omitempty"`
-	SessionID string    `json:"session_id,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	SentAt    time.Time `json:"sent_at"`
+	TaskID       string    `json:"task_id"`
+	Type         string    `json:"type"`
+	Content      string    `json:"content,omitempty"`
+	SessionID    string    `json:"session_id,omitempty"`
+	PermissionID string    `json:"permission_id,omitempty"`
+	Permission   string    `json:"permission,omitempty"`
+	Patterns     []string  `json:"patterns,omitempty"`
+	Reply        string    `json:"reply,omitempty"`
+	Metadata     any       `json:"metadata,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	SentAt       time.Time `json:"sent_at"`
 }
 
 type Envelope struct {
@@ -113,6 +127,37 @@ type FailedPayload struct {
 	TaskID    string `json:"task_id"`
 	SessionID string `json:"session_id,omitempty"`
 	Error     string `json:"error"`
+}
+
+type WaitingApprovalPayload struct {
+	TaskID       string   `json:"task_id"`
+	SessionID    string   `json:"session_id,omitempty"`
+	PermissionID string   `json:"permission_id"`
+	Permission   string   `json:"permission"`
+	Patterns     []string `json:"patterns,omitempty"`
+	Metadata     any      `json:"metadata,omitempty"`
+}
+
+type ApprovalAppliedPayload struct {
+	TaskID       string `json:"task_id"`
+	SessionID    string `json:"session_id,omitempty"`
+	PermissionID string `json:"permission_id"`
+	Reply        string `json:"reply"`
+}
+
+type ApprovalAutoApprovedPayload struct {
+	TaskID       string   `json:"task_id"`
+	SessionID    string   `json:"session_id,omitempty"`
+	PermissionID string   `json:"permission_id"`
+	Permission   string   `json:"permission"`
+	Patterns     []string `json:"patterns,omitempty"`
+}
+
+type ApprovalResponsePayload struct {
+	TaskID       string `json:"task_id"`
+	PermissionID string `json:"permission_id"`
+	Reply        string `json:"reply"`
+	Message      string `json:"message,omitempty"`
 }
 
 type CancelPayload struct {

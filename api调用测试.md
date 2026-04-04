@@ -203,3 +203,215 @@ curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
 - 2026-04-04 已验证供应商接口返回 `ok`
 - 2026-04-04 已验证 `backend` 健康检查通过
 - 2026-04-04 已验证 `serve relay` 端到端链路通过
+
+## 5. 验证后端审批链路
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+再启动一个最小审批设备客户端：
+
+```bash
+node -e '
+const ws = new WebSocket("ws://127.0.0.1:8080/ws/device");
+let currentTask = null;
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "device.hello",
+    request_id: "req_hello_approval_1",
+    sent_at: new Date().toISOString(),
+    payload: {
+      device_id: "approval-device",
+      hostname: "Approval-Mock",
+      version: "0.2.0",
+      projects: [{ project_id: "chat-codex", root: "/Users/yuminghao/Downloads/chat-codex" }]
+    }
+  }));
+};
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data.toString());
+  if (msg.type === "task.run") {
+    currentTask = msg.payload.task_id;
+    ws.send(JSON.stringify({
+      type: "task.started",
+      request_id: "req_started_1",
+      sent_at: new Date().toISOString(),
+      payload: { task_id: currentTask, session_id: "sess_approval_1" }
+    }));
+    ws.send(JSON.stringify({
+      type: "task.waiting_approval",
+      request_id: "req_waiting_1",
+      sent_at: new Date().toISOString(),
+      payload: {
+        task_id: currentTask,
+        session_id: "sess_approval_1",
+        permission_id: "permission_mock_1",
+        permission: "edit",
+        patterns: ["/Users/yuminghao/Downloads/chat-codex/approval-check-from-api.txt"],
+        metadata: { tool: "write" }
+      }
+    }));
+    return;
+  }
+  if (msg.type === "task.approval_response") {
+    const reply = msg.payload.reply;
+    if (reply === "reject") {
+      ws.send(JSON.stringify({
+        type: "task.failed",
+        request_id: "req_failed_1",
+        sent_at: new Date().toISOString(),
+        payload: { task_id: currentTask, session_id: "sess_approval_1", error: "approval rejected" }
+      }));
+      return;
+    }
+    ws.send(JSON.stringify({
+      type: "task.approval_applied",
+      request_id: "req_applied_1",
+      sent_at: new Date().toISOString(),
+      payload: { task_id: currentTask, session_id: "sess_approval_1", permission_id: "permission_mock_1", reply }
+    }));
+    ws.send(JSON.stringify({
+      type: "task.completed",
+      request_id: "req_completed_1",
+      sent_at: new Date().toISOString(),
+      payload: { task_id: currentTask, session_id: "sess_approval_1", result: "done" }
+    }));
+  }
+};
+setTimeout(() => {}, 120000);
+'
+```
+
+然后创建审批任务：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id":"approval-device",
+    "project_id":"chat-codex",
+    "parts":[{"type":"text","text":"测试审批流"}]
+  }'
+```
+
+查询任务应进入等待审批：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
+```
+
+提交审批：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>/approval \
+  -H 'Content-Type: application/json' \
+  -d '{"reply":"once"}'
+```
+
+再次查询结果：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
+```
+
+预期结果：
+
+- 第一次查询任务返回 `status=waiting_approval`
+- 任务结果中包含 `approval.permission_id`
+- 事件流包含 `waiting_approval`
+- 审批提交后最终返回 `status=completed`
+- 审批后的事件流包含 `approval_requested`
+- 审批后的事件流包含 `approval_applied`
+- 审批后的事件流包含 `completed`
+
+本次实测结果：
+
+- 2026-04-04 已验证 `waiting_approval -> approval_requested -> approval_applied -> completed`
+
+## 6. 验证自动审批事件链路
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+再启动一个最小自动审批设备客户端：
+
+```bash
+node -e '
+const ws = new WebSocket("ws://127.0.0.1:8080/ws/device");
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "device.hello",
+    request_id: "req_hello_auto_1",
+    sent_at: new Date().toISOString(),
+    payload: {
+      device_id: "auto-approval-device",
+      hostname: "Auto-Approval-Mock",
+      version: "0.2.0",
+      projects: [{ project_id: "chat-codex", root: "/Users/yuminghao/Downloads/chat-codex" }]
+    }
+  }));
+};
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data.toString());
+  if (msg.type !== "task.run") return;
+  ws.send(JSON.stringify({
+    type: "task.started",
+    request_id: "req_started_auto_1",
+    sent_at: new Date().toISOString(),
+    payload: { task_id: msg.payload.task_id, session_id: "sess_auto_1" }
+  }));
+  ws.send(JSON.stringify({
+    type: "task.approval_auto_approved",
+    request_id: "req_auto_approved_1",
+    sent_at: new Date().toISOString(),
+    payload: {
+      task_id: msg.payload.task_id,
+      session_id: "sess_auto_1",
+      permission_id: "permission_auto_1",
+      permission: "edit",
+      patterns: ["/Users/yuminghao/Downloads/chat-codex/auto-approval-check.txt"]
+    }
+  }));
+  ws.send(JSON.stringify({
+    type: "task.completed",
+    request_id: "req_completed_auto_1",
+    sent_at: new Date().toISOString(),
+    payload: { task_id: msg.payload.task_id, session_id: "sess_auto_1", result: "done" }
+  }));
+};
+setTimeout(() => {}, 120000);
+'
+```
+
+然后创建任务并查询事件流：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id":"auto-approval-device",
+    "project_id":"chat-codex",
+    "parts":[{"type":"text","text":"测试自动审批事件"}]
+  }'
+
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
+```
+
+预期结果：
+
+- 最终返回 `status=completed`
+- 事件流包含 `approval_auto_approved`
+- 事件流包含 `completed`
+
+本次实测结果：
+
+- 2026-04-04 已验证 `approval_auto_approved -> completed`

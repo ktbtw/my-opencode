@@ -66,6 +66,34 @@ func (m *Memory) SetStatus(id string, status model.TaskStatus) (*model.Task, boo
 	return clone(task), true
 }
 
+func (m *Memory) WaitApproval(id, sessionID string, approval *model.Approval) (*model.Task, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[id]
+	if !ok {
+		return nil, false
+	}
+	task.Status = model.TaskWaitingApproval
+	task.SessionID = sessionID
+	task.Approval = cloneApproval(approval)
+	task.UpdatedAt = time.Now().UTC()
+	return clone(task), true
+}
+
+func (m *Memory) Resume(id, sessionID string) (*model.Task, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[id]
+	if !ok {
+		return nil, false
+	}
+	task.Status = model.TaskRunning
+	task.SessionID = sessionID
+	task.Approval = nil
+	task.UpdatedAt = time.Now().UTC()
+	return clone(task), true
+}
+
 func (m *Memory) Complete(id, sessionID, result string) (*model.Task, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -76,6 +104,7 @@ func (m *Memory) Complete(id, sessionID, result string) (*model.Task, bool) {
 	task.Status = model.TaskCompleted
 	task.Result = result
 	task.SessionID = sessionID
+	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
 	if sessionID != "" {
 		m.sessions[id] = sessionID
@@ -93,6 +122,7 @@ func (m *Memory) Fail(id, sessionID, msg string) (*model.Task, bool) {
 	task.Status = model.TaskFailed
 	task.Error = msg
 	task.SessionID = sessionID
+	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
 	if sessionID != "" {
 		m.sessions[id] = sessionID
@@ -108,6 +138,7 @@ func (m *Memory) Cancel(id string) (*model.Task, bool) {
 		return nil, false
 	}
 	task.Status = model.TaskCancelled
+	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
 	return clone(task), true
 }
@@ -129,7 +160,19 @@ func (m *Memory) Events(id string) []model.Event {
 
 func clone(task *model.Task) *model.Task {
 	cp := *task
+	cp.Approval = cloneApproval(task.Approval)
 	cp.Parts = cloneParts(task.Parts)
+	return &cp
+}
+
+func cloneApproval(approval *model.Approval) *model.Approval {
+	if approval == nil {
+		return nil
+	}
+	cp := *approval
+	if len(approval.Patterns) > 0 {
+		cp.Patterns = append([]string(nil), approval.Patterns...)
+	}
 	return &cp
 }
 

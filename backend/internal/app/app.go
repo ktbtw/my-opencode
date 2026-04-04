@@ -35,6 +35,7 @@ func (a *App) Router() http.Handler {
 	r.Post("/api/tasks", h.CreateTask)
 	r.Get("/api/tasks/{taskID}", h.GetTask)
 	r.Get("/api/tasks/{taskID}/events", h.TaskEvents)
+	r.Post("/api/tasks/{taskID}/approval", h.ApproveTask)
 	r.Post("/api/tasks/{taskID}/cancel", h.CancelTask)
 	r.Get("/ws/device", a.device)
 	return r
@@ -160,6 +161,61 @@ func (a *App) handle(deviceID string, buf []byte) error {
 			Content:   msg.Result,
 			SessionID: msg.SessionID,
 			SentAt:    time.Now().UTC(),
+		})
+		return nil
+	case "task.waiting_approval":
+		var msg model.WaitingApprovalPayload
+		if err := json.Unmarshal(body, &msg); err != nil {
+			return err
+		}
+		a.store.WaitApproval(msg.TaskID, msg.SessionID, &model.Approval{
+			PermissionID: msg.PermissionID,
+			Permission:   msg.Permission,
+			Patterns:     msg.Patterns,
+			Metadata:     msg.Metadata,
+		})
+		a.store.AddEvent(msg.TaskID, model.Event{
+			TaskID:       msg.TaskID,
+			Type:         "waiting_approval",
+			SessionID:    msg.SessionID,
+			PermissionID: msg.PermissionID,
+			Permission:   msg.Permission,
+			Patterns:     msg.Patterns,
+			Metadata:     msg.Metadata,
+			Content:      "waiting for approval",
+			SentAt:       time.Now().UTC(),
+		})
+		return nil
+	case "task.approval_applied":
+		var msg model.ApprovalAppliedPayload
+		if err := json.Unmarshal(body, &msg); err != nil {
+			return err
+		}
+		a.store.Resume(msg.TaskID, msg.SessionID)
+		a.store.AddEvent(msg.TaskID, model.Event{
+			TaskID:       msg.TaskID,
+			Type:         "approval_applied",
+			SessionID:    msg.SessionID,
+			PermissionID: msg.PermissionID,
+			Reply:        msg.Reply,
+			Content:      "approval applied",
+			SentAt:       time.Now().UTC(),
+		})
+		return nil
+	case "task.approval_auto_approved":
+		var msg model.ApprovalAutoApprovedPayload
+		if err := json.Unmarshal(body, &msg); err != nil {
+			return err
+		}
+		a.store.AddEvent(msg.TaskID, model.Event{
+			TaskID:       msg.TaskID,
+			Type:         "approval_auto_approved",
+			SessionID:    msg.SessionID,
+			PermissionID: msg.PermissionID,
+			Permission:   msg.Permission,
+			Patterns:     msg.Patterns,
+			Content:      "approval auto approved",
+			SentAt:       time.Now().UTC(),
 		})
 		return nil
 	case "task.failed":
