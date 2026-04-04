@@ -8,16 +8,16 @@ import '../../auth/application/auth_controller.dart';
 import '../data/devices_api.dart';
 import '../domain/device_models.dart';
 
-final deviceDetailProvider = FutureProvider.family<DeviceInfo, String>((ref, machineId) async {
+final deviceDetailProvider = FutureProvider.family<DeviceInfo, String>((
+  ref,
+  machineId,
+) async {
   final auth = ref.watch(authControllerProvider);
   return ref.watch(devicesApiProvider).getDevice(auth.accessToken, machineId);
 });
 
 class DeviceDetailPage extends ConsumerWidget {
-  const DeviceDetailPage({
-    super.key,
-    required this.machineId,
-  });
+  const DeviceDetailPage({super.key, required this.machineId});
 
   final String machineId;
 
@@ -41,7 +41,10 @@ class DeviceDetailPage extends ConsumerWidget {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(device.machineId, style: Theme.of(context).textTheme.headlineMedium),
+                    child: Text(
+                      device.machineId,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
                   ),
                 ],
               ),
@@ -61,9 +64,15 @@ class DeviceDetailPage extends ConsumerWidget {
                         : Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(flex: 5, child: _DeviceInfoCard(device: device)),
+                              Expanded(
+                                flex: 5,
+                                child: _DeviceInfoCard(device: device),
+                              ),
                               const SizedBox(width: 20),
-                              Expanded(flex: 7, child: _AgentPanel(device: device)),
+                              Expanded(
+                                flex: 7,
+                                child: _AgentPanel(device: device),
+                              ),
                             ],
                           );
                     return SingleChildScrollView(child: content);
@@ -126,17 +135,16 @@ class _AgentPanel extends StatelessWidget {
 }
 
 class _AgentCard extends StatelessWidget {
-  const _AgentCard({
-    required this.agent,
-    required this.machineId,
-  });
+  const _AgentCard({required this.agent, required this.machineId});
 
   final AgentInfo agent;
   final String machineId;
 
   @override
   Widget build(BuildContext context) {
-    final projectId = agent.projects.isNotEmpty ? agent.projects.first.projectId : '';
+    final projectId = agent.projects.isNotEmpty
+        ? agent.projects.first.projectId
+        : '';
     final root = agent.projects.isNotEmpty ? agent.projects.first.root : '';
     return Container(
       width: double.infinity,
@@ -152,7 +160,10 @@ class _AgentCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(agent.agentId, style: Theme.of(context).textTheme.titleMedium),
+                child: Text(
+                  agent.agentId,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
               FilledButton(
                 onPressed: () => context.go(
@@ -169,7 +180,9 @@ class _AgentCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text('版本：${agent.version.isEmpty ? '-' : agent.version}'),
           const SizedBox(height: 6),
-          Text('当前任务：${agent.currentTaskId.isEmpty ? '空闲' : agent.currentTaskId}'),
+          Text(
+            '当前任务：${agent.currentTaskId.isEmpty ? '空闲' : agent.currentTaskId}',
+          ),
         ],
       ),
     );
@@ -191,7 +204,10 @@ class _InfoLine extends StatelessWidget {
         children: [
           Text(label, style: Theme.of(context).textTheme.bodyMedium),
           const SizedBox(height: 4),
-          SelectableText(value.isEmpty ? '-' : value, style: Theme.of(context).textTheme.titleMedium),
+          SelectableText(
+            value.isEmpty ? '-' : value,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
         ],
       ),
     );

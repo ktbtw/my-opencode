@@ -28,7 +28,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
-    final theme = Theme.of(context);
 
     ref.listen<AuthState>(authControllerProvider, (previous, next) {
       if (next.isAuthenticated) {
@@ -40,42 +39,48 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final mobile = constraints.maxWidth < 980;
-          return Padding(
-            padding: const EdgeInsets.all(24),
-            child: mobile
-                ? Column(
-                    children: [
-                      const SizedBox(height: 24),
-                      _HeroPanel(compact: true),
-                      const SizedBox(height: 20),
-                      _LoginCard(
+          final content = mobile
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 24),
+                    const _HeroPanel(compact: true),
+                    const SizedBox(height: 20),
+                    _LoginCard(
+                      usernameController: usernameController,
+                      passwordController: passwordController,
+                      loading: authState.loading,
+                      errorText: errorText,
+                      onLogin: _submit,
+                    ),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Expanded(flex: 6, child: _HeroPanel()),
+                    const SizedBox(width: 24),
+                    Expanded(
+                      flex: 5,
+                      child: _LoginCard(
                         usernameController: usernameController,
                         passwordController: passwordController,
                         loading: authState.loading,
                         errorText: errorText,
                         onLogin: _submit,
                       ),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      const Expanded(
-                        flex: 6,
-                        child: _HeroPanel(),
-                      ),
-                      const SizedBox(width: 24),
-                      Expanded(
-                        flex: 5,
-                        child: _LoginCard(
-                          usernameController: usernameController,
-                          passwordController: passwordController,
-                          loading: authState.loading,
-                          errorText: errorText,
-                          onLogin: _submit,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
+                );
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight - 48,
+              ),
+              child: content,
+            ),
           );
         },
       ),
@@ -85,10 +90,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Future<void> _submit() async {
     setState(() => errorText = null);
     try {
-      await ref.read(authControllerProvider.notifier).login(
-            usernameController.text.trim(),
-            passwordController.text,
-          );
+      await ref
+          .read(authControllerProvider.notifier)
+          .login(usernameController.text.trim(), passwordController.text);
     } catch (error) {
       setState(() => errorText = '$error');
     }
@@ -121,14 +125,13 @@ class _HeroPanel extends StatelessWidget {
           ),
           SizedBox(height: compact ? 22 : 32),
           Text(
-            '用一套轻量而干净的控制面板，管理你的设备、执行器与远程对话。',
-            style: compact ? theme.textTheme.headlineMedium : theme.textTheme.headlineLarge,
+            '用统一面板管理设备、项目与远程会话。',
+            style: compact
+                ? theme.textTheme.headlineMedium
+                : theme.textTheme.headlineLarge,
           ),
           const SizedBox(height: 18),
-          Text(
-            '支持设备归属、项目级 agent、会话历史、文件输入和审批处理。',
-            style: theme.textTheme.bodyLarge,
-          ),
+          Text('保持连接、快速切换、专注处理当前任务。', style: theme.textTheme.bodyLarge),
           SizedBox(height: compact ? 24 : 36),
           Wrap(
             spacing: 12,
@@ -141,7 +144,8 @@ class _HeroPanel extends StatelessWidget {
           ),
           if (!compact) ...[
             const SizedBox(height: 36),
-            Expanded(
+            SizedBox(
+              height: 280,
               child: Container(
                 width: double.infinity,
                 decoration: BoxDecoration(
@@ -154,9 +158,21 @@ class _HeroPanel extends StatelessWidget {
                 ),
                 child: const Stack(
                   children: [
-                    Positioned(top: 32, left: 32, child: _OrbitCard(title: '设备矩阵')),
-                    Positioned(top: 96, right: 32, child: _OrbitCard(title: '项目执行器')),
-                    Positioned(bottom: 42, left: 72, child: _OrbitCard(title: '对话审批流')),
+                    Positioned(
+                      top: 32,
+                      left: 32,
+                      child: _OrbitCard(title: '设备矩阵'),
+                    ),
+                    Positioned(
+                      top: 96,
+                      right: 32,
+                      child: _OrbitCard(title: '项目执行器'),
+                    ),
+                    Positioned(
+                      bottom: 42,
+                      left: 72,
+                      child: _OrbitCard(title: '对话审批流'),
+                    ),
                   ],
                 ),
               ),

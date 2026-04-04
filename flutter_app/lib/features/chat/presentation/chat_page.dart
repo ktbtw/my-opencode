@@ -12,21 +12,25 @@ import '../data/chat_api.dart';
 import '../domain/chat_models.dart';
 
 final chatApiProvider = Provider((ref) => const ChatApi());
-final chatSessionsProvider = FutureProvider.family<List<SessionInfo>, String>((ref, agentId) async {
+final chatSessionsProvider = FutureProvider.family<List<SessionInfo>, String>((
+  ref,
+  agentId,
+) async {
   if (agentId.isEmpty) return const [];
   final auth = ref.watch(authControllerProvider);
-  return ref.watch(chatApiProvider).listSessions(
-        accessToken: auth.accessToken,
-        agentId: agentId,
-      );
+  return ref
+      .watch(chatApiProvider)
+      .listSessions(accessToken: auth.accessToken, agentId: agentId);
 });
-final chatTurnsProvider = FutureProvider.family<List<ChatTurn>, String>((ref, sessionId) async {
+final chatTurnsProvider = FutureProvider.family<List<ChatTurn>, String>((
+  ref,
+  sessionId,
+) async {
   if (sessionId.isEmpty) return const [];
   final auth = ref.watch(authControllerProvider);
-  return ref.watch(chatApiProvider).listTurns(
-        accessToken: auth.accessToken,
-        sessionId: sessionId,
-      );
+  return ref
+      .watch(chatApiProvider)
+      .listTurns(accessToken: auth.accessToken, sessionId: sessionId);
 });
 
 class ChatPage extends ConsumerStatefulWidget {
@@ -69,13 +73,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final turnsValue = ref.watch(chatTurnsProvider(currentSessionId));
     final mobile = MediaQuery.of(context).size.width < 980;
 
-    ref.listen<AsyncValue<List<SessionInfo>>>(chatSessionsProvider(widget.agentId), (previous, next) {
-      next.whenData((sessions) {
-        if (currentSessionId.isEmpty && sessions.isNotEmpty) {
-          setState(() => currentSessionId = sessions.first.sessionId);
-        }
-      });
-    });
+    ref.listen<AsyncValue<List<SessionInfo>>>(
+      chatSessionsProvider(widget.agentId),
+      (previous, next) {
+        next.whenData((sessions) {
+          if (currentSessionId.isEmpty && sessions.isNotEmpty) {
+            setState(() => currentSessionId = sessions.first.sessionId);
+          }
+        });
+      },
+    );
 
     return SurfaceScaffold(
       child: Padding(
@@ -100,7 +107,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           child: _SessionSidebar(
                             sessionsValue: sessionsValue,
                             currentSessionId: currentSessionId,
-                            onSelect: (value) => setState(() => currentSessionId = value),
+                            onSelect: (value) =>
+                                setState(() => currentSessionId = value),
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -120,7 +128,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           child: _SessionSidebar(
                             sessionsValue: sessionsValue,
                             currentSessionId: currentSessionId,
-                            onSelect: (value) => setState(() => currentSessionId = value),
+                            onSelect: (value) =>
+                                setState(() => currentSessionId = value),
                           ),
                         ),
                         const SizedBox(width: 20),
@@ -175,7 +184,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Align(
                     alignment: Alignment.centerLeft,
-                    child: Text(errorText!, style: const TextStyle(color: Color(0xFFB42318))),
+                    child: Text(
+                      errorText!,
+                      style: const TextStyle(color: Color(0xFFB42318)),
+                    ),
                   ),
                 ),
               Row(
@@ -207,7 +219,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 children: [
                   Expanded(
                     child: Text(
-                      currentSessionId.isEmpty ? '新对话将自动创建会话' : '当前会话：$currentSessionId',
+                      currentSessionId.isEmpty
+                          ? '新对话将自动创建会话'
+                          : '当前会话：$currentSessionId',
                     ),
                   ),
                   FilledButton(
@@ -233,7 +247,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<void> _pickFiles() async {
-    final result = await FilePicker.platform.pickFiles(withData: true, allowMultiple: true);
+    final result = await FilePicker.platform.pickFiles(
+      withData: true,
+      allowMultiple: true,
+    );
     if (result == null) return;
     setState(() {
       attachments.addAll(
@@ -264,7 +281,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final auth = ref.read(authControllerProvider);
     final text = inputController.text.trim();
     if (text.isEmpty && attachments.isEmpty) return;
-    final sessionId = currentSessionId.isEmpty ? 'sess_${DateTime.now().millisecondsSinceEpoch}' : currentSessionId;
+    final sessionId = currentSessionId.isEmpty
+        ? 'sess_${DateTime.now().millisecondsSinceEpoch}'
+        : currentSessionId;
     setState(() {
       currentSessionId = sessionId;
       sending = true;
@@ -273,7 +292,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
 
     final parts = <TaskPart>[
-      if (text.isNotEmpty) TaskPart(type: 'text', text: text, mime: '', filename: '', url: ''),
+      if (text.isNotEmpty)
+        TaskPart(type: 'text', text: text, mime: '', filename: '', url: ''),
       ...attachments.map((file) => file.toPart()),
     ];
 
@@ -304,13 +324,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final api = ref.read(chatApiProvider);
 
     for (var i = 0; i < 60; i++) {
-      final turn = await api.getTurn(accessToken: auth.accessToken, taskId: taskId);
+      final turn = await api.getTurn(
+        accessToken: auth.accessToken,
+        taskId: taskId,
+      );
       if (!mounted) return;
       if (turn.status == 'waiting_approval' && turn.permissionId.isNotEmpty) {
         setState(() => approvalTurn = turn);
         return;
       }
-      if (turn.status == 'completed' || turn.status == 'failed' || turn.status == 'cancelled') {
+      if (turn.status == 'completed' ||
+          turn.status == 'failed' ||
+          turn.status == 'cancelled') {
         setState(() => approvalTurn = null);
         return;
       }
@@ -323,7 +348,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (turn == null) return;
     final auth = ref.read(authControllerProvider);
     try {
-      await ref.read(chatApiProvider).approve(
+      await ref
+          .read(chatApiProvider)
+          .approve(
             accessToken: auth.accessToken,
             taskId: turn.taskId,
             permissionId: turn.permissionId,
@@ -380,9 +407,15 @@ class _ChatHeader extends StatelessWidget {
             child: DropdownButton<String>(
               value: currentModel,
               items: const [
-                DropdownMenuItem(value: 'gpt-5.4-mini', child: Text('gpt-5.4-mini')),
+                DropdownMenuItem(
+                  value: 'gpt-5.4-mini',
+                  child: Text('gpt-5.4-mini'),
+                ),
                 DropdownMenuItem(value: 'gpt-5.4', child: Text('gpt-5.4')),
-                DropdownMenuItem(value: 'claude-sonnet', child: Text('claude-sonnet')),
+                DropdownMenuItem(
+                  value: 'claude-sonnet',
+                  child: Text('claude-sonnet'),
+                ),
               ],
               onChanged: (value) {
                 if (value != null) onModelChanged(value);
@@ -391,10 +424,7 @@ class _ChatHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        FilledButton.tonal(
-          onPressed: onNewSession,
-          child: const Text('新建对话'),
-        ),
+        FilledButton.tonal(onPressed: onNewSession, child: const Text('新建对话')),
       ],
     );
   }
@@ -433,7 +463,9 @@ class _SessionSidebar extends StatelessWidget {
                 child: Ink(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: selected ? const Color(0xFFDFF0FF) : const Color(0xFFF8FBFF),
+                    color: selected
+                        ? const Color(0xFFDFF0FF)
+                        : const Color(0xFFF8FBFF),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: const Color(0xFFD4E5FF)),
                   ),
@@ -441,13 +473,17 @@ class _SessionSidebar extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        session.summary.isEmpty ? session.sessionId : session.summary,
+                        session.summary.isEmpty
+                            ? session.sessionId
+                            : session.summary,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        session.updatedAt == null ? '-' : _formatDate(session.updatedAt!),
+                        session.updatedAt == null
+                            ? '-'
+                            : _formatDate(session.updatedAt!),
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
                     ],
@@ -490,7 +526,8 @@ class _ChatBody extends StatelessWidget {
                   controller: scrollController,
                   itemCount: turns.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 16),
-                  itemBuilder: (context, index) => _TurnView(turn: turns[index]),
+                  itemBuilder: (context, index) =>
+                      _TurnView(turn: turns[index]),
                 );
               },
             ),
@@ -537,7 +574,9 @@ class _TurnView extends StatelessWidget {
               borderRadius: BorderRadius.circular(22),
             ),
             child: Text(
-              turn.error.isNotEmpty ? turn.error : (turn.result.isEmpty ? '处理中...' : turn.result),
+              turn.error.isNotEmpty
+                  ? turn.error
+                  : (turn.result.isEmpty ? '处理中...' : turn.result),
             ),
           ),
         ),
@@ -593,7 +632,9 @@ class PickedAttachment {
 
   factory PickedAttachment.fromFile(PlatformFile file, bool image) {
     final bytes = file.bytes ?? const <int>[];
-    final mime = image ? 'image/${_ext(file.extension)}' : 'application/octet-stream';
+    final mime = image
+        ? 'image/${_ext(file.extension)}'
+        : 'application/octet-stream';
     return PickedAttachment(
       name: file.name,
       mime: mime,

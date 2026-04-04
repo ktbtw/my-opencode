@@ -206,6 +206,13 @@ curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
 - 2026-04-04 已验证 `backend` 健康检查通过
 - 2026-04-04 已验证 `serve relay` 端到端链路通过
 
+补充说明：
+
+- 当前真实后端已要求 `device.hello.payload.operator_key`
+- 旧的 `serve` 测试命令若未设置 `OPENCODE_RELAY_OPERATOR_KEY` 会被后端拒绝
+- `provider.xcodebest` 配置需要包含 `id`、`env`
+- 当前 `opencode` 模型模态枚举不接受 `file`，可使用 `pdf` 表示文档类输入
+
 ## 4.1 验证任务列表接口与 MySQL 持久化
 
 先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
@@ -258,6 +265,106 @@ setInterval(() => {
     payload: { agent_id: "macbook-main:tasks-demo", running_task_id: "" }
   }));
 }, 5000);
+
+## 5. 验证认证、设备归属与真实 OpenCode serve 联调
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+### 5.1 登录获取 `access_token` 与 `operator_key`
+
+```bash
+curl -s http://127.0.0.1:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123456"}'
+```
+
+预期结果：
+
+- 返回 `access_token`
+- 返回 `operator.operator_key`
+
+### 5.2 启动真实 OpenCode serve 并接入 relay
+
+在目录 `/Users/yuminghao/Downloads/chat-codex/my-opencode` 下执行：
+
+```bash
+export OPENCODE_CONFIG_CONTENT='{"enabled_providers":["xcodebest"],"provider":{"xcodebest":{"id":"xcodebest","name":"xcodebest","env":[],"npm":"@ai-sdk/openai-compatible","api":"https://api.xcode.best/v1","options":{"apiKey":"<YOUR_API_KEY>","baseURL":"https://api.xcode.best/v1"},"models":{"gpt-5.4-mini":{"id":"gpt-5.4-mini","name":"gpt-5.4-mini","release_date":"2025-01-01","attachment":true,"reasoning":true,"temperature":true,"tool_call":true,"limit":{"context":128000,"output":8192},"options":{},"modalities":{"input":["text","image","pdf"],"output":["text"]}}}}},"model":"xcodebest/gpt-5.4-mini","small_model":"xcodebest/gpt-5.4-mini"}'
+export OPENCODE_RELAY_URL='http://127.0.0.1:8080'
+export OPENCODE_RELAY_OPERATOR_KEY='<OPERATOR_KEY>'
+export OPENCODE_RELAY_AGENT_ID='macbook-main:my-opencode'
+export OPENCODE_RELAY_MACHINE_ID='macbook-main'
+export OPENCODE_RELAY_PROJECT_ID='my-opencode'
+export OPENCODE_RELAY_PROJECT_ROOT='/Users/yuminghao/Downloads/chat-codex/my-opencode'
+export OPENCODE_RELAY_PERMISSION_MODE='ask'
+export OPENCODE_SERVER_PASSWORD=''
+export OPENCODE_DISABLE_DEFAULT_PLUGINS=1
+export OPENCODE_DISABLE_MODELS_FETCH=1
+export OPENCODE_DISABLE_AUTOUPDATE=1
+export OPENCODE_DISABLE_PROJECT_CONFIG=1
+export OPENCODE_DISABLE_CLAUDE_CODE=1
+export BUN_INSTALL_CACHE_DIR='/opt/homebrew/lib/node_cache'
+bun run --cwd packages/opencode src/index.ts serve --hostname 127.0.0.1 --port 4096
+```
+
+预期结果：
+
+- 终端输出 `opencode server listening on http://127.0.0.1:4096`
+- 后端设备列表出现目标设备与 agent
+
+### 5.3 验证设备列表与设备详情
+
+```bash
+curl -s http://127.0.0.1:8080/api/devices \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+
+curl -s http://127.0.0.1:8080/api/devices/macbook-main \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
+
+预期结果：
+
+- 列表中包含 `machine_id=macbook-main`
+- `agents` 中包含 `agent_id=macbook-main:my-opencode`
+
+### 5.4 通过后端向真实 serve 下发任务
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>' \
+  -d '{
+    "agent_id":"macbook-main:my-opencode",
+    "project_id":"my-opencode",
+    "parts":[
+      {"type":"text","text":"请只回复: ok"}
+    ]
+  }'
+```
+
+记录返回的 `task_id` 后查询：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID> \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>'
+```
+
+预期结果：
+
+- 创建任务后返回 `status=dispatched`
+- 稍后查询返回 `status=completed`
+- 查询结果中 `result=ok`
+- 查询结果中包含合法 `session_id`
+
+本次实测结果：
+
+- 2026-04-04 已验证 `POST /api/auth/login` 返回 `access_token` 与 `operator_key`
+- 2026-04-04 已验证真实 `opencode serve` 成功连接 relay
+- 2026-04-04 已验证 `GET /api/devices` 与 `GET /api/devices/macbook-main` 返回在线设备
+- 2026-04-04 已验证真实任务 `请只回复: ok` 最终返回 `result=ok`
 '
 ```
 

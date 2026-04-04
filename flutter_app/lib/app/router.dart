@@ -25,19 +25,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginPage(),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
       GoRoute(
         path: '/devices',
         builder: (context, state) => const DevicesPage(),
       ),
       GoRoute(
         path: '/devices/:machineId',
-        builder: (context, state) => DeviceDetailPage(
-          machineId: state.pathParameters['machineId']!,
-        ),
+        builder: (context, state) =>
+            DeviceDetailPage(machineId: state.pathParameters['machineId']!),
       ),
       GoRoute(
         path: '/chat',

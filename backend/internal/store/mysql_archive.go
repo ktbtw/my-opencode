@@ -425,7 +425,33 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
+	if err := ensureColumn(ctx, db, "operators", "username", "ALTER TABLE operators ADD COLUMN username VARCHAR(64) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "operators", "password_hash", "ALTER TABLE operators ADD COLUMN password_hash VARCHAR(255) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "operators", "operator_key", "ALTER TABLE operators ADD COLUMN operator_key VARCHAR(128) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func ensureColumn(ctx context.Context, db *sql.DB, tableName, columnName, alterSQL string) error {
+	var count int
+	if err := db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+		tableName,
+		columnName,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, alterSQL)
+	return err
 }
 
 func ensureDefaultOperator(ctx context.Context, db *sql.DB) error {
@@ -505,9 +531,6 @@ var schemaStatements = []string{
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_operator_uid (operator_uid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
-	`ALTER TABLE operators ADD COLUMN IF NOT EXISTS username VARCHAR(64) NOT NULL DEFAULT ''`,
-	`ALTER TABLE operators ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NOT NULL DEFAULT ''`,
-	`ALTER TABLE operators ADD COLUMN IF NOT EXISTS operator_key VARCHAR(128) NOT NULL DEFAULT ''`,
 	`CREATE TABLE IF NOT EXISTS machines (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   machine_id VARCHAR(128) NOT NULL,

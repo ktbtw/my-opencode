@@ -13,7 +13,9 @@ class ChatApi {
     required String agentId,
   }) async {
     final response = await http.get(
-      Uri.parse('${AppConfig.apiBaseUrl}/api/sessions?agent_id=$agentId&limit=50'),
+      Uri.parse(
+        '${AppConfig.apiBaseUrl}/api/sessions?agent_id=$agentId&limit=50',
+      ),
       headers: _headers(accessToken),
     );
     if (response.statusCode != 200) {
@@ -31,7 +33,9 @@ class ChatApi {
     required String sessionId,
   }) async {
     final response = await http.get(
-      Uri.parse('${AppConfig.apiBaseUrl}/api/tasks?session_id=$sessionId&limit=100'),
+      Uri.parse(
+        '${AppConfig.apiBaseUrl}/api/tasks?session_id=$sessionId&limit=100',
+      ),
       headers: _headers(accessToken),
     );
     if (response.statusCode != 200) {
@@ -60,10 +64,7 @@ class ChatApi {
   }) async {
     final response = await http.post(
       Uri.parse('${AppConfig.apiBaseUrl}/api/tasks'),
-      headers: {
-        ..._headers(accessToken),
-        'Content-Type': 'application/json',
-      },
+      headers: {..._headers(accessToken), 'Content-Type': 'application/json'},
       body: jsonEncode({
         'agent_id': agentId,
         'project_id': projectId,
@@ -100,14 +101,8 @@ class ChatApi {
   }) async {
     final response = await http.post(
       Uri.parse('${AppConfig.apiBaseUrl}/api/tasks/$taskId/approval'),
-      headers: {
-        ..._headers(accessToken),
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'permission_id': permissionId,
-        'reply': reply,
-      }),
+      headers: {..._headers(accessToken), 'Content-Type': 'application/json'},
+      body: jsonEncode({'permission_id': permissionId, 'reply': reply}),
     );
     if (response.statusCode != 202) {
       throw Exception('审批失败: ${response.statusCode}');
@@ -115,7 +110,6 @@ class ChatApi {
   }
 
   Map<String, String> _headers(String accessToken) => {
-        'Authorization': 'Bearer $accessToken',
-      };
+    'Authorization': 'Bearer $accessToken',
+  };
 }
-

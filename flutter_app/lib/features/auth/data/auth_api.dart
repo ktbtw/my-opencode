@@ -6,10 +6,7 @@ import '../../../core/config/app_config.dart';
 import '../domain/operator_profile.dart';
 
 class LoginResult {
-  LoginResult({
-    required this.accessToken,
-    required this.operator,
-  });
+  LoginResult({required this.accessToken, required this.operator});
 
   final String accessToken;
   final OperatorProfile operator;
@@ -25,10 +22,7 @@ class AuthApi {
     final response = await http.post(
       Uri.parse('${AppConfig.apiBaseUrl}/api/auth/login'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': username,
-        'password': password,
-      }),
+      body: jsonEncode({'username': username, 'password': password}),
     );
 
     if (response.statusCode != 200) {
@@ -38,7 +32,9 @@ class AuthApi {
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     return LoginResult(
       accessToken: json['access_token'] as String? ?? '',
-      operator: OperatorProfile.fromJson(json['operator'] as Map<String, dynamic>),
+      operator: OperatorProfile.fromJson(
+        json['operator'] as Map<String, dynamic>,
+      ),
     );
   }
 }

@@ -1,9 +1,9 @@
 import 'dart:convert';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import '../../../core/config/app_config.dart';
-import '../../auth/application/auth_controller.dart';
 import '../domain/device_models.dart';
 
 class DevicesApi {
@@ -32,12 +32,14 @@ class DevicesApi {
     if (response.statusCode != 200) {
       throw Exception('设备详情加载失败: ${response.statusCode}');
     }
-    return DeviceInfo.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return DeviceInfo.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Map<String, String> _headers(String accessToken) => {
-        'Authorization': 'Bearer $accessToken',
-      };
+    'Authorization': 'Bearer $accessToken',
+  };
 }
 
 final devicesApiProvider = Provider((ref) => const DevicesApi());

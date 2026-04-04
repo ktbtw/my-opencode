@@ -95,10 +95,7 @@ class _TopBar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        FilledButton.tonal(
-          onPressed: onLogout,
-          child: const Text('退出'),
-        ),
+        FilledButton.tonal(onPressed: onLogout, child: const Text('退出')),
       ],
     );
   }
@@ -161,7 +158,10 @@ class _DeviceCard extends StatelessWidget {
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFD9EAFF),
                     borderRadius: BorderRadius.circular(999),

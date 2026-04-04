@@ -110,9 +110,11 @@ class AuthController extends StateNotifier<AuthState> {
 
 final authApiProvider = Provider((ref) => const AuthApi());
 final authStorageProvider = Provider((ref) => const AuthStorage());
-final authControllerProvider = StateNotifierProvider<AuthController, AuthState>((ref) {
-  return AuthController(
-    ref.watch(authApiProvider),
-    ref.watch(authStorageProvider),
-  );
-});
+final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
+  (ref) {
+    return AuthController(
+      ref.watch(authApiProvider),
+      ref.watch(authStorageProvider),
+    );
+  },
+);

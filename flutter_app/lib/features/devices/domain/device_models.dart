@@ -1,8 +1,5 @@
 class AgentProject {
-  AgentProject({
-    required this.projectId,
-    required this.root,
-  });
+  AgentProject({required this.projectId, required this.root});
 
   final String projectId;
   final String root;

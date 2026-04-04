@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 
 class SurfaceScaffold extends StatelessWidget {
-  const SurfaceScaffold({
-    super.key,
-    required this.child,
-  });
+  const SurfaceScaffold({super.key, required this.child});
 
   final Widget child;
 
@@ -16,19 +13,13 @@ class SurfaceScaffold extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFFF5FAFF),
-              Color(0xFFE9F3FF),
-              Color(0xFFF8FCFF),
-            ],
+            colors: [Color(0xFFF5FAFF), Color(0xFFE9F3FF), Color(0xFFF8FCFF)],
           ),
         ),
         child: Stack(
           children: [
             Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(painter: _GridPainter()),
-              ),
+              child: IgnorePointer(child: CustomPaint(painter: _GridPainter())),
             ),
             SafeArea(
               child: Center(
