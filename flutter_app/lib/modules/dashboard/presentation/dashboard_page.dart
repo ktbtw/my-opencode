@@ -8,14 +8,8 @@ class DashboardPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const PanelCard(
-      title: 'Dashboard',
-      subtitle: '总览页后续接全局统计、任务趋势和审批队列。',
-      child: SizedBox(
-        height: 320,
-        child: Center(
-          child: Text('总览模块将在后续模块中接入真实统计数据。'),
-        ),
-      ),
+      title: '总览',
+      child: SizedBox(height: 320, child: Center(child: Text('总览'))),
     );
   }
 }

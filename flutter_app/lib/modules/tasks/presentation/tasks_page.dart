@@ -23,8 +23,8 @@ class _TasksPageState extends ConsumerState<TasksPage> {
     return tasksValue.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (error, _) => PanelCard(
-        title: 'Tasks',
-        subtitle: '任务台账加载失败，请先确认后端任务列表接口已联通。',
+        title: '任务',
+        subtitle: '加载失败',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -39,13 +39,9 @@ class _TasksPageState extends ConsumerState<TasksPage> {
       ),
       data: (tasks) {
         if (tasks.isEmpty) {
-          return PanelCard(
-            title: 'Tasks',
-            subtitle: '当前还没有任务记录。后续从 Agents 或 Dashboard 下发任务后会在这里沉淀。',
-            child: const SizedBox(
-              height: 240,
-              child: Center(child: Text('暂无任务记录')),
-            ),
+          return const PanelCard(
+            title: '任务',
+            child: SizedBox(height: 240, child: Center(child: Text('暂无任务记录'))),
           );
         }
 
@@ -58,93 +54,38 @@ class _TasksPageState extends ConsumerState<TasksPage> {
 
         return LayoutBuilder(
           builder: (context, constraints) {
-            final summary = _TaskStats.fromTasks(tasks);
-            if (constraints.maxWidth < 980) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _TaskStatsPanel(summary: summary),
-                  const SizedBox(height: 16),
-                  _TaskList(
-                    tasks: tasks,
-                    selected: current,
-                    onTap: (value) => setState(() => selected = value),
-                  ),
-                  const SizedBox(height: 16),
-                  _TaskDetail(task: current),
-                ],
-              );
-            }
-
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 6,
-                  child: Column(
+            final content = constraints.maxWidth < 980
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _TaskStatsPanel(summary: summary),
-                      const SizedBox(height: 16),
                       _TaskList(
                         tasks: tasks,
                         selected: current,
                         onTap: (value) => setState(() => selected = value),
                       ),
+                      const SizedBox(height: 20),
+                      _TaskDetail(task: current),
                     ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(flex: 4, child: _TaskDetail(task: current)),
-              ],
-            );
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 7,
+                        child: _TaskList(
+                          tasks: tasks,
+                          selected: current,
+                          onTap: (value) => setState(() => selected = value),
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      Expanded(flex: 5, child: _TaskDetail(task: current)),
+                    ],
+                  );
+            return SingleChildScrollView(child: content);
           },
         );
       },
-    );
-  }
-}
-
-class _TaskStatsPanel extends StatelessWidget {
-  const _TaskStatsPanel({required this.summary});
-
-  final _TaskStats summary;
-
-  @override
-  Widget build(BuildContext context) {
-    return PanelCard(
-      title: 'Task Ledger',
-      subtitle: '任务是串起执行、会话、审批的主线。这里先做最近任务台账，下一阶段接详情流和重试动作。',
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        children: [
-          _StatTile(
-            label: '总任务数',
-            value: '${summary.total}',
-            tone: const Color(0xFFE8E2D4),
-          ),
-          _StatTile(
-            label: '运行中',
-            value: '${summary.running}',
-            tone: const Color(0xFFFFE7BF),
-          ),
-          _StatTile(
-            label: '待审批',
-            value: '${summary.waitingApproval}',
-            tone: const Color(0xFFFFE0C7),
-          ),
-          _StatTile(
-            label: '已完成',
-            value: '${summary.completed}',
-            tone: const Color(0xFFE3F0E7),
-          ),
-          _StatTile(
-            label: '失败',
-            value: '${summary.failed}',
-            tone: const Color(0xFFF9D8D1),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -163,70 +104,94 @@ class _TaskList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PanelCard(
-      title: 'Recent Tasks',
-      subtitle: '按创建时间倒序。后续会补 agent、状态、项目等多维筛选。',
+      title: '任务列表',
       child: Column(
         children: tasks
             .map(
               (task) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(22),
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _TaskListItem(
+                  task: task,
+                  selected: selected.taskId == task.taskId,
                   onTap: () => onTap(task),
-                  child: Ink(
-                    decoration: BoxDecoration(
-                      color: selected.taskId == task.taskId
-                          ? const Color(0xFFEAF3E8)
-                          : const Color(0xFFF8F6EF),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                        color: selected.taskId == task.taskId
-                            ? const Color(0xFF14532D)
-                            : const Color(0xFFD9D2C3),
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                task.primaryPrompt,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            _StatusBadge(status: task.status),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 8,
-                          children: [
-                            _MetaChip(label: 'Task', value: task.taskId),
-                            _MetaChip(label: 'Agent', value: task.agentId),
-                            _MetaChip(label: 'Project', value: task.projectId),
-                          ],
-                        ),
-                        if (task.updatedAt != null) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            '更新于 ${_formatDateTime(task.updatedAt)}',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
                 ),
               ),
             )
             .toList(),
+      ),
+    );
+  }
+}
+
+class _TaskListItem extends StatelessWidget {
+  const _TaskListItem({
+    required this.task,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final TaskSummary task;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(24),
+      onTap: onTap,
+      child: Ink(
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEAF3E8) : const Color(0xFFF8F6EF),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: selected ? const Color(0xFF14532D) : const Color(0xFFD9D2C3),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 132),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        task.primaryPrompt,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _StatusBadge(status: task.status),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: [
+                    _MetaChip(label: '任务', value: task.taskId),
+                    _MetaChip(label: '执行器', value: task.agentId),
+                    _MetaChip(label: '项目', value: task.projectId),
+                  ],
+                ),
+                if (task.updatedAt != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    '更新时间 ${_formatDateTime(task.updatedAt)}',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -242,8 +207,7 @@ class _TaskDetail extends StatelessWidget {
     final theme = Theme.of(context);
 
     return PanelCard(
-      title: 'Task Detail',
-      subtitle: '这里先放任务主信息、输入摘要和结果摘要。后续会在这里接事件流、取消、审批、继续对话。',
+      title: '任务详情',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -253,67 +217,116 @@ class _TaskDetail extends StatelessWidget {
             children: [
               _StatusBadge(status: task.status),
               if (task.sessionId.isNotEmpty)
-                _MetaChip(label: 'Session', value: task.sessionId),
+                _MetaChip(label: '会话', value: task.sessionId),
             ],
           ),
-          const SizedBox(height: 18),
-          _DetailRow(label: 'Task ID', value: task.taskId),
-          _DetailRow(label: 'Agent ID', value: task.agentId),
-          _DetailRow(
-            label: 'Machine ID',
-            value: task.machineId.isEmpty ? '-' : task.machineId,
-          ),
-          _DetailRow(label: 'Project ID', value: task.projectId),
-          _DetailRow(
-            label: 'Project Root',
-            value: task.projectRoot.isEmpty ? '-' : task.projectRoot,
-          ),
-          _DetailRow(label: 'Created', value: _formatDateTime(task.createdAt)),
-          _DetailRow(label: 'Updated', value: _formatDateTime(task.updatedAt)),
-          const SizedBox(height: 12),
-          Text('输入 Parts', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 10),
-          ...task.parts.map(
-            (part) => Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8F6EF),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFD9D2C3)),
+          const SizedBox(height: 16),
+          _InfoSection(
+            title: '基础信息',
+            children: [
+              _DetailRow(label: '任务 ID', value: task.taskId),
+              _DetailRow(label: '执行器 ID', value: task.agentId),
+              _DetailRow(
+                label: '设备 ID',
+                value: task.machineId.isEmpty ? '-' : task.machineId,
               ),
-              child: Text(
-                _describePart(part),
-                style: theme.textTheme.bodyMedium,
+              _DetailRow(label: '项目 ID', value: task.projectId),
+              _DetailRow(
+                label: '项目目录',
+                value: task.projectRoot.isEmpty ? '-' : task.projectRoot,
               ),
-            ),
-          ),
-          if (task.parts.isEmpty) const Text('当前没有记录到输入 parts。'),
-          const SizedBox(height: 12),
-          Text('执行结果', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: task.error.isEmpty
-                  ? const Color(0xFFEFF4EC)
-                  : const Color(0xFFFFF1EC),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: task.error.isEmpty
-                    ? const Color(0xFFCFE0D0)
-                    : const Color(0xFFF2C7B8),
+              _DetailRow(label: '创建时间', value: _formatDateTime(task.createdAt)),
+              _DetailRow(
+                label: '更新时间',
+                value: _formatDateTime(task.updatedAt),
+                compact: true,
               ),
-            ),
-            child: Text(
-              task.error.isNotEmpty
-                  ? task.error
-                  : (task.result.isEmpty ? '尚无结果输出' : task.result),
-              style: theme.textTheme.bodyLarge,
-            ),
+            ],
           ),
+          const SizedBox(height: 16),
+          _InfoSection(
+            title: '输入内容',
+            children: task.parts.isEmpty
+                ? const [Text('暂无输入内容')]
+                : task.parts
+                      .map(
+                        (part) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFCF6),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: const Color(0xFFD9D2C3),
+                              ),
+                            ),
+                            child: SelectableText(
+                              _describePart(part),
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+          ),
+          const SizedBox(height: 16),
+          _InfoSection(
+            title: '执行结果',
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: task.error.isEmpty
+                      ? const Color(0xFFEFF4EC)
+                      : const Color(0xFFFFF1EC),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: task.error.isEmpty
+                        ? const Color(0xFFCFE0D0)
+                        : const Color(0xFFF2C7B8),
+                  ),
+                ),
+                child: SelectableText(
+                  task.error.isNotEmpty
+                      ? task.error
+                      : (task.result.isEmpty ? '暂无结果' : task.result),
+                  style: theme.textTheme.bodyLarge,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoSection extends StatelessWidget {
+  const _InfoSection({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F6EF),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFD9D2C3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: theme.textTheme.titleMedium),
+          const SizedBox(height: 14),
+          ...children,
         ],
       ),
     );
@@ -335,7 +348,7 @@ class _StatusBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        status,
+        _statusLabel(status),
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
           fontWeight: FontWeight.w700,
           color: tone.$2,
@@ -360,7 +373,7 @@ class _MetaChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        '$label: $value',
+        '$label：$value',
         style: Theme.of(context).textTheme.bodyMedium,
       ),
     );
@@ -368,101 +381,29 @@ class _MetaChip extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
+  const _DetailRow({
+    required this.label,
+    required this.value,
+    this.compact = false,
+  });
 
   final String label;
   final String value;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.only(bottom: compact ? 0 : 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, style: theme.textTheme.bodyMedium),
           const SizedBox(height: 4),
-          Text(value, style: theme.textTheme.titleMedium),
+          SelectableText(value, style: theme.textTheme.titleMedium),
         ],
       ),
-    );
-  }
-}
-
-class _StatTile extends StatelessWidget {
-  const _StatTile({
-    required this.label,
-    required this.value,
-    required this.tone,
-  });
-
-  final String label;
-  final String value;
-  final Color tone;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: 160,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: tone,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: theme.textTheme.bodyMedium),
-          const SizedBox(height: 8),
-          Text(value, style: theme.textTheme.headlineMedium),
-        ],
-      ),
-    );
-  }
-}
-
-class _TaskStats {
-  const _TaskStats({
-    required this.total,
-    required this.running,
-    required this.waitingApproval,
-    required this.completed,
-    required this.failed,
-  });
-
-  final int total;
-  final int running;
-  final int waitingApproval;
-  final int completed;
-  final int failed;
-
-  factory _TaskStats.fromTasks(List<TaskSummary> tasks) {
-    var running = 0;
-    var waitingApproval = 0;
-    var completed = 0;
-    var failed = 0;
-    for (final task in tasks) {
-      switch (task.status) {
-        case 'running':
-        case 'dispatched':
-          running++;
-        case 'waiting_approval':
-          waitingApproval++;
-        case 'completed':
-          completed++;
-        case 'failed':
-        case 'cancelled':
-          failed++;
-      }
-    }
-    return _TaskStats(
-      total: tasks.length,
-      running: running,
-      waitingApproval: waitingApproval,
-      completed: completed,
-      failed: failed,
     );
   }
 }
@@ -470,9 +411,9 @@ class _TaskStats {
 String _describePart(TaskPartSummary part) {
   switch (part.type) {
     case 'text':
-      return part.text.isEmpty ? 'text part' : part.text;
+      return part.text.isEmpty ? '文本' : part.text;
     case 'file':
-      return 'file: ${part.filename.isEmpty ? 'unnamed' : part.filename} (${part.mime.isEmpty ? 'unknown' : part.mime})';
+      return '文件：${part.filename.isEmpty ? '未命名文件' : part.filename} (${part.mime.isEmpty ? '未知类型' : part.mime})';
     default:
       return part.type;
   }
@@ -503,5 +444,26 @@ String _formatDateTime(DateTime? value) {
       return (const Color(0xFFF9D8D1), const Color(0xFF991B1B));
     default:
       return (const Color(0xFFE7E5DF), const Color(0xFF4B5563));
+  }
+}
+
+String _statusLabel(String status) {
+  switch (status) {
+    case 'completed':
+      return '已完成';
+    case 'running':
+      return '运行中';
+    case 'dispatched':
+      return '已派发';
+    case 'waiting_approval':
+      return '待审批';
+    case 'failed':
+      return '失败';
+    case 'cancelled':
+      return '已取消';
+    case 'pending':
+      return '等待中';
+    default:
+      return status;
   }
 }

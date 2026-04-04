@@ -4,15 +4,17 @@ class PanelCard extends StatelessWidget {
   const PanelCard({
     super.key,
     required this.title,
-    required this.subtitle,
     required this.child,
+    this.subtitle,
     this.expandChild = false,
+    this.padding = const EdgeInsets.all(24),
   });
 
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final Widget child;
   final bool expandChild;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
@@ -20,15 +22,18 @@ class PanelCard extends StatelessWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: padding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: expandChild ? MainAxisSize.max : MainAxisSize.min,
           children: [
             Text(title, style: theme.textTheme.titleLarge),
-            const SizedBox(height: 6),
-            Text(subtitle, style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 20),
+            if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(subtitle!, style: theme.textTheme.bodyMedium),
+              const SizedBox(height: 18),
+            ] else
+              const SizedBox(height: 18),
             if (expandChild) Expanded(child: child) else child,
           ],
         ),

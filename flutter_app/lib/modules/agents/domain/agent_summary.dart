@@ -1,8 +1,5 @@
 class AgentProject {
-  const AgentProject({
-    required this.projectId,
-    required this.root,
-  });
+  const AgentProject({required this.projectId, required this.root});
 
   factory AgentProject.fromJson(Map<String, dynamic> json) {
     return AgentProject(

@@ -8,14 +8,8 @@ class ApprovalsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const PanelCard(
-      title: 'Approvals',
-      subtitle: '后续集中展示所有等待审批的危险操作。',
-      child: SizedBox(
-        height: 260,
-        child: Center(
-          child: Text('审批中心将在后续模块接入真实审批流。'),
-        ),
-      ),
+      title: '审批',
+      child: SizedBox(height: 260, child: Center(child: Text('审批'))),
     );
   }
 }

@@ -8,14 +8,8 @@ class SessionsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const PanelCard(
-      title: 'Sessions',
-      subtitle: '后续这里展示会话列表、连续上下文和继续提问入口。',
-      child: SizedBox(
-        height: 260,
-        child: Center(
-          child: Text('会话模块将在后续阶段接入。'),
-        ),
-      ),
+      title: '会话',
+      child: SizedBox(height: 260, child: Center(child: Text('会话'))),
     );
   }
 }
