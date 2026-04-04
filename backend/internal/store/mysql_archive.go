@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -83,6 +86,10 @@ func NewMySQLArchive(ctx context.Context, cfg MySQLConfig) (*MySQLArchive, error
 	db.SetConnMaxLifetime(30 * time.Minute)
 
 	if err := ensureSchema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureDefaultOperator(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -349,6 +356,59 @@ FROM sessions
 	return sessions, rows.Err()
 }
 
+func (m *MySQLArchive) AuthenticateOperator(username, password string) (*model.Operator, error) {
+	row := m.db.QueryRow(`
+SELECT id, operator_uid, username, name, operator_key, password_hash
+FROM operators
+WHERE username = ?
+`, username)
+
+	var (
+		operator     model.Operator
+		passwordHash string
+	)
+	if err := row.Scan(
+		&operator.ID,
+		&operator.OperatorUID,
+		&operator.Username,
+		&operator.Name,
+		&operator.OperatorKey,
+		&passwordHash,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if passwordHash != hashPassword(password) {
+		return nil, nil
+	}
+	return &operator, nil
+}
+
+func (m *MySQLArchive) GetOperatorByKey(operatorKey string) (*model.Operator, error) {
+	row := m.db.QueryRow(`
+SELECT id, operator_uid, username, name, operator_key
+FROM operators
+WHERE operator_key = ?
+`, operatorKey)
+
+	var operator model.Operator
+	if err := row.Scan(
+		&operator.ID,
+		&operator.OperatorUID,
+		&operator.Username,
+		&operator.Name,
+		&operator.OperatorKey,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &operator, nil
+}
+
 func (m *MySQLArchive) Close() error {
 	if m == nil || m.db == nil {
 		return nil
@@ -366,6 +426,26 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func ensureDefaultOperator(ctx context.Context, db *sql.DB) error {
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM operators WHERE username = ?", "admin").Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	key, err := randomHex(24)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+INSERT INTO operators (operator_uid, name, client_type, username, password_hash, operator_key)
+VALUES (?, ?, ?, ?, ?, ?)
+`, "op_admin", "管理员", "web", "admin", hashPassword("admin123456"), "opk_"+key)
+	return err
 }
 
 func nullString(value string) any {
@@ -399,16 +479,35 @@ func quoteIdent(value string) string {
 	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
 }
 
+func randomHex(size int) (string, error) {
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func hashPassword(password string) string {
+	sum := sha256.Sum256([]byte(password))
+	return hex.EncodeToString(sum[:])
+}
+
 var schemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS operators (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   operator_uid VARCHAR(64) NOT NULL,
   name VARCHAR(128) NOT NULL DEFAULT '',
   client_type VARCHAR(32) NOT NULL DEFAULT '',
+  username VARCHAR(64) NOT NULL DEFAULT '',
+  password_hash VARCHAR(255) NOT NULL DEFAULT '',
+  operator_key VARCHAR(128) NOT NULL DEFAULT '',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_operator_uid (operator_uid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+	`ALTER TABLE operators ADD COLUMN IF NOT EXISTS username VARCHAR(64) NOT NULL DEFAULT ''`,
+	`ALTER TABLE operators ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NOT NULL DEFAULT ''`,
+	`ALTER TABLE operators ADD COLUMN IF NOT EXISTS operator_key VARCHAR(128) NOT NULL DEFAULT ''`,
 	`CREATE TABLE IF NOT EXISTS machines (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   machine_id VARCHAR(128) NOT NULL,

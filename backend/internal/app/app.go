@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"relay-server/internal/api"
+	"relay-server/internal/auth"
 	"relay-server/internal/broker"
 	"relay-server/internal/model"
 	"relay-server/internal/store"
@@ -19,6 +20,7 @@ import (
 type App struct {
 	store  *store.Memory
 	broker *broker.Broker
+	auth   *auth.Manager
 }
 
 func New() (*App, error) {
@@ -30,16 +32,21 @@ func New() (*App, error) {
 	return &App{
 		store:  store.NewMemory(archive),
 		broker: broker.New(),
+		auth:   auth.NewManager(24 * time.Hour),
 	}, nil
 }
 
 func (a *App) Router() http.Handler {
 	r := chi.NewRouter()
-	h := api.New(a.store, a.broker)
+	h := api.New(a.store, a.broker, a.auth)
 	r.Use(cors)
 
 	r.Get("/healthz", h.Health)
+	r.Post("/api/auth/login", h.Login)
+	r.Get("/api/auth/me", h.Me)
 	r.Get("/api/agents", h.ListAgents)
+	r.Get("/api/devices", h.ListDevices)
+	r.Get("/api/devices/{machineID}", h.GetDevice)
 	r.Get("/api/tasks", h.ListTasks)
 	r.Get("/api/sessions", h.ListSessions)
 	r.Post("/api/tasks", h.CreateTask)
@@ -105,7 +112,13 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device := a.broker.Add(c, hello)
+	operator, err := a.store.GetOperatorByKey(hello.OperatorKey)
+	if err != nil || operator == nil {
+		c.Write(ctx, websocket.MessageText, []byte(`{"type":"error","payload":{"error":"invalid operator_key"}}`))
+		return
+	}
+
+	device := a.broker.Add(c, hello, operator.ID)
 	defer a.broker.Remove(agentID)
 
 	msg := model.Envelope{

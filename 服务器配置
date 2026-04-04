@@ -1,0 +1,4 @@
+# 服务器配置
+SERVER_USER="root"
+SERVER_HOST="114.66.33.149"
+SSH_KEY="/Users/yuminghao/Downloads/chat-codex/root.pem"

@@ -100,6 +100,14 @@ type Event struct {
 	SentAt       time.Time `json:"sent_at"`
 }
 
+type Operator struct {
+	ID          int64  `json:"id"`
+	OperatorUID string `json:"operator_uid"`
+	Username    string `json:"username"`
+	Name        string `json:"name"`
+	OperatorKey string `json:"operator_key,omitempty"`
+}
+
 type Envelope struct {
 	Type      string `json:"type"`
 	RequestID string `json:"request_id"`
@@ -109,6 +117,7 @@ type Envelope struct {
 
 type Agent struct {
 	ID          string         `json:"agent_id"`
+	OperatorID  int64          `json:"operator_id,omitempty"`
 	MachineID   string         `json:"machine_id"`
 	Hostname    string         `json:"hostname"`
 	Version     string         `json:"version"`
@@ -117,18 +126,27 @@ type Agent struct {
 	CurrentTask string         `json:"current_task_id,omitempty"`
 }
 
+type Machine struct {
+	MachineID string    `json:"machine_id"`
+	Hostname  string    `json:"hostname"`
+	Status    string    `json:"status"`
+	SeenAt    time.Time `json:"seen_at"`
+	Agents    []Agent   `json:"agents,omitempty"`
+}
+
 type HelloProject struct {
 	ProjectID string `json:"project_id"`
 	Root      string `json:"root"`
 }
 
 type HelloPayload struct {
-	AgentID   string         `json:"agent_id,omitempty"`
-	MachineID string         `json:"machine_id,omitempty"`
-	DeviceID  string         `json:"device_id,omitempty"`
-	Hostname  string         `json:"hostname"`
-	Version   string         `json:"version"`
-	Projects  []HelloProject `json:"projects"`
+	AgentID     string         `json:"agent_id,omitempty"`
+	MachineID   string         `json:"machine_id,omitempty"`
+	DeviceID    string         `json:"device_id,omitempty"`
+	OperatorKey string         `json:"operator_key,omitempty"`
+	Hostname    string         `json:"hostname"`
+	Version     string         `json:"version"`
+	Projects    []HelloProject `json:"projects"`
 }
 
 type WelcomePayload struct {

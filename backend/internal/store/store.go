@@ -269,6 +269,14 @@ func (m *Memory) ListSessions(filter model.SessionFilter) ([]*model.Session, err
 	return out, nil
 }
 
+func (m *Memory) AuthenticateOperator(username, password string) (*model.Operator, error) {
+	return m.archive.AuthenticateOperator(username, password)
+}
+
+func (m *Memory) GetOperatorByKey(operatorKey string) (*model.Operator, error) {
+	return m.archive.GetOperatorByKey(operatorKey)
+}
+
 func (m *Memory) TrackSession(taskID, sessionID, status, summary string) {
 	if sessionID == "" || taskID == "" {
 		return

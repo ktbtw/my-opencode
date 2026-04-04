@@ -16,6 +16,7 @@ var ErrOffline = errors.New("device offline")
 
 type Device struct {
 	ID          string
+	OperatorID  int64
 	MachineID   string
 	Hostname    string
 	Version     string
@@ -37,7 +38,7 @@ func New() *Broker {
 	}
 }
 
-func (b *Broker) Add(conn *websocket.Conn, hello model.HelloPayload) *Device {
+func (b *Broker) Add(conn *websocket.Conn, hello model.HelloPayload, operatorID int64) *Device {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	id := hello.AgentID
@@ -53,13 +54,14 @@ func (b *Broker) Add(conn *websocket.Conn, hello model.HelloPayload) *Device {
 		}
 	}
 	dev := &Device{
-		ID:        id,
-		MachineID: machineID,
-		Hostname:  hello.Hostname,
-		Version:   hello.Version,
-		Projects:  hello.Projects,
-		SeenAt:    time.Now().UTC(),
-		conn:      conn,
+		ID:         id,
+		OperatorID: operatorID,
+		MachineID:  machineID,
+		Hostname:   hello.Hostname,
+		Version:    hello.Version,
+		Projects:   hello.Projects,
+		SeenAt:     time.Now().UTC(),
+		conn:       conn,
 	}
 	b.devices[id] = dev
 	return dev
@@ -107,6 +109,48 @@ func (b *Broker) List() []model.Agent {
 	return out
 }
 
+func (b *Broker) ListMachines(operatorID int64) []model.Machine {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	index := map[string]*model.Machine{}
+	for _, dev := range b.devices {
+		if operatorID > 0 && dev.OperatorID != operatorID {
+			continue
+		}
+		machine, ok := index[dev.MachineID]
+		if !ok {
+			machine = &model.Machine{
+				MachineID: dev.MachineID,
+				Hostname:  dev.Hostname,
+				Status:    "online",
+				SeenAt:    dev.SeenAt,
+				Agents:    []model.Agent{},
+			}
+			index[dev.MachineID] = machine
+		}
+		if dev.SeenAt.After(machine.SeenAt) {
+			machine.SeenAt = dev.SeenAt
+		}
+		machine.Agents = append(machine.Agents, snapshot(dev))
+	}
+
+	out := make([]model.Machine, 0, len(index))
+	for _, machine := range index {
+		out = append(out, *machine)
+	}
+	return out
+}
+
+func (b *Broker) GetMachine(operatorID int64, machineID string) (model.Machine, bool) {
+	for _, machine := range b.ListMachines(operatorID) {
+		if machine.MachineID == machineID {
+			return machine, true
+		}
+	}
+	return model.Machine{}, false
+}
+
 func (b *Broker) Dispatch(ctx context.Context, deviceID string, env model.Envelope) error {
 	b.mu.RLock()
 	dev, ok := b.devices[deviceID]
@@ -129,6 +173,7 @@ func snapshot(dev *Device) model.Agent {
 	copy(projects, dev.Projects)
 	return model.Agent{
 		ID:          dev.ID,
+		OperatorID:  dev.OperatorID,
 		MachineID:   dev.MachineID,
 		Hostname:    dev.Hostname,
 		Version:     dev.Version,

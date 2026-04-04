@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"relay-server/internal/auth"
 	"relay-server/internal/broker"
 	"relay-server/internal/model"
 	"relay-server/internal/store"
@@ -18,6 +20,7 @@ import (
 type API struct {
 	store  *store.Memory
 	broker *broker.Broker
+	auth   *auth.Manager
 }
 
 type createTaskReq struct {
@@ -34,8 +37,13 @@ type approveTaskReq struct {
 	Message      string `json:"message"`
 }
 
-func New(store *store.Memory, broker *broker.Broker) *API {
-	return &API{store: store, broker: broker}
+type loginReq struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func New(store *store.Memory, broker *broker.Broker, authManager *auth.Manager) *API {
+	return &API{store: store, broker: broker, auth: authManager}
 }
 
 func (a *API) Health(w http.ResponseWriter, _ *http.Request) {
@@ -44,6 +52,65 @@ func (a *API) Health(w http.ResponseWriter, _ *http.Request) {
 
 func (a *API) ListAgents(w http.ResponseWriter, _ *http.Request) {
 	write(w, http.StatusOK, a.broker.List())
+}
+
+func (a *API) Login(w http.ResponseWriter, r *http.Request) {
+	var req loginReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		write(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	operator, err := a.store.AuthenticateOperator(req.Username, req.Password)
+	if err != nil {
+		write(w, http.StatusInternalServerError, map[string]string{"error": "login failed"})
+		return
+	}
+	if operator == nil {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "username or password invalid"})
+		return
+	}
+	token, err := a.auth.Issue(*operator)
+	if err != nil {
+		write(w, http.StatusInternalServerError, map[string]string{"error": "issue token failed"})
+		return
+	}
+	write(w, http.StatusOK, map[string]any{
+		"access_token": token,
+		"operator":     operator,
+	})
+}
+
+func (a *API) Me(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	write(w, http.StatusOK, operator)
+}
+
+func (a *API) ListDevices(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	write(w, http.StatusOK, a.broker.ListMachines(operator.ID))
+}
+
+func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	machineID := chi.URLParam(r, "machineID")
+	device, ok := a.broker.GetMachine(operator.ID, machineID)
+	if !ok {
+		write(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		return
+	}
+	write(w, http.StatusOK, device)
 }
 
 func (a *API) ListTasks(w http.ResponseWriter, r *http.Request) {
@@ -286,6 +353,15 @@ func write(w http.ResponseWriter, code int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+func (a *API) currentOperator(r *http.Request) (model.Operator, bool) {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authHeader == "" {
+		return model.Operator{}, false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	return a.auth.Verify(token)
 }
 
 func normalize(req createTaskReq) ([]model.Part, error) {
