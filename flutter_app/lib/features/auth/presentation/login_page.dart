@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-
-import '../../../shared/widgets/shell_card.dart';
-import '../../../shared/widgets/surface_scaffold.dart';
-import '../application/auth_controller.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../shared/widgets/widgets.dart';
+import 'auth_provider.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
@@ -13,264 +13,356 @@ class LoginPage extends ConsumerStatefulWidget {
   ConsumerState<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends ConsumerState<LoginPage> {
-  final usernameController = TextEditingController(text: 'admin');
-  final passwordController = TextEditingController(text: 'admin123456');
-  String? errorText;
+class _LoginPageState extends ConsumerState<LoginPage>
+    with TickerProviderStateMixin {
+  final _usernameCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  bool _showPassword = false;
+
+  late final AnimationController _fadeCtrl;
+  late final Animation<double> _fadeAnim;
+  late final Animation<Offset> _slideAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _fadeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    )..forward();
+    _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
+    _slideAnim = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut));
+  }
 
   @override
   void dispose() {
-    usernameController.dispose();
-    passwordController.dispose();
+    _fadeCtrl.dispose();
+    _usernameCtrl.dispose();
+    _passwordCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final username = _usernameCtrl.text.trim();
+    final password = _passwordCtrl.text;
+    if (username.isEmpty || password.isEmpty) return;
+
+    final ok = await ref
+        .read(authProvider.notifier)
+        .login(username, password);
+    if (ok && mounted) {
+      context.go('/devices');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final authState = ref.watch(authControllerProvider);
+    final auth = ref.watch(authProvider);
+    final isMobile = AppBreakpoints.isMobile(context);
 
-    ref.listen<AuthState>(authControllerProvider, (previous, next) {
-      if (next.isAuthenticated) {
-        context.go('/devices');
-      }
-    });
-
-    return SurfaceScaffold(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final mobile = constraints.maxWidth < 980;
-          final content = mobile
-              ? Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(height: 24),
-                    const _HeroPanel(compact: true),
-                    const SizedBox(height: 20),
-                    _LoginCard(
-                      usernameController: usernameController,
-                      passwordController: passwordController,
-                      loading: authState.loading,
-                      errorText: errorText,
-                      onLogin: _submit,
-                    ),
-                  ],
-                )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Expanded(flex: 6, child: _HeroPanel()),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      flex: 5,
-                      child: _LoginCard(
-                        usernameController: usernameController,
-                        passwordController: passwordController,
-                        loading: authState.loading,
-                        errorText: errorText,
-                        onLogin: _submit,
-                      ),
-                    ),
-                  ],
-                );
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: constraints.maxHeight - 48,
-              ),
-              child: content,
+    return Scaffold(
+      body: PageBackground(
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fadeAnim,
+            child: SlideTransition(
+              position: _slideAnim,
+              child: isMobile
+                  ? _buildMobileLayout(auth)
+                  : _buildDesktopLayout(auth),
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
   }
 
-  Future<void> _submit() async {
-    setState(() => errorText = null);
-    try {
-      await ref
-          .read(authControllerProvider.notifier)
-          .login(usernameController.text.trim(), passwordController.text);
-    } catch (error) {
-      setState(() => errorText = '$error');
-    }
-  }
-}
-
-class _HeroPanel extends StatelessWidget {
-  const _HeroPanel({this.compact = false});
-
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return ShellCard(
-      padding: EdgeInsets.all(compact ? 28 : 36),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFD9EAFF),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              'Chat Codex Console',
-              style: theme.textTheme.titleMedium,
-            ),
-          ),
-          SizedBox(height: compact ? 22 : 32),
-          Text(
-            '用统一面板管理设备、项目与远程会话。',
-            style: compact
-                ? theme.textTheme.headlineMedium
-                : theme.textTheme.headlineLarge,
-          ),
-          const SizedBox(height: 18),
-          Text('保持连接、快速切换、专注处理当前任务。', style: theme.textTheme.bodyLarge),
-          SizedBox(height: compact ? 24 : 36),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: const [
-              _HeroTag(label: '浅蓝专业风格'),
-              _HeroTag(label: '多设备多项目'),
-              _HeroTag(label: '对话与审批一体'),
-            ],
-          ),
-          if (!compact) ...[
-            const SizedBox(height: 36),
-            SizedBox(
-              height: 280,
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFB6D7FF), Color(0xFFEAF5FF)],
-                  ),
-                  borderRadius: BorderRadius.circular(28),
-                ),
-                child: const Stack(
-                  children: [
-                    Positioned(
-                      top: 32,
-                      left: 32,
-                      child: _OrbitCard(title: '设备矩阵'),
-                    ),
-                    Positioned(
-                      top: 96,
-                      right: 32,
-                      child: _OrbitCard(title: '项目执行器'),
-                    ),
-                    Positioned(
-                      bottom: 42,
-                      left: 72,
-                      child: _OrbitCard(title: '对话审批流'),
-                    ),
-                  ],
-                ),
+  Widget _buildDesktopLayout(AuthState auth) {
+    return Row(
+      children: [
+        // 左侧品牌区
+        Expanded(
+          flex: 5,
+          child: _buildBrandPanel(),
+        ),
+        // 右侧表单区
+        Expanded(
+          flex: 4,
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(48),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 380),
+                child: _buildFormPanel(auth),
               ),
             ),
-          ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMobileLayout(AuthState auth) {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          _buildBrandMobile(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            child: _buildFormPanel(auth),
+          ),
         ],
       ),
     );
   }
-}
 
-class _HeroTag extends StatelessWidget {
-  const _HeroTag({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildBrandPanel() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFFD4E5FF)),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1E40AF), Color(0xFF2563EB)],
+        ),
       ),
-      child: Text(label),
-    );
-  }
-}
-
-class _OrbitCard extends StatelessWidget {
-  const _OrbitCard({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 160,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.86),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFD4E5FF)),
-      ),
-      child: Text(title, textAlign: TextAlign.center),
-    );
-  }
-}
-
-class _LoginCard extends StatelessWidget {
-  const _LoginCard({
-    required this.usernameController,
-    required this.passwordController,
-    required this.loading,
-    required this.errorText,
-    required this.onLogin,
-  });
-
-  final TextEditingController usernameController;
-  final TextEditingController passwordController;
-  final bool loading;
-  final String? errorText;
-  final Future<void> Function() onLogin;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return ShellCard(
+      padding: const EdgeInsets.all(60),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('登录', style: theme.textTheme.headlineMedium),
-          const SizedBox(height: 8),
-          Text('进入你的设备与对话控制台', style: theme.textTheme.bodyLarge),
-          const SizedBox(height: 24),
-          TextField(
-            controller: usernameController,
-            decoration: const InputDecoration(labelText: '用户名'),
+          const Spacer(flex: 2),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: AppRadius.mdRadius,
+                ),
+                child: const Icon(
+                  Icons.terminal_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Chat Codex',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+          const Text(
+            '远程设备\n管理控制台',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 42,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -1,
+              height: 1.15,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            '统一管理多设备、多 Agent、多项目，\n让每一次对话都触达正确的执行器。',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.75),
+              fontSize: 15,
+              height: 1.6,
+            ),
+          ),
+          const Spacer(flex: 3),
+          _buildFeatureList(),
+          const Spacer(flex: 1),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeatureList() {
+    final features = [
+      '多设备实时连接',
+      '多 Agent 协同执行',
+      '任务审批与权限管理',
+      '历史会话完整追溯',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: features
+          .map((f) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check,
+                        color: Colors.white,
+                        size: 11,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      f,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.85),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ))
+          .toList(),
+    );
+  }
+
+  Widget _buildBrandMobile() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(24, 40, 24, 32),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1E40AF), Color(0xFF2563EB)],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: AppRadius.smRadius,
+                ),
+                child: const Icon(
+                  Icons.terminal_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Text(
+                'Chat Codex',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
-          TextField(
-            controller: passwordController,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: '密码'),
+          const Text(
+            '远程设备管理控制台',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.5,
+            ),
           ),
-          if (errorText != null) ...[
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFormPanel(AuthState auth) {
+    return PanelCard(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '登录',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '使用你的管理员账号登录',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 28),
+          AppInput(
+            label: '用户名',
+            hint: '请输入用户名',
+            controller: _usernameCtrl,
+            autofocus: true,
+            onSubmitted: _submit,
+          ),
+          const SizedBox(height: 16),
+          AppInput(
+            label: '密码',
+            hint: '请输入密码',
+            controller: _passwordCtrl,
+            obscureText: !_showPassword,
+            suffixIcon: IconButton(
+              icon: Icon(
+                _showPassword ? Icons.visibility_off : Icons.visibility,
+                size: 18,
+                color: AppColors.textMuted,
+              ),
+              onPressed: () => setState(() => _showPassword = !_showPassword),
+            ),
+            onSubmitted: _submit,
+          ),
+          if (auth.error != null) ...[
             const SizedBox(height: 16),
-            Text(errorText!, style: const TextStyle(color: Color(0xFFB42318))),
+            _buildError(auth.error!),
           ],
-          const SizedBox(height: 20),
-          SizedBox(
+          const SizedBox(height: 24),
+          AppButton(
+            label: '登录',
+            loading: auth.loading,
             width: double.infinity,
-            child: FilledButton(
-              onPressed: loading ? null : onLogin,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                child: Text(loading ? '登录中...' : '进入控制台'),
+            onPressed: _submit,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildError(String message) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.statusErrorLight,
+        borderRadius: AppRadius.smRadius,
+        border: Border.all(color: AppColors.statusError.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            size: 16,
+            color: AppColors.statusError,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.statusError,
               ),
             ),
           ),

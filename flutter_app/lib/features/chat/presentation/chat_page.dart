@@ -1,617 +1,860 @@
-import 'dart:async';
-import 'dart:convert';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import '../../../shared/widgets/shell_card.dart';
-import '../../../shared/widgets/surface_scaffold.dart';
-import '../../auth/application/auth_controller.dart';
-import '../data/chat_api.dart';
-import '../domain/chat_models.dart';
-
-final chatApiProvider = Provider((ref) => const ChatApi());
-final chatSessionsProvider = FutureProvider.family<List<SessionInfo>, String>((
-  ref,
-  agentId,
-) async {
-  if (agentId.isEmpty) return const [];
-  final auth = ref.watch(authControllerProvider);
-  return ref
-      .watch(chatApiProvider)
-      .listSessions(accessToken: auth.accessToken, agentId: agentId);
-});
-final chatTurnsProvider = FutureProvider.family<List<ChatTurn>, String>((
-  ref,
-  sessionId,
-) async {
-  if (sessionId.isEmpty) return const [];
-  final auth = ref.watch(authControllerProvider);
-  return ref
-      .watch(chatApiProvider)
-      .listTurns(accessToken: auth.accessToken, sessionId: sessionId);
-});
+import 'package:go_router/go_router.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_theme.dart';
+import '../../../shared/widgets/widgets.dart';
+import '../data/chat_model.dart';
+import 'chat_provider.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
-  const ChatPage({
-    super.key,
-    required this.machineId,
-    required this.agentId,
-    required this.projectId,
-  });
-
-  final String machineId;
   final String agentId;
   final String projectId;
+  final String machineId;
+
+  const ChatPage({
+    super.key,
+    required this.agentId,
+    required this.projectId,
+    required this.machineId,
+  });
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
 }
 
 class _ChatPageState extends ConsumerState<ChatPage> {
-  final inputController = TextEditingController();
-  final scrollController = ScrollController();
+  final _inputCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  final _inputFocus = FocusNode();
+  bool _sessionPanelOpen = false;
 
-  String currentSessionId = '';
-  String currentModel = 'gpt-5.4-mini';
-  bool sending = false;
-  String? errorText;
-  ChatTurn? approvalTurn;
-  List<PickedAttachment> attachments = [];
+  (String, String) get _chatKey => (widget.agentId, widget.projectId);
 
   @override
   void dispose() {
-    inputController.dispose();
-    scrollController.dispose();
+    _inputCtrl.dispose();
+    _scrollCtrl.dispose();
+    _inputFocus.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _send() async {
+    final text = _inputCtrl.text.trim();
+    if (text.isEmpty) return;
+    _inputCtrl.clear();
+    await ref.read(chatProvider(_chatKey).notifier).sendMessage(text);
+    _scrollToBottom();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chat = ref.watch(chatProvider(_chatKey));
+    final isMobile = AppBreakpoints.isMobile(context);
+
+    // 有新消息时滚动到底部
+    ref.listen(chatProvider(_chatKey), (_, next) {
+      if (next.messages.isNotEmpty) _scrollToBottom();
+    });
+
+    return Scaffold(
+      body: PageBackground(
+        child: Column(
+          children: [
+            _buildContextBar(context, chat),
+            Expanded(
+              child: Row(
+                children: [
+                  // 左侧历史会话栏（桌面常驻，移动抽屉）
+                  if (!isMobile && _sessionPanelOpen)
+                    _SessionSidebar(
+                      agentId: widget.agentId,
+                      currentSessionId: chat.currentSessionId,
+                      onSelect: (sid) {
+                        ref.read(chatProvider(_chatKey).notifier).loadSession(sid);
+                      },
+                      onNew: () {
+                        ref.read(chatProvider(_chatKey).notifier).newSession();
+                      },
+                    ),
+                  if (!isMobile && _sessionPanelOpen)
+                    Container(width: 1, color: AppColors.border),
+                  // 中央消息区 + 输入区
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: _MessageArea(
+                            messages: chat.messages,
+                            scrollController: _scrollCtrl,
+                          ),
+                        ),
+                        if (chat.pendingApproval != null)
+                          _ApprovalBanner(
+                            approval: chat.pendingApproval!,
+                            onApprove: (reply) {
+                              ref.read(chatProvider(_chatKey).notifier).submitApproval(reply);
+                            },
+                          ),
+                        _InputArea(
+                          controller: _inputCtrl,
+                          focusNode: _inputFocus,
+                          sending: chat.sending,
+                          sessionId: chat.currentSessionId,
+                          onSend: _send,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      // 移动端抽屉
+      drawer: isMobile
+          ? Drawer(
+              child: _SessionSidebar(
+                agentId: widget.agentId,
+                currentSessionId: chat.currentSessionId,
+                onSelect: (sid) {
+                  ref.read(chatProvider(_chatKey).notifier).loadSession(sid);
+                  Navigator.of(context).pop();
+                },
+                onNew: () {
+                  ref.read(chatProvider(_chatKey).notifier).newSession();
+                  Navigator.of(context).pop();
+                },
+              ),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildContextBar(BuildContext context, ChatState chat) {
+    final isMobile = AppBreakpoints.isMobile(context);
+    return Container(
+      height: 52,
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: AppColors.border)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          // 返回按钮
+          IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new, size: 15),
+            onPressed: () => context.go('/devices/${widget.machineId}'),
+            tooltip: '返回设备详情',
+          ),
+          // 历史会话切换
+          IconButton(
+            icon: Icon(
+              Icons.history,
+              size: 18,
+              color: _sessionPanelOpen ? AppColors.primary : AppColors.textSecondary,
+            ),
+            onPressed: isMobile
+                ? () => Scaffold.of(context).openDrawer()
+                : () => setState(() => _sessionPanelOpen = !_sessionPanelOpen),
+            tooltip: '历史会话',
+          ),
+          Container(width: 1, height: 20, color: AppColors.border),
+          const SizedBox(width: 10),
+          // 设备 + agent 信息
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _ContextChip(
+                    icon: Icons.computer_rounded,
+                    label: widget.machineId,
+                  ),
+                  const SizedBox(width: 6),
+                  _ContextChip(
+                    icon: Icons.smart_toy_outlined,
+                    label: widget.agentId,
+                  ),
+                  const SizedBox(width: 6),
+                  _ContextChip(
+                    icon: Icons.folder_outlined,
+                    label: widget.projectId,
+                  ),
+                  if (chat.currentSessionId != null) ...[
+                    const SizedBox(width: 6),
+                    _ContextChip(
+                      icon: Icons.chat_bubble_outline,
+                      label: chat.currentSessionId!.length > 16
+                          ? '...${chat.currentSessionId!.substring(chat.currentSessionId!.length - 12)}'
+                          : chat.currentSessionId!,
+                      highlight: true,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // 新建对话
+          TextButton.icon(
+            onPressed: () {
+              ref.read(chatProvider(_chatKey).notifier).newSession();
+            },
+            icon: const Icon(Icons.add, size: 15),
+            label: const Text('新建对话', style: TextStyle(fontSize: 13)),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ContextChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool highlight;
+  const _ContextChip({
+    required this.icon,
+    required this.label,
+    this.highlight = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: highlight ? AppColors.primaryLight : AppColors.inputBackground,
+        borderRadius: AppRadius.smRadius,
+        border: Border.all(
+          color: highlight ? AppColors.primaryMuted : AppColors.border,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon,
+              size: 12,
+              color: highlight ? AppColors.primary : AppColors.textMuted),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: highlight ? AppColors.primary : AppColors.textSecondary,
+              fontWeight: highlight ? FontWeight.w500 : FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 消息区
+class _MessageArea extends StatelessWidget {
+  final List<ChatMessage> messages;
+  final ScrollController scrollController;
+
+  const _MessageArea({
+    required this.messages,
+    required this.scrollController,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (messages.isEmpty) {
+      return const Center(
+        child: EmptyState(
+          message: '发送消息开始对话\n或从左侧历史记录切换会话',
+          icon: Icons.chat_bubble_outline_rounded,
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: scrollController,
+      padding: EdgeInsets.symmetric(
+        horizontal: AppBreakpoints.isMobile(context) ? 12 : 24,
+        vertical: 16,
+      ),
+      itemCount: messages.length,
+      itemBuilder: (context, i) {
+        final msg = messages[i];
+        return _MessageBubble(message: msg, key: ValueKey(msg.id));
+      },
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  final ChatMessage message;
+  const _MessageBubble({required this.message, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.role == MessageRole.user;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!isUser) ...[
+            _Avatar(isUser: false),
+            const SizedBox(width: 10),
+          ],
+          Flexible(
+            child: Column(
+              crossAxisAlignment:
+                  isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                _BubbleContent(message: message, isUser: isUser),
+                if (message.state == MessageState.streaming)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: _TypingIndicator(),
+                  ),
+              ],
+            ),
+          ),
+          if (isUser) ...[
+            const SizedBox(width: 10),
+            _Avatar(isUser: true),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  final bool isUser;
+  const _Avatar({required this.isUser});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        color: isUser ? AppColors.primary : AppColors.primaryLight,
+        borderRadius: AppRadius.smRadius,
+      ),
+      child: Icon(
+        isUser ? Icons.person_outline : Icons.smart_toy_outlined,
+        size: 16,
+        color: isUser ? Colors.white : AppColors.primary,
+      ),
+    );
+  }
+}
+
+class _BubbleContent extends StatelessWidget {
+  final ChatMessage message;
+  final bool isUser;
+  const _BubbleContent({required this.message, required this.isUser});
+
+  @override
+  Widget build(BuildContext context) {
+    final isFailed = message.state == MessageState.failed;
+    return Container(
+      constraints: BoxConstraints(
+        maxWidth: MediaQuery.of(context).size.width * 0.72,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: isUser
+            ? AppColors.primary
+            : isFailed
+                ? AppColors.statusErrorLight
+                : AppColors.surface,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(12),
+          topRight: const Radius.circular(12),
+          bottomLeft: Radius.circular(isUser ? 12 : 3),
+          bottomRight: Radius.circular(isUser ? 3 : 12),
+        ),
+        border: isUser
+            ? null
+            : Border.all(
+                color: isFailed ? AppColors.statusError.withOpacity(0.3) : AppColors.border,
+              ),
+        boxShadow: isUser
+            ? null
+            : const [
+                BoxShadow(
+                  color: Color(0x061A3A6A),
+                  blurRadius: 8,
+                  offset: Offset(0, 2),
+                ),
+              ],
+      ),
+      child: message.content.isEmpty && !isFailed
+          ? const SizedBox(height: 6)
+          : SelectableText(
+              message.content,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.55,
+                color: isUser
+                    ? Colors.white
+                    : isFailed
+                        ? AppColors.statusError
+                        : AppColors.textPrimary,
+              ),
+            ),
+    );
+  }
+}
+
+class _TypingIndicator extends StatefulWidget {
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final sessionsValue = ref.watch(chatSessionsProvider(widget.agentId));
-    final turnsValue = ref.watch(chatTurnsProvider(currentSessionId));
-    final mobile = MediaQuery.of(context).size.width < 980;
-
-    ref.listen<AsyncValue<List<SessionInfo>>>(
-      chatSessionsProvider(widget.agentId),
-      (previous, next) {
-        next.whenData((sessions) {
-          if (currentSessionId.isEmpty && sessions.isNotEmpty) {
-            setState(() => currentSessionId = sessions.first.sessionId);
-          }
-        });
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            final delay = i * 0.3;
+            final t = (_ctrl.value - delay).clamp(0.0, 1.0);
+            final opacity = (t < 0.5 ? t * 2 : (1 - t) * 2).clamp(0.3, 1.0);
+            return Container(
+              width: 6,
+              height: 6,
+              margin: const EdgeInsets.only(right: 3),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(opacity),
+                shape: BoxShape.circle,
+              ),
+            );
+          }),
+        );
       },
     );
-
-    return SurfaceScaffold(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            _ChatHeader(
-              machineId: widget.machineId,
-              agentId: widget.agentId,
-              projectId: widget.projectId,
-              currentModel: currentModel,
-              onModelChanged: (value) => setState(() => currentModel = value),
-              onNewSession: _startNewSession,
-            ),
-            const SizedBox(height: 20),
-            Expanded(
-              child: mobile
-                  ? Column(
-                      children: [
-                        SizedBox(
-                          height: 220,
-                          child: _SessionSidebar(
-                            sessionsValue: sessionsValue,
-                            currentSessionId: currentSessionId,
-                            onSelect: (value) =>
-                                setState(() => currentSessionId = value),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Expanded(
-                          child: _ChatBody(
-                            turnsValue: turnsValue,
-                            scrollController: scrollController,
-                            composer: _buildComposer(),
-                          ),
-                        ),
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        SizedBox(
-                          width: 320,
-                          child: _SessionSidebar(
-                            sessionsValue: sessionsValue,
-                            currentSessionId: currentSessionId,
-                            onSelect: (value) =>
-                                setState(() => currentSessionId = value),
-                          ),
-                        ),
-                        const SizedBox(width: 20),
-                        Expanded(
-                          child: _ChatBody(
-                            turnsValue: turnsValue,
-                            scrollController: scrollController,
-                            composer: _buildComposer(),
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildComposer() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (approvalTurn != null)
-          _ApprovalStrip(
-            turn: approvalTurn!,
-            onApprove: () => _handleApproval('once'),
-            onReject: () => _handleApproval('reject'),
-          ),
-        if (attachments.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: attachments
-                  .map(
-                    (file) => Chip(
-                      label: Text(file.name),
-                      onDeleted: () => setState(() => attachments.remove(file)),
-                    ),
-                  )
-                  .toList(),
-            ),
-          ),
-        ShellCard(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            children: [
-              if (errorText != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      errorText!,
-                      style: const TextStyle(color: Color(0xFFB42318)),
-                    ),
-                  ),
-                ),
-              Row(
-                children: [
-                  FilledButton.tonal(
-                    onPressed: sending ? null : _pickFiles,
-                    child: const Text('添加文件'),
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton.tonal(
-                    onPressed: sending ? null : _pickImages,
-                    child: const Text('添加图片'),
-                  ),
-                  const Spacer(),
-                  Text('模型：$currentModel'),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: inputController,
-                minLines: 4,
-                maxLines: 8,
-                decoration: const InputDecoration(
-                  hintText: '输入要交给当前 agent 的任务、问题或修改指令',
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      currentSessionId.isEmpty
-                          ? '新对话将自动创建会话'
-                          : '当前会话：$currentSessionId',
-                    ),
-                  ),
-                  FilledButton(
-                    onPressed: sending ? null : _send,
-                    child: Text(sending ? '发送中...' : '发送'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  void _startNewSession() {
-    setState(() {
-      currentSessionId = 'sess_${DateTime.now().millisecondsSinceEpoch}';
-      approvalTurn = null;
-      errorText = null;
-    });
-    ref.invalidate(chatTurnsProvider(currentSessionId));
-  }
-
-  Future<void> _pickFiles() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: true,
-      allowMultiple: true,
-    );
-    if (result == null) return;
-    setState(() {
-      attachments.addAll(
-        result.files
-            .where((file) => file.bytes != null)
-            .map((file) => PickedAttachment.fromFile(file, false)),
-      );
-    });
-  }
-
-  Future<void> _pickImages() async {
-    final result = await FilePicker.platform.pickFiles(
-      withData: true,
-      allowMultiple: true,
-      type: FileType.image,
-    );
-    if (result == null) return;
-    setState(() {
-      attachments.addAll(
-        result.files
-            .where((file) => file.bytes != null)
-            .map((file) => PickedAttachment.fromFile(file, true)),
-      );
-    });
-  }
-
-  Future<void> _send() async {
-    final auth = ref.read(authControllerProvider);
-    final text = inputController.text.trim();
-    if (text.isEmpty && attachments.isEmpty) return;
-    final sessionId = currentSessionId.isEmpty
-        ? 'sess_${DateTime.now().millisecondsSinceEpoch}'
-        : currentSessionId;
-    setState(() {
-      currentSessionId = sessionId;
-      sending = true;
-      errorText = null;
-      approvalTurn = null;
-    });
-
-    final parts = <TaskPart>[
-      if (text.isNotEmpty)
-        TaskPart(type: 'text', text: text, mime: '', filename: '', url: ''),
-      ...attachments.map((file) => file.toPart()),
-    ];
-
-    try {
-      final api = ref.read(chatApiProvider);
-      final created = await api.createTurn(
-        accessToken: auth.accessToken,
-        agentId: widget.agentId,
-        projectId: widget.projectId,
-        sessionId: sessionId,
-        parts: parts,
-        model: currentModel,
-      );
-      inputController.clear();
-      setState(() => attachments = []);
-      await _pollTask(created.taskId);
-      ref.invalidate(chatSessionsProvider(widget.agentId));
-      ref.invalidate(chatTurnsProvider(sessionId));
-    } catch (error) {
-      setState(() => errorText = '$error');
-    } finally {
-      setState(() => sending = false);
-    }
-  }
-
-  Future<void> _pollTask(String taskId) async {
-    final auth = ref.read(authControllerProvider);
-    final api = ref.read(chatApiProvider);
-
-    for (var i = 0; i < 60; i++) {
-      final turn = await api.getTurn(
-        accessToken: auth.accessToken,
-        taskId: taskId,
-      );
-      if (!mounted) return;
-      if (turn.status == 'waiting_approval' && turn.permissionId.isNotEmpty) {
-        setState(() => approvalTurn = turn);
-        return;
-      }
-      if (turn.status == 'completed' ||
-          turn.status == 'failed' ||
-          turn.status == 'cancelled') {
-        setState(() => approvalTurn = null);
-        return;
-      }
-      await Future<void>.delayed(const Duration(seconds: 1));
-    }
-  }
-
-  Future<void> _handleApproval(String reply) async {
-    final turn = approvalTurn;
-    if (turn == null) return;
-    final auth = ref.read(authControllerProvider);
-    try {
-      await ref
-          .read(chatApiProvider)
-          .approve(
-            accessToken: auth.accessToken,
-            taskId: turn.taskId,
-            permissionId: turn.permissionId,
-            reply: reply,
-          );
-      setState(() => approvalTurn = null);
-      await _pollTask(turn.taskId);
-      ref.invalidate(chatTurnsProvider(currentSessionId));
-    } catch (error) {
-      setState(() => errorText = '$error');
-    }
   }
 }
 
-class _ChatHeader extends StatelessWidget {
-  const _ChatHeader({
-    required this.machineId,
-    required this.agentId,
-    required this.projectId,
-    required this.currentModel,
-    required this.onModelChanged,
-    required this.onNewSession,
-  });
+// 审批条
+class _ApprovalBanner extends StatefulWidget {
+  final ApprovalInfo approval;
+  final void Function(String reply) onApprove;
 
-  final String machineId;
-  final String agentId;
-  final String projectId;
-  final String currentModel;
-  final ValueChanged<String> onModelChanged;
-  final VoidCallback onNewSession;
+  const _ApprovalBanner({required this.approval, required this.onApprove});
+
+  @override
+  State<_ApprovalBanner> createState() => _ApprovalBannerState();
+}
+
+class _ApprovalBannerState extends State<_ApprovalBanner>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    )..forward();
+    _slide = Tween<Offset>(
+      begin: const Offset(0, 0.3),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
+    final approval = widget.approval;
+    return SlideTransition(
+      position: _slide,
+      child: FadeTransition(
+        opacity: _ctrl,
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.statusWarningLight,
+            borderRadius: AppRadius.mdRadius,
+            border: Border.all(
+              color: AppColors.statusWarning.withOpacity(0.4),
+            ),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('对话', style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 6),
-              Text('设备 $machineId · 执行器 $agentId · 项目 $projectId'),
+              Row(
+                children: [
+                  const Icon(Icons.lock_outline,
+                      size: 16, color: AppColors.statusWarning),
+                  const SizedBox(width: 6),
+                  const Text(
+                    '需要审批',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: AppColors.statusWarning,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.statusWarning.withOpacity(0.12),
+                      borderRadius: AppRadius.smRadius,
+                    ),
+                    child: Text(
+                      approval.permission,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.statusWarning,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (approval.patterns.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: approval.patterns.map((p) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: AppRadius.smRadius,
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Text(
+                        p,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  AppButton(
+                    label: '批准一次',
+                    onPressed: () => widget.onApprove('once'),
+                  ),
+                  const SizedBox(width: 8),
+                  AppButton(
+                    label: '全部批准',
+                    outlined: true,
+                    onPressed: () => widget.onApprove('always'),
+                  ),
+                  const SizedBox(width: 8),
+                  AppButton(
+                    label: '拒绝',
+                    outlined: true,
+                    onPressed: () => widget.onApprove('reject'),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.8),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: const Color(0xFFD4E5FF)),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: currentModel,
-              items: const [
-                DropdownMenuItem(
-                  value: 'gpt-5.4-mini',
-                  child: Text('gpt-5.4-mini'),
-                ),
-                DropdownMenuItem(value: 'gpt-5.4', child: Text('gpt-5.4')),
-                DropdownMenuItem(
-                  value: 'claude-sonnet',
-                  child: Text('claude-sonnet'),
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) onModelChanged(value);
-              },
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        FilledButton.tonal(onPressed: onNewSession, child: const Text('新建对话')),
-      ],
-    );
-  }
-}
-
-class _SessionSidebar extends StatelessWidget {
-  const _SessionSidebar({
-    required this.sessionsValue,
-    required this.currentSessionId,
-    required this.onSelect,
-  });
-
-  final AsyncValue<List<SessionInfo>> sessionsValue;
-  final String currentSessionId;
-  final ValueChanged<String> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    return ShellCard(
-      child: sessionsValue.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('$error')),
-        data: (sessions) {
-          if (sessions.isEmpty) {
-            return const Center(child: Text('还没有历史对话'));
-          }
-          return ListView.separated(
-            itemCount: sessions.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final session = sessions[index];
-              final selected = session.sessionId == currentSessionId;
-              return InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: () => onSelect(session.sessionId),
-                child: Ink(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? const Color(0xFFDFF0FF)
-                        : const Color(0xFFF8FBFF),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFD4E5FF)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        session.summary.isEmpty
-                            ? session.sessionId
-                            : session.summary,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        session.updatedAt == null
-                            ? '-'
-                            : _formatDate(session.updatedAt!),
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          );
-        },
       ),
     );
   }
 }
 
-class _ChatBody extends StatelessWidget {
-  const _ChatBody({
-    required this.turnsValue,
-    required this.scrollController,
-    required this.composer,
+// 输入区
+class _InputArea extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool sending;
+  final String? sessionId;
+  final VoidCallback onSend;
+
+  const _InputArea({
+    required this.controller,
+    required this.focusNode,
+    required this.sending,
+    required this.sessionId,
+    required this.onSend,
   });
 
-  final AsyncValue<List<ChatTurn>> turnsValue;
-  final ScrollController scrollController;
-  final Widget composer;
-
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: ShellCard(
-            child: turnsValue.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (error, _) => Center(child: Text('$error')),
-              data: (turns) {
-                if (turns.isEmpty) {
-                  return const Center(child: Text('从这里开始一段新对话'));
-                }
-                return ListView.separated(
-                  controller: scrollController,
-                  itemCount: turns.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 16),
-                  itemBuilder: (context, index) =>
-                      _TurnView(turn: turns[index]),
-                );
-              },
-            ),
+    focusNode.onKeyEvent = (node, event) {
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.enter &&
+          HardwareKeyboard.instance.isControlPressed) {
+        onSend();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    };
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  maxLines: 6,
+                  minLines: 1,
+                  textInputAction: TextInputAction.newline,
+                  onSubmitted: null,
+                  decoration: InputDecoration(
+                    hintText: '输入消息，Ctrl+Enter 发送',
+                    border: OutlineInputBorder(
+                      borderRadius: AppRadius.mdRadius,
+                      borderSide: const BorderSide(color: AppColors.border),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: AppRadius.mdRadius,
+                      borderSide: const BorderSide(color: AppColors.border),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: AppRadius.mdRadius,
+                      borderSide: const BorderSide(
+                          color: AppColors.primary, width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
+                    filled: true,
+                    fillColor: AppColors.inputBackground,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _SendButton(sending: sending, onSend: onSend),
+            ],
           ),
-        ),
-        const SizedBox(height: 16),
-        composer,
-      ],
-    );
-  }
-}
-
-class _TurnView extends StatelessWidget {
-  const _TurnView({required this.turn});
-
-  final ChatTurn turn;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 720),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFDCEBFF),
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Text(turn.prompt.isEmpty ? '附件输入' : turn.prompt),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 760),
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFCFEFF),
-              border: Border.all(color: const Color(0xFFD4E5FF)),
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: Text(
-              turn.error.isNotEmpty
-                  ? turn.error
-                  : (turn.result.isEmpty ? '处理中...' : turn.result),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ApprovalStrip extends StatelessWidget {
-  const _ApprovalStrip({
-    required this.turn,
-    required this.onApprove,
-    required this.onReject,
-  });
-
-  final ChatTurn turn;
-  final VoidCallback onApprove;
-  final VoidCallback onReject;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: ShellCard(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                '审批请求：${turn.permission.isEmpty ? '待确认操作' : turn.permission}',
+          if (sessionId != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  const Icon(Icons.link, size: 11, color: AppColors.textMuted),
+                  const SizedBox(width: 4),
+                  Text(
+                    '当前会话 $sessionId',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
               ),
             ),
-            FilledButton.tonal(onPressed: onReject, child: const Text('拒绝')),
-            const SizedBox(width: 10),
-            FilledButton(onPressed: onApprove, child: const Text('批准')),
+        ],
+      ),
+    );
+  }
+}
+
+class _SendButton extends StatelessWidget {
+  final bool sending;
+  final VoidCallback onSend;
+  const _SendButton({required this.sending, required this.onSend});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: sending
+          ? Container(
+              key: const ValueKey('loading'),
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight,
+                borderRadius: AppRadius.smRadius,
+              ),
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.primary,
+                ),
+              ),
+            )
+          : GestureDetector(
+              key: const ValueKey('send'),
+              onTap: onSend,
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius: AppRadius.smRadius,
+                ),
+                child: const Icon(
+                  Icons.send_rounded,
+                  size: 18,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+// 历史会话侧边栏
+class _SessionSidebar extends ConsumerWidget {
+  final String agentId;
+  final String? currentSessionId;
+  final void Function(String sid) onSelect;
+  final VoidCallback onNew;
+
+  const _SessionSidebar({
+    required this.agentId,
+    required this.currentSessionId,
+    required this.onSelect,
+    required this.onNew,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sessionsAsync = ref.watch(sessionListProvider(agentId));
+
+    return SizedBox(
+      width: 240,
+      child: Container(
+        color: AppColors.surfaceElevated,
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: AppColors.border)),
+              ),
+              child: Row(
+                children: [
+                  const Text(
+                    '历史会话',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: onNew,
+                    child: Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryLight,
+                        borderRadius: AppRadius.smRadius,
+                      ),
+                      child: const Icon(Icons.add,
+                          size: 14, color: AppColors.primary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: sessionsAsync.when(
+                loading: () => const LoadingState(),
+                error: (e, _) => Center(
+                  child: Text(
+                    '加载失败',
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textMuted),
+                  ),
+                ),
+                data: (sessions) {
+                  if (sessions.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        '暂无历史会话',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.textMuted),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: sessions.length,
+                    itemBuilder: (context, i) {
+                      final session = sessions[i];
+                      final isActive =
+                          session.sessionId == currentSessionId;
+                      return _SessionListItem(
+                        session: session,
+                        isActive: isActive,
+                        onTap: () => onSelect(session.sessionId),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
           ],
         ),
       ),
@@ -619,49 +862,67 @@ class _ApprovalStrip extends StatelessWidget {
   }
 }
 
-class PickedAttachment {
-  PickedAttachment({
-    required this.name,
-    required this.mime,
-    required this.base64Body,
+class _SessionListItem extends StatelessWidget {
+  final SessionModel session;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _SessionListItem({
+    required this.session,
+    required this.isActive,
+    required this.onTap,
   });
 
-  final String name;
-  final String mime;
-  final String base64Body;
-
-  factory PickedAttachment.fromFile(PlatformFile file, bool image) {
-    final bytes = file.bytes ?? const <int>[];
-    final mime = image
-        ? 'image/${_ext(file.extension)}'
-        : 'application/octet-stream';
-    return PickedAttachment(
-      name: file.name,
-      mime: mime,
-      base64Body: base64Encode(bytes),
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? AppColors.primaryLight : Colors.transparent,
+          borderRadius: AppRadius.smRadius,
+          border: isActive
+              ? Border.all(color: AppColors.primaryMuted)
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              session.summary?.isNotEmpty == true
+                  ? session.summary!
+                  : session.sessionId,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                color:
+                    isActive ? AppColors.primary : AppColors.textPrimary,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            if (session.updatedAt != null) ...[
+              const SizedBox(height: 3),
+              Text(
+                _formatTime(session.updatedAt!),
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
-  TaskPart toPart() {
-    return TaskPart(
-      type: 'file',
-      text: '',
-      mime: mime,
-      filename: name,
-      url: 'data:$mime;base64,$base64Body',
-    );
+  String _formatTime(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟前';
+    if (diff.inHours < 24) return '${diff.inHours} 小时前';
+    return '${dt.month}/${dt.day}';
   }
-
-  static String _ext(String? ext) {
-    if (ext == null || ext.isEmpty) return 'png';
-    return ext.toLowerCase();
-  }
-}
-
-String _formatDate(DateTime value) {
-  final month = value.month.toString().padLeft(2, '0');
-  final day = value.day.toString().padLeft(2, '0');
-  final hour = value.hour.toString().padLeft(2, '0');
-  final minute = value.minute.toString().padLeft(2, '0');
-  return '$month-$day $hour:$minute';
 }

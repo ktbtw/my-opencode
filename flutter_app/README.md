@@ -1,4 +1,4 @@
-# flutter_app
+# chat_codex_app
 
 A new Flutter project.
 
