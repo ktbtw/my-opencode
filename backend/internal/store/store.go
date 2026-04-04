@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -13,13 +15,18 @@ type Memory struct {
 	tasks    map[string]*model.Task
 	events   map[string][]model.Event
 	sessions map[string]string
+	archive  TaskArchive
 }
 
-func NewMemory() *Memory {
+func NewMemory(archive TaskArchive) *Memory {
+	if archive == nil {
+		archive = noopArchive{}
+	}
 	return &Memory{
 		tasks:    map[string]*model.Task{},
 		events:   map[string][]model.Event{},
 		sessions: map[string]string{},
+		archive:  archive,
 	}
 }
 
@@ -43,7 +50,9 @@ func (m *Memory) CreateTask(agentID, machineID, projectID, projectRoot, sessionI
 	}
 	m.tasks[id] = task
 	m.events[id] = []model.Event{}
-	return clone(task)
+	out := clone(task)
+	m.persistTask(out)
+	return out
 }
 
 func (m *Memory) GetTask(id string) (*model.Task, bool) {
@@ -65,7 +74,9 @@ func (m *Memory) SetStatus(id string, status model.TaskStatus) (*model.Task, boo
 	}
 	task.Status = status
 	task.UpdatedAt = time.Now().UTC()
-	return clone(task), true
+	out := clone(task)
+	m.persistTask(out)
+	return out, true
 }
 
 func (m *Memory) WaitApproval(id, sessionID string, approval *model.Approval) (*model.Task, bool) {
@@ -79,7 +90,9 @@ func (m *Memory) WaitApproval(id, sessionID string, approval *model.Approval) (*
 	task.SessionID = sessionID
 	task.Approval = cloneApproval(approval)
 	task.UpdatedAt = time.Now().UTC()
-	return clone(task), true
+	out := clone(task)
+	m.persistTask(out)
+	return out, true
 }
 
 func (m *Memory) Resume(id, sessionID string) (*model.Task, bool) {
@@ -93,7 +106,9 @@ func (m *Memory) Resume(id, sessionID string) (*model.Task, bool) {
 	task.SessionID = sessionID
 	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
-	return clone(task), true
+	out := clone(task)
+	m.persistTask(out)
+	return out, true
 }
 
 func (m *Memory) Complete(id, sessionID, result string) (*model.Task, bool) {
@@ -111,7 +126,9 @@ func (m *Memory) Complete(id, sessionID, result string) (*model.Task, bool) {
 	if sessionID != "" {
 		m.sessions[id] = sessionID
 	}
-	return clone(task), true
+	out := clone(task)
+	m.persistTask(out)
+	return out, true
 }
 
 func (m *Memory) Fail(id, sessionID, msg string) (*model.Task, bool) {
@@ -129,7 +146,9 @@ func (m *Memory) Fail(id, sessionID, msg string) (*model.Task, bool) {
 	if sessionID != "" {
 		m.sessions[id] = sessionID
 	}
-	return clone(task), true
+	out := clone(task)
+	m.persistTask(out)
+	return out, true
 }
 
 func (m *Memory) Cancel(id string) (*model.Task, bool) {
@@ -142,13 +161,18 @@ func (m *Memory) Cancel(id string) (*model.Task, bool) {
 	task.Status = model.TaskCancelled
 	task.Approval = nil
 	task.UpdatedAt = time.Now().UTC()
-	return clone(task), true
+	out := clone(task)
+	m.persistTask(out)
+	return out, true
 }
 
 func (m *Memory) AddEvent(id string, evt model.Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events[id] = append(m.events[id], evt)
+	if err := m.archive.AppendEvent(evt); err != nil {
+		log.Printf("append event archive failed: %v", err)
+	}
 }
 
 func (m *Memory) Events(id string) []model.Event {
@@ -158,6 +182,56 @@ func (m *Memory) Events(id string) []model.Event {
 	out := make([]model.Event, len(src))
 	copy(out, src)
 	return out
+}
+
+func (m *Memory) ListTasks(filter model.TaskFilter) ([]*model.Task, error) {
+	if tasks, err := m.archive.ListTasks(filter); err == nil && tasks != nil {
+		return tasks, nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]*model.Task, 0, len(m.tasks))
+	for _, task := range m.tasks {
+		if filter.AgentID != "" && task.AgentID != filter.AgentID {
+			continue
+		}
+		if filter.MachineID != "" && task.MachineID != filter.MachineID {
+			continue
+		}
+		if filter.ProjectID != "" && task.ProjectID != filter.ProjectID {
+			continue
+		}
+		if filter.SessionID != "" && task.SessionID != filter.SessionID {
+			continue
+		}
+		if filter.Status != "" && task.Status != filter.Status {
+			continue
+		}
+		out = append(out, clone(task))
+	}
+
+	slices.SortFunc(out, func(a, b *model.Task) int {
+		switch {
+		case a.CreatedAt.After(b.CreatedAt):
+			return -1
+		case a.CreatedAt.Before(b.CreatedAt):
+			return 1
+		default:
+			return 0
+		}
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+func (m *Memory) persistTask(task *model.Task) {
+	if err := m.archive.UpsertTask(task); err != nil {
+		log.Printf("upsert task archive failed: %v", err)
+	}
 }
 
 func clone(task *model.Task) *model.Task {

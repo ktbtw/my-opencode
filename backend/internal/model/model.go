@@ -30,6 +30,15 @@ type Task struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+type TaskFilter struct {
+	AgentID   string
+	MachineID string
+	ProjectID string
+	SessionID string
+	Status    TaskStatus
+	Limit     int
+}
+
 type Approval struct {
 	PermissionID string   `json:"permission_id"`
 	Permission   string   `json:"permission"`

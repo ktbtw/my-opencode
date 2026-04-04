@@ -206,6 +206,107 @@ curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
 - 2026-04-04 已验证 `backend` 健康检查通过
 - 2026-04-04 已验证 `serve relay` 端到端链路通过
 
+## 4.1 验证任务列表接口与 MySQL 持久化
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+确认 MySQL 建库建表是否完成：
+
+```bash
+MYSQL_PWD='ymh20040825' mysql -uroot -e 'SHOW DATABASES LIKE "chat_codex"; USE chat_codex; SHOW TABLES;'
+```
+
+再启动一个最小任务设备客户端：
+
+```bash
+node -e '
+const ws = new WebSocket("ws://127.0.0.1:8080/ws/device");
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "device.hello",
+    request_id: "req_tasks_module_1",
+    sent_at: new Date().toISOString(),
+    payload: {
+      agent_id: "macbook-main:tasks-demo",
+      machine_id: "macbook-main",
+      hostname: "MacBook-Air",
+      version: "0.3.0",
+      projects: [{ project_id: "chat-codex", root: "/Users/yuminghao/Downloads/chat-codex" }]
+    }
+  }));
+};
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data.toString());
+  if (msg.type !== "task.run") return;
+  const base = { request_id: msg.request_id, sent_at: new Date().toISOString() };
+  const text = (msg.payload.parts || []).filter((x) => x.type === "text").map((x) => x.text).join("\\n");
+  ws.send(JSON.stringify({ type: "task.started", ...base, payload: { task_id: msg.payload.task_id, session_id: "sess_tasks_demo_1" } }));
+  ws.send(JSON.stringify({ type: "task.delta", ...base, payload: { task_id: msg.payload.task_id, content: "任务处理中: " + text } }));
+  setTimeout(() => {
+    ws.send(JSON.stringify({ type: "task.completed", ...base, payload: { task_id: msg.payload.task_id, session_id: "sess_tasks_demo_1", result: "任务完成: " + text } }));
+  }, 200);
+};
+setInterval(() => {
+  ws.send(JSON.stringify({
+    type: "device.heartbeat",
+    request_id: "hb_" + Date.now(),
+    sent_at: new Date().toISOString(),
+    payload: { agent_id: "macbook-main:tasks-demo", running_task_id: "" }
+  }));
+}, 5000);
+'
+```
+
+创建任务：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "agent_id":"macbook-main:tasks-demo",
+    "project_id":"chat-codex",
+    "parts":[
+      {"type":"text","text":"请输出任务模块联调验证"}
+    ]
+  }'
+```
+
+等待任务完成后查询任务详情：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
+```
+
+查询任务列表：
+
+```bash
+curl -s 'http://127.0.0.1:8080/api/tasks?agent_id=macbook-main:tasks-demo&status=completed&limit=10'
+```
+
+重启后端后再次查询任务列表：
+
+```bash
+curl -s 'http://127.0.0.1:8080/api/tasks?agent_id=macbook-main:tasks-demo&status=completed&limit=10'
+```
+
+预期结果：
+
+- `chat_codex` 数据库存在
+- `tasks`、`task_events` 等表已自动创建
+- 任务详情最终返回 `status=completed`
+- 任务列表接口可按 `agent_id/status/limit` 过滤
+- 重启后端后，任务列表仍能查到刚才的任务记录
+
+本次实测结果：
+
+- 2026-04-04 已验证 `GET /api/tasks` 可返回真实完成任务
+- 2026-04-04 已验证任务记录在后端重启后仍可从 MySQL 查回
+
 ## 5. 验证后端审批链路
 
 先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：

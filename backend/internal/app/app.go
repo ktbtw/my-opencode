@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -20,11 +21,16 @@ type App struct {
 	broker *broker.Broker
 }
 
-func New() *App {
-	return &App{
-		store:  store.NewMemory(),
-		broker: broker.New(),
+func New() (*App, error) {
+	archive, err := store.NewTaskArchiveFromEnv()
+	if err != nil {
+		return nil, err
 	}
+	log.Printf("mysql archive initialized")
+	return &App{
+		store:  store.NewMemory(archive),
+		broker: broker.New(),
+	}, nil
 }
 
 func (a *App) Router() http.Handler {
@@ -34,6 +40,7 @@ func (a *App) Router() http.Handler {
 
 	r.Get("/healthz", h.Health)
 	r.Get("/api/agents", h.ListAgents)
+	r.Get("/api/tasks", h.ListTasks)
 	r.Post("/api/tasks", h.CreateTask)
 	r.Get("/api/tasks/{taskID}", h.GetTask)
 	r.Get("/api/tasks/{taskID}/events", h.TaskEvents)

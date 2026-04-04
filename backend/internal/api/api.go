@@ -46,6 +46,32 @@ func (a *API) ListAgents(w http.ResponseWriter, _ *http.Request) {
 	write(w, http.StatusOK, a.broker.List())
 }
 
+func (a *API) ListTasks(w http.ResponseWriter, r *http.Request) {
+	filter := model.TaskFilter{
+		AgentID:   r.URL.Query().Get("agent_id"),
+		MachineID: r.URL.Query().Get("machine_id"),
+		ProjectID: r.URL.Query().Get("project_id"),
+		SessionID: r.URL.Query().Get("session_id"),
+		Status:    model.TaskStatus(r.URL.Query().Get("status")),
+		Limit:     50,
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		var limit int
+		if _, err := fmt.Sscanf(raw, "%d", &limit); err != nil || limit <= 0 || limit > 200 {
+			write(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"})
+			return
+		}
+		filter.Limit = limit
+	}
+
+	tasks, err := a.store.ListTasks(filter)
+	if err != nil {
+		write(w, http.StatusInternalServerError, map[string]string{"error": "list tasks failed"})
+		return
+	}
+	write(w, http.StatusOK, tasks)
+}
+
 func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 	var req createTaskReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

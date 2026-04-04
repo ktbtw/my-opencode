@@ -10,9 +10,13 @@ import (
 
 func main() {
 	addr := env("ADDR", ":8080")
+	application, err := app.New()
+	if err != nil {
+		log.Fatal(err)
+	}
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: app.New().Router(),
+		Handler: application.Router(),
 	}
 
 	log.Printf("relay server listening on %s", addr)
