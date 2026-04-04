@@ -415,3 +415,128 @@ curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
 本次实测结果：
 
 - 2026-04-04 已验证 `approval_auto_approved -> completed`
+
+## 7. 验证真实 my-opencode serve 的 ask 审批链路
+
+先在目录 `/Users/yuminghao/Downloads/chat-codex/backend` 下启动后端：
+
+```bash
+go run ./cmd/server
+```
+
+再在目录 `/Users/yuminghao/Downloads/chat-codex/my-opencode/packages/opencode` 下启动真实 `serve`：
+
+```bash
+export OPENCODE_CONFIG_CONTENT='{
+  "enabled_providers": ["xcodebest"],
+  "provider": {
+    "xcodebest": {
+      "name": "xcodebest",
+      "api": "https://api.xcode.best/v1",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "<YOUR_API_KEY>",
+        "baseURL": "https://api.xcode.best/v1"
+      },
+      "models": {
+        "gpt-5.4-mini": {
+          "name": "gpt-5.4-mini",
+          "id": "gpt-5.4-mini",
+          "tool_call": true,
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "build": {
+      "permission": {
+        "bash": "ask",
+        "edit": "ask",
+        "read": "allow",
+        "list": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "todowrite": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    }
+  },
+  "model": "xcodebest/gpt-5.4-mini",
+  "small_model": "xcodebest/gpt-5.4-mini",
+  "logLevel": "DEBUG"
+}'
+export OPENCODE_RELAY_URL=http://127.0.0.1:8080
+export OPENCODE_RELAY_DEVICE_ID=macbook-main
+export OPENCODE_RELAY_PROJECT_ID=chat-codex
+export OPENCODE_RELAY_PROJECT_ROOT=/Users/yuminghao/Downloads/chat-codex
+export OPENCODE_RELAY_PERMISSION_MODE=ask
+export OPENCODE_SERVER_PASSWORD=
+export OPENCODE_DISABLE_DEFAULT_PLUGINS=1
+export OPENCODE_DISABLE_MODELS_FETCH=1
+export OPENCODE_DISABLE_AUTOUPDATE=1
+export OPENCODE_DISABLE_PROJECT_CONFIG=1
+export OPENCODE_DISABLE_CLAUDE_CODE=1
+export BUN_INSTALL_CACHE_DIR=/opt/homebrew/lib/node_cache
+bun run src/index.ts serve --hostname 127.0.0.1 --port 4096
+```
+
+新开终端，先确保测试文件不存在，再创建真实写文件任务：
+
+```bash
+rm -f /Users/yuminghao/Downloads/chat-codex/real-ask-approval.txt
+
+curl -s http://127.0.0.1:8080/api/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "device_id":"macbook-main",
+    "project_id":"chat-codex",
+    "parts":[
+      {
+        "type":"text",
+        "text":"必须在当前项目根目录创建文件 `real-ask-approval.txt`，内容为 `approved-by-real-ask`，然后只回复 done。不要只描述步骤，必须真正执行。"
+      }
+    ]
+  }'
+```
+
+记录返回的 `task_id` 后，先查询任务，确认进入 `waiting_approval`：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+```
+
+审批通过：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>/approval \
+  -H 'Content-Type: application/json' \
+  -d '{"reply":"once"}'
+```
+
+最后检查状态、事件流和文件：
+
+```bash
+curl -s http://127.0.0.1:8080/api/tasks/<TASK_ID>
+curl -sN http://127.0.0.1:8080/api/tasks/<TASK_ID>/events
+cat /Users/yuminghao/Downloads/chat-codex/real-ask-approval.txt
+```
+
+预期结果：
+
+- 审批前任务状态为 `waiting_approval`
+- 事件流包含 `waiting_approval`
+- 审批后事件流包含 `approval_requested`
+- 审批后事件流包含 `approval_applied`
+- 最终任务状态为 `completed`
+- 最终 `result` 为 `done`
+- 文件 `real-ask-approval.txt` 被真实创建，内容为 `approved-by-real-ask`
+
+本次实测结果：
+
+- 2026-04-04 已验证真实 `serve` 审批链路 `waiting_approval -> approval_requested -> approval_applied -> completed`
+- 2026-04-04 已验证文件 `/Users/yuminghao/Downloads/chat-codex/real-ask-approval.txt` 被真实写入，内容为 `approved-by-real-ask`
