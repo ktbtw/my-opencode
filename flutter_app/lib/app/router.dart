@@ -5,6 +5,7 @@ import '../../features/auth/presentation/login_page.dart';
 import '../../features/devices/presentation/device_list_page.dart';
 import '../../features/devices/presentation/device_detail_page.dart';
 import '../../features/chat/presentation/chat_page.dart';
+import '../../features/settings/presentation/settings_page.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/login',
@@ -18,17 +19,11 @@ final appRouter = GoRouter(
   routes: [
     GoRoute(
       path: '/login',
-      pageBuilder: (context, state) => _buildPage(
-        state,
-        const LoginPage(),
-      ),
+      pageBuilder: (context, state) => _buildPage(state, const LoginPage()),
     ),
     GoRoute(
       path: '/devices',
-      pageBuilder: (context, state) => _buildPage(
-        state,
-        const DeviceListPage(),
-      ),
+      pageBuilder: (context, state) => _buildPage(state, const DeviceListPage()),
     ),
     GoRoute(
       path: '/devices/:machineId',
@@ -38,15 +33,19 @@ final appRouter = GoRouter(
       ),
     ),
     GoRoute(
-      path: '/chat/:agentId',
+      path: '/chat',
       pageBuilder: (context, state) => _buildPage(
         state,
         ChatPage(
-          agentId: state.pathParameters['agentId']!,
+          agentId: state.uri.queryParameters['agentId'] ?? '',
           projectId: state.uri.queryParameters['projectId'] ?? '',
           machineId: state.uri.queryParameters['machineId'] ?? '',
         ),
       ),
+    ),
+    GoRoute(
+      path: '/settings',
+      pageBuilder: (context, state) => _buildPage(state, const SettingsPage()),
     ),
   ],
 );

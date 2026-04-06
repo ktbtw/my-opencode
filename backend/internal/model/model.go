@@ -90,6 +90,7 @@ type Event struct {
 	TaskID       string    `json:"task_id"`
 	Type         string    `json:"type"`
 	Content      string    `json:"content,omitempty"`
+	Field        string    `json:"field,omitempty"`
 	SessionID    string    `json:"session_id,omitempty"`
 	PermissionID string    `json:"permission_id,omitempty"`
 	Permission   string    `json:"permission,omitempty"`
@@ -177,6 +178,7 @@ type StartedPayload struct {
 type DeltaPayload struct {
 	TaskID  string `json:"task_id"`
 	Content string `json:"content"`
+	Field   string `json:"field,omitempty"`
 }
 
 type CompletedPayload struct {

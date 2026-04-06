@@ -16,6 +16,7 @@ class AuthRepository {
 
     await AppStorage.setToken(token);
     await AppStorage.setUsername(username);
+    await AppStorage.setPassword(password);
 
     final operator = data['operator'] as Map<String, dynamic>?;
     if (operator != null) {

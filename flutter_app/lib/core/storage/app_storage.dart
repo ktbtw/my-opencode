@@ -6,6 +6,7 @@ class AppStorage {
   static const _keyUsername = 'username';
   static const _keyDisplayName = 'display_name';
   static const _keyBaseUrl = 'base_url';
+  static const _keyPassword = 'password';
 
   static SharedPreferences? _prefs;
 
@@ -39,8 +40,13 @@ class AppStorage {
 
   // 后端地址
   static String getBaseUrl() =>
-      _p.getString(_keyBaseUrl) ?? 'http://127.0.0.1:8080';
+      _p.getString(_keyBaseUrl) ?? 'http://114.66.33.149:8888';
   static Future<void> setBaseUrl(String url) => _p.setString(_keyBaseUrl, url);
+
+  // 密码（用于 token 过期后自动重登）
+  static String? getPassword() => _p.getString(_keyPassword);
+  static Future<void> setPassword(String pwd) =>
+      _p.setString(_keyPassword, pwd);
 
   // 是否已登录
   static bool isLoggedIn() {
@@ -54,5 +60,6 @@ class AppStorage {
     await _p.remove(_keyOperatorKey);
     await _p.remove(_keyUsername);
     await _p.remove(_keyDisplayName);
+    await _p.remove(_keyPassword);
   }
 }

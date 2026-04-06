@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_colors.dart';
@@ -44,21 +45,23 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
     final displayName = AppStorage.getDisplayName() ?? AppStorage.getUsername() ?? '用户';
 
     return Scaffold(
-      body: PageBackground(
-        child: Column(
-          children: [
-            _buildTopBar(context, displayName),
-            Expanded(
-              child: FadeTransition(
-                opacity: _fadeAnim,
-                child: devicesAsync.when(
-                  loading: () => const LoadingState(),
-                  error: (e, _) => _buildError(e.toString()),
-                  data: (devices) => _buildContent(devices),
+      body: SafeArea(
+        child: PageBackground(
+          child: Column(
+            children: [
+              _buildTopBar(context, displayName),
+              Expanded(
+                child: FadeTransition(
+                  opacity: _fadeAnim,
+                  child: devicesAsync.when(
+                    loading: () => const LoadingState(),
+                    error: (e, _) => _buildError(e.toString()),
+                    data: (devices) => _buildContent(devices),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -83,37 +86,42 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
                 ),
           ),
           const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: AppColors.primaryLight,
-              borderRadius: AppRadius.smRadius,
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.person_outline, size: 14, color: AppColors.primary),
-                const SizedBox(width: 5),
-                Text(
-                  displayName,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w500,
+          GestureDetector(
+            onTap: () => _showProfileSheet(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight,
+                borderRadius: AppRadius.smRadius,
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.person_outline, size: 14, color: AppColors.primary),
+                  const SizedBox(width: 5),
+                  Text(
+                    displayName,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 3),
+                  const Icon(Icons.expand_more, size: 14, color: AppColors.primary),
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 8),
           IconButton(
+            icon: const Icon(Icons.settings_outlined, size: 18, color: AppColors.textSecondary),
+            tooltip: '设置',
+            onPressed: () => context.push('/settings'),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh, size: 18, color: AppColors.textSecondary),
             tooltip: '刷新',
             onPressed: () => ref.invalidate(deviceListProvider),
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, size: 18, color: AppColors.textSecondary),
-            tooltip: '退出登录',
-            onPressed: _logout,
           ),
         ],
       ),
@@ -123,6 +131,17 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
   Future<void> _logout() async {
     await AppStorage.clearAuth();
     if (mounted) context.go('/login');
+  }
+
+  void _showProfileSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _ProfileSheet(onLogout: _logout),
+    );
   }
 
   Widget _buildContent(List<DeviceModel> devices) {
@@ -388,5 +407,296 @@ class _DeviceCardState extends State<_DeviceCard>
     if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟前';
     if (diff.inHours < 24) return '${diff.inHours} 小时前';
     return '${diff.inDays} 天前';
+  }
+}
+
+// 个人信息面板
+class _ProfileSheet extends StatefulWidget {
+  final Future<void> Function() onLogout;
+  const _ProfileSheet({required this.onLogout});
+
+  @override
+  State<_ProfileSheet> createState() => _ProfileSheetState();
+}
+
+class _ProfileSheetState extends State<_ProfileSheet> {
+  late final TextEditingController _baseUrlCtrl;
+  bool _editingUrl = false;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _baseUrlCtrl = TextEditingController(text: AppStorage.getBaseUrl());
+  }
+
+  @override
+  void dispose() {
+    _baseUrlCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveBaseUrl() async {
+    final url = _baseUrlCtrl.text.trim();
+    if (url.isEmpty) return;
+    setState(() => _saving = true);
+    await AppStorage.setBaseUrl(url);
+    setState(() {
+      _saving = false;
+      _editingUrl = false;
+    });
+  }
+
+  void _copyToClipboard(BuildContext context, String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已复制到剪贴板'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final username = AppStorage.getUsername() ?? '-';
+    final displayName = AppStorage.getDisplayName() ?? username;
+    final operatorKey = AppStorage.getOperatorKey() ?? '-';
+
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 拖拽条
+            Container(
+              margin: const EdgeInsets.only(top: 10),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // 标题
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      borderRadius: AppRadius.mdRadius,
+                    ),
+                    child: const Icon(Icons.person_outline,
+                        size: 22, color: AppColors.primary),
+                  ),
+                  const SizedBox(width: 14),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displayName,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        '@$username',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppColors.border),
+            // 信息列表
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              child: Column(
+                children: [
+                  // Operator Key
+                  _InfoRow(
+                    label: 'Operator Key',
+                    value: operatorKey.length > 20
+                        ? '${operatorKey.substring(0, 8)}...${operatorKey.substring(operatorKey.length - 8)}'
+                        : operatorKey,
+                    icon: Icons.key_outlined,
+                    trailing: IconButton(
+                      icon: const Icon(Icons.copy_outlined,
+                          size: 16, color: AppColors.textMuted),
+                      tooltip: '复制',
+                      onPressed: () => _copyToClipboard(context, operatorKey),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // 后端地址
+                  _editingUrl
+                      ? Row(
+                          children: [
+                            const Icon(Icons.dns_outlined,
+                                size: 16, color: AppColors.textMuted),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _baseUrlCtrl,
+                                autofocus: true,
+                                decoration: InputDecoration(
+                                  hintText: 'http://127.0.0.1:8080',
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 8),
+                                  border: OutlineInputBorder(
+                                    borderRadius: AppRadius.smRadius,
+                                    borderSide: const BorderSide(
+                                        color: AppColors.border),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: AppRadius.smRadius,
+                                    borderSide: const BorderSide(
+                                        color: AppColors.border),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: AppRadius.smRadius,
+                                    borderSide: const BorderSide(
+                                        color: AppColors.primary, width: 1.5),
+                                  ),
+                                  filled: true,
+                                  fillColor: AppColors.inputBackground,
+                                ),
+                                style: const TextStyle(
+                                    fontSize: 13, fontFamily: 'monospace'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            TextButton(
+                              onPressed: _saving ? null : _saveBaseUrl,
+                              child: _saving
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 1.5))
+                                  : const Text('保存'),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  setState(() => _editingUrl = false),
+                              child: const Text('取消'),
+                            ),
+                          ],
+                        )
+                      : _InfoRow(
+                          label: '后端地址',
+                          value: AppStorage.getBaseUrl(),
+                          icon: Icons.dns_outlined,
+                          trailing: IconButton(
+                            icon: const Icon(Icons.edit_outlined,
+                                size: 16, color: AppColors.textMuted),
+                            tooltip: '修改',
+                            onPressed: () =>
+                                setState(() => _editingUrl = true),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppColors.border),
+            // 退出登录
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(context).pop();
+                    await widget.onLogout();
+                  },
+                  icon: const Icon(Icons.logout, size: 16,
+                      color: AppColors.statusError),
+                  label: const Text(
+                    '退出登录',
+                    style: TextStyle(color: AppColors.statusError),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                        color: AppColors.statusError.withOpacity(0.4)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: AppRadius.smRadius),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final IconData icon;
+  final Widget? trailing;
+
+  const _InfoRow({
+    required this.label,
+    required this.value,
+    required this.icon,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: AppColors.textMuted),
+        const SizedBox(width: 10),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.textMuted,
+              ),
+            ),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.textPrimary,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ],
+        ),
+        const Spacer(),
+        if (trailing != null) trailing!,
+      ],
+    );
   }
 }

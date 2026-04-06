@@ -16,15 +16,25 @@ class AgentModel {
   });
 
   factory AgentModel.fromJson(Map<String, dynamic> j) {
+    // projects 数组取第一个
+    final projects = j['projects'] as List<dynamic>? ?? [];
+    final firstProject = projects.isNotEmpty
+        ? projects[0] as Map<String, dynamic>
+        : <String, dynamic>{};
+
     return AgentModel(
       agentId: j['agent_id'] as String? ?? '',
-      projectId: j['project_id'] as String? ?? '',
-      projectRoot: j['project_root'] as String? ?? '',
+      projectId: j['project_id'] as String? ??
+          firstProject['project_id'] as String? ?? '',
+      projectRoot: j['project_root'] as String? ??
+          firstProject['root'] as String? ?? '',
       version: j['version'] as String? ?? '',
-      runningTaskId: j['running_task_id'] as String?,
-      lastSeen: j['last_seen'] != null
-          ? DateTime.tryParse(j['last_seen'] as String)
-          : null,
+      runningTaskId: j['current_task_id'] as String? ?? j['running_task_id'] as String?,
+      lastSeen: j['seen_at'] != null
+          ? DateTime.tryParse(j['seen_at'] as String)
+          : j['last_seen'] != null
+              ? DateTime.tryParse(j['last_seen'] as String)
+              : null,
     );
   }
 
@@ -52,14 +62,22 @@ class DeviceModel {
         .map((a) => AgentModel.fromJson(a as Map<String, dynamic>))
         .toList();
 
+    // 后端返回 status: "online" 字符串，兼容布尔
+    final statusRaw = j['status'];
+    final bool online = statusRaw is bool
+        ? statusRaw
+        : statusRaw == 'online';
+
     return DeviceModel(
       machineId: j['machine_id'] as String? ?? '',
       hostname: j['hostname'] as String? ?? j['machine_id'] as String? ?? '',
-      online: j['online'] as bool? ?? false,
+      online: online,
       agents: agentList,
-      lastSeen: j['last_seen'] != null
-          ? DateTime.tryParse(j['last_seen'] as String)
-          : null,
+      lastSeen: j['seen_at'] != null
+          ? DateTime.tryParse(j['seen_at'] as String)
+          : j['last_seen'] != null
+              ? DateTime.tryParse(j['last_seen'] as String)
+              : null,
     );
   }
 }

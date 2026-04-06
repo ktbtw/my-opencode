@@ -17,7 +17,8 @@ class DeviceDetailPage extends ConsumerWidget {
     final isMobile = AppBreakpoints.isMobile(context);
 
     return Scaffold(
-      body: PageBackground(
+      body: SafeArea(
+        child: PageBackground(
         child: Column(
           children: [
             _buildTopBar(context),
@@ -50,6 +51,7 @@ class DeviceDetailPage extends ConsumerWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -315,8 +317,9 @@ class _AgentCard extends StatelessWidget {
               icon: Icons.chat_bubble_outline,
               onPressed: () {
                 context.push(
-                  '/chat/${Uri.encodeComponent(agent.agentId)}'
-                  '?projectId=${Uri.encodeComponent(agent.projectId)}'
+                  '/chat'
+                  '?agentId=${Uri.encodeComponent(agent.agentId)}'
+                  '&projectId=${Uri.encodeComponent(agent.projectId)}'
                   '&machineId=${Uri.encodeComponent(device.machineId)}',
                 );
               },

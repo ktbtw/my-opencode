@@ -32,7 +32,7 @@ func New() (*App, error) {
 	return &App{
 		store:  store.NewMemory(archive),
 		broker: broker.New(),
-		auth:   auth.NewManager(24 * time.Hour),
+		auth:   auth.NewManager(7 * 24 * time.Hour),
 	}, nil
 }
 
@@ -54,6 +54,7 @@ func (a *App) Router() http.Handler {
 	r.Get("/api/tasks/{taskID}/events", h.TaskEvents)
 	r.Post("/api/tasks/{taskID}/approval", h.ApproveTask)
 	r.Post("/api/tasks/{taskID}/cancel", h.CancelTask)
+	r.Get("/api/models", h.ListModels)
 	r.Get("/ws/device", a.device)
 	return r
 }
@@ -62,7 +63,7 @@ func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control, Accept")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -79,6 +80,7 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer c.CloseNow()
+	c.SetReadLimit(4 << 20) // 4MB，模型列表 JSON 较大
 
 	ctx := r.Context()
 	_, buf, err := c.Read(ctx)
@@ -139,6 +141,7 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, buf, err := c.Read(ctx)
 		if err != nil {
+			log.Printf("[device] read error agentID=%s: %v", device.ID, err)
 			return
 		}
 		if err := a.handle(device.ID, buf); err != nil {
@@ -153,8 +156,10 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 func (a *App) handle(agentID string, buf []byte) error {
 	var env model.Envelope
 	if err := json.Unmarshal(buf, &env); err != nil {
+		log.Printf("[handle] unmarshal error: %v", err)
 		return err
 	}
+	log.Printf("[handle] agentID=%s type=%s", agentID, env.Type)
 
 	body, err := json.Marshal(env.Payload)
 	if err != nil {
@@ -168,6 +173,19 @@ func (a *App) handle(agentID string, buf []byte) error {
 			return err
 		}
 		a.broker.Touch(agentID, msg.RunningTaskID)
+		return nil
+	case "device.models":
+		// relay 推送的模型列表，缓存到 broker
+		var msg struct {
+			AgentID string          `json:"agent_id"`
+			Models  json.RawMessage `json:"models"`
+		}
+		if err := json.Unmarshal(body, &msg); err != nil {
+			log.Printf("[device.models] unmarshal error: %v, body=%s", err, string(body[:min(200, len(body))]))
+			return err
+		}
+		log.Printf("[device.models] agentID=%s, modelsLen=%d", agentID, len(msg.Models))
+		a.broker.SetModels(agentID, msg.Models)
 		return nil
 	case "task.started":
 		var msg model.StartedPayload
@@ -192,6 +210,7 @@ func (a *App) handle(agentID string, buf []byte) error {
 			TaskID:  msg.TaskID,
 			Type:    "delta",
 			Content: msg.Content,
+			Field:   msg.Field,
 			SentAt:  time.Now().UTC(),
 		})
 		return nil

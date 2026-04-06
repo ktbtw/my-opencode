@@ -31,6 +31,8 @@ class AppColors {
   // 状态色
   static const Color statusOnline = Color(0xFF16A34A);
   static const Color statusOnlineLight = Color(0xFFDCFCE7);
+  static const Color statusSuccess = Color(0xFF16A34A);
+  static const Color statusSuccessLight = Color(0xFFDCFCE7);
   static const Color statusProcessing = Color(0xFF2563EB);
   static const Color statusProcessingLight = Color(0xFFEFF6FF);
   static const Color statusWarning = Color(0xFFD97706);

@@ -62,7 +62,7 @@ func NewMySQLArchive(ctx context.Context, cfg MySQLConfig) (*MySQLArchive, error
 	if err := serverDB.PingContext(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := serverDB.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+quoteIdent(cfg.Database)+" CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"); err != nil {
+	if _, err := serverDB.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+quoteIdent(cfg.Database)+" CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci"); err != nil {
 		return nil, err
 	}
 
@@ -530,7 +530,7 @@ var schemaStatements = []string{
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_operator_uid (operator_uid)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS machines (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   machine_id VARCHAR(128) NOT NULL,
@@ -542,7 +542,7 @@ var schemaStatements = []string{
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_machine_id (machine_id),
   KEY idx_machines_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS agents (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   agent_id VARCHAR(191) NOT NULL,
@@ -560,7 +560,7 @@ var schemaStatements = []string{
   KEY idx_agents_machine_id (machine_id),
   KEY idx_agents_project_id (project_id),
   KEY idx_agents_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS sessions (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   session_id VARCHAR(64) NOT NULL,
@@ -575,7 +575,7 @@ var schemaStatements = []string{
   UNIQUE KEY uk_session_id (session_id),
   KEY idx_sessions_agent_id (agent_id),
   KEY idx_sessions_project_id (project_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS tasks (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   task_id VARCHAR(64) NOT NULL,
@@ -597,7 +597,7 @@ var schemaStatements = []string{
   KEY idx_tasks_status (status),
   KEY idx_tasks_session_id (session_id),
   KEY idx_tasks_created_at (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS task_events (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   task_id VARCHAR(64) NOT NULL,
@@ -612,7 +612,7 @@ var schemaStatements = []string{
   KEY idx_task_events_task_id (task_id),
   KEY idx_task_events_sent_at (sent_at),
   KEY idx_task_events_event_type (event_type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS task_approvals (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   task_id VARCHAR(64) NOT NULL,
@@ -630,5 +630,5 @@ var schemaStatements = []string{
   UNIQUE KEY uk_task_permission (task_id, permission_id),
   KEY idx_task_approvals_agent_id (agent_id),
   KEY idx_task_approvals_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 }

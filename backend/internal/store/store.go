@@ -11,11 +11,13 @@ import (
 )
 
 type Memory struct {
-	mu       sync.RWMutex
-	tasks    map[string]*model.Task
-	events   map[string][]model.Event
-	sessions map[string]*model.Session
-	archive  TaskArchive
+	mu          sync.RWMutex
+	tasks       map[string]*model.Task
+	events      map[string][]model.Event
+	sessions    map[string]*model.Session
+	archive     TaskArchive
+	subMu       sync.Mutex
+	subscribers map[string][]chan model.Event
 }
 
 func NewMemory(archive TaskArchive) *Memory {
@@ -23,10 +25,11 @@ func NewMemory(archive TaskArchive) *Memory {
 		archive = noopArchive{}
 	}
 	return &Memory{
-		tasks:    map[string]*model.Task{},
-		events:   map[string][]model.Event{},
-		sessions: map[string]*model.Session{},
-		archive:  archive,
+		tasks:       map[string]*model.Task{},
+		events:      map[string][]model.Event{},
+		sessions:    map[string]*model.Session{},
+		subscribers: map[string][]chan model.Event{},
+		archive:     archive,
 	}
 }
 
@@ -168,11 +171,42 @@ func (m *Memory) Cancel(id string) (*model.Task, bool) {
 
 func (m *Memory) AddEvent(id string, evt model.Event) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.events[id] = append(m.events[id], evt)
+	m.mu.Unlock()
 	if err := m.archive.AppendEvent(evt); err != nil {
 		log.Printf("append event archive failed: %v", err)
 	}
+	// 广播给所有订阅者
+	m.subMu.Lock()
+	subs := m.subscribers[id]
+	m.subMu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- evt:
+		default:
+		}
+	}
+}
+
+// Subscribe 订阅某个任务的新事件，返回 channel 和取消函数
+func (m *Memory) Subscribe(taskID string) (chan model.Event, func()) {
+	ch := make(chan model.Event, 32)
+	m.subMu.Lock()
+	m.subscribers[taskID] = append(m.subscribers[taskID], ch)
+	m.subMu.Unlock()
+	cancel := func() {
+		m.subMu.Lock()
+		subs := m.subscribers[taskID]
+		for i, s := range subs {
+			if s == ch {
+				m.subscribers[taskID] = append(subs[:i], subs[i+1:]...)
+				break
+			}
+		}
+		m.subMu.Unlock()
+		close(ch)
+	}
+	return ch, cancel
 }
 
 func (m *Memory) Events(id string) []model.Event {

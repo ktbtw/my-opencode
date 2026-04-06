@@ -23,6 +23,7 @@ type Device struct {
 	Projects    []model.HelloProject
 	SeenAt      time.Time
 	CurrentTask string
+	ModelsJSON  json.RawMessage // 缓存的模型列表原始 JSON
 	conn        *websocket.Conn
 	mu          sync.Mutex
 }
@@ -80,6 +81,24 @@ func (b *Broker) Remove(id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.devices, id)
+}
+
+func (b *Broker) SetModels(id string, data json.RawMessage) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if dev, ok := b.devices[id]; ok {
+		dev.ModelsJSON = data
+	}
+}
+
+func (b *Broker) GetModels(id string) (json.RawMessage, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	dev, ok := b.devices[id]
+	if !ok || dev.ModelsJSON == nil {
+		return nil, false
+	}
+	return dev.ModelsJSON, true
 }
 
 func (b *Broker) Has(id string) bool {

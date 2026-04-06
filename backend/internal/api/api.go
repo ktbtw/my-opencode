@@ -95,7 +95,70 @@ func (a *API) ListDevices(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	write(w, http.StatusOK, a.broker.ListMachines(operator.ID))
+	online := a.broker.ListMachines(operator.ID)
+	// 收集在线设备的 machineID
+	onlineSet := map[string]bool{}
+	for _, m := range online {
+		onlineSet[m.MachineID] = true
+	}
+	// 从历史 sessions 补充离线设备（只补充 7 天内活跃的）
+	// 同一 agent_id 可能出现在不同 machine_id（主机名变更），按 agent_id 去重，取最新的 machine_id
+	// 若 agent_id 已在线则不补充
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	sessions, _ := a.store.ListSessions(model.SessionFilter{Limit: 200})
+
+	// 收集在线的 agent_id
+	onlineAgentSet := map[string]bool{}
+	for _, m := range online {
+		for _, ag := range m.Agents {
+			onlineAgentSet[ag.ID] = true
+		}
+	}
+
+	// 按 agent_id 找最新 session
+	agentLatest := map[string]*model.Session{}
+	for _, s := range sessions {
+		if s.MachineID == "" || s.UpdatedAt.Before(cutoff) || onlineAgentSet[s.AgentID] {
+			continue
+		}
+		prev, exists := agentLatest[s.AgentID]
+		if !exists || s.UpdatedAt.After(prev.UpdatedAt) {
+			agentLatest[s.AgentID] = s
+		}
+	}
+
+	offlineMap := map[string]*model.Machine{}
+	for _, s := range agentLatest {
+		if onlineSet[s.MachineID] { // machine 已在线，不补充
+			continue
+		}
+		m, exists := offlineMap[s.MachineID]
+		if !exists {
+			m = &model.Machine{
+				MachineID: s.MachineID,
+				Hostname:  s.MachineID,
+				Status:    "offline",
+				SeenAt:    s.UpdatedAt,
+			}
+			offlineMap[s.MachineID] = m
+		}
+		if s.UpdatedAt.After(m.SeenAt) {
+			m.SeenAt = s.UpdatedAt
+		}
+		m.Agents = append(m.Agents, model.Agent{
+			ID:        s.AgentID,
+			MachineID: s.MachineID,
+			Hostname:  s.MachineID,
+			Projects:  []model.HelloProject{{ProjectID: s.ProjectID}},
+			SeenAt:    s.UpdatedAt,
+		})
+	}
+	result := make([]model.Machine, 0, len(online)+len(offlineMap))
+	result = append(result, online...)
+	for _, m := range offlineMap {
+		result = append(result, *m)
+	}
+	write(w, http.StatusOK, result)
 }
 
 func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
@@ -106,11 +169,58 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	machineID := chi.URLParam(r, "machineID")
 	device, ok := a.broker.GetMachine(operator.ID, machineID)
-	if !ok {
+	if ok {
+		write(w, http.StatusOK, device)
+		return
+	}
+	// 设备离线时，从历史 session 记录重建离线设备视图
+	sessions, err := a.store.ListSessions(model.SessionFilter{MachineID: machineID, Limit: 50})
+	if err != nil || len(sessions) == 0 {
 		write(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
 	}
-	write(w, http.StatusOK, device)
+	// 按 agent_id 收集唯一 agent，取最近 session 时间
+	type agentEntry struct {
+		agentID   string
+		projectID string
+		lastSeen  time.Time
+	}
+	hostname := machineID
+	agentMap := map[string]*agentEntry{}
+	for _, s := range sessions {
+		if s.MachineID != "" {
+			hostname = s.MachineID
+		}
+		e, exists := agentMap[s.AgentID]
+		if !exists {
+			agentMap[s.AgentID] = &agentEntry{agentID: s.AgentID, projectID: s.ProjectID, lastSeen: s.UpdatedAt}
+		} else if s.UpdatedAt.After(e.lastSeen) {
+			e.lastSeen = s.UpdatedAt
+			e.projectID = s.ProjectID
+		}
+	}
+	agents := make([]model.Agent, 0, len(agentMap))
+	var latestSeen time.Time
+	for _, e := range agentMap {
+		agents = append(agents, model.Agent{
+			ID:        e.agentID,
+			MachineID: machineID,
+			Hostname:  hostname,
+			Projects:  []model.HelloProject{{ProjectID: e.projectID}},
+			SeenAt:    e.lastSeen,
+		})
+		if e.lastSeen.After(latestSeen) {
+			latestSeen = e.lastSeen
+		}
+	}
+	offline := model.Machine{
+		MachineID: machineID,
+		Hostname:  hostname,
+		Status:    "offline",
+		SeenAt:    latestSeen,
+		Agents:    agents,
+	}
+	write(w, http.StatusOK, offline)
 }
 
 func (a *API) ListTasks(w http.ResponseWriter, r *http.Request) {
@@ -250,14 +360,63 @@ func (a *API) TaskEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
-	for _, evt := range a.store.Events(taskID) {
+	flusher, canFlush := w.(http.Flusher)
+
+	sendEvent := func(evt model.Event) {
 		body, _ := json.Marshal(evt)
 		fmt.Fprintf(w, "event: %s\n", evt.Type)
 		fmt.Fprintf(w, "data: %s\n\n", body)
+		if canFlush {
+			flusher.Flush()
+		}
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+
+	// 订阅新事件（先订阅，再发历史，避免遗漏）
+	ch, cancel := a.store.Subscribe(taskID)
+	defer cancel()
+
+	// 发送已有历史事件，记录已发数量
+	history := a.store.Events(taskID)
+	for _, evt := range history {
+		sendEvent(evt)
+	}
+
+	// 检查任务是否已经结束
+	isTerminal := func(t string) bool {
+		return t == "completed" || t == "failed" || t == "cancelled"
+	}
+	for _, evt := range history {
+		if isTerminal(evt.Type) {
+			return
+		}
+	}
+
+	// 等待新事件，直到终结或客户端断开
+	ctx := r.Context()
+	// 心跳，防止代理超时断开
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fmt.Fprintf(w, ": ping\n\n")
+			if canFlush {
+				flusher.Flush()
+			}
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			sendEvent(evt)
+			if isTerminal(evt.Type) {
+				return
+			}
+		}
 	}
 }
 
@@ -347,6 +506,21 @@ func (a *API) ApproveTask(w http.ResponseWriter, r *http.Request) {
 
 	task, _ = a.store.GetTask(task.ID)
 	write(w, http.StatusAccepted, task)
+}
+
+func (a *API) ListModels(w http.ResponseWriter, r *http.Request) {
+	// 从在线设备的缓存中获取模型列表
+	agents := a.broker.List()
+	for _, ag := range agents {
+		data, ok := a.broker.GetModels(ag.ID)
+		if ok && data != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(data)
+			return
+		}
+	}
+	write(w, http.StatusServiceUnavailable, map[string]string{"error": "no device with models available"})
 }
 
 func write(w http.ResponseWriter, code int, body any) {

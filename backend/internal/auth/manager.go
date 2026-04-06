@@ -61,6 +61,11 @@ func (m *Manager) Verify(rawToken string) (model.Operator, bool) {
 		m.mu.Unlock()
 		return model.Operator{}, false
 	}
+	// 自动续期：每次验证成功时刷新过期时间
+	m.mu.Lock()
+	item.expires = time.Now().Add(m.ttl)
+	m.sessions[token] = item
+	m.mu.Unlock()
 	return item.operator, true
 }
 
