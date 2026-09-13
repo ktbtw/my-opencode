@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flutter Context Usage Panel Preview</title>
+    <style>
+      :root {
+        --background: #f2f6fc;
+        --surface: #ffffff;
+        --surface-elevated: #fafcff;
+        --border: #d0ddef;
+        --border-light: #e8eff8;
+        --primary: #2563eb;
+        --primary-light: #eff6ff;
+        --text-primary: #0f1729;
+        --text-secondary: #4a5d7a;
+        --text-muted: #8fa3bf;
+        --input-background: #f8fafd;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--background);
+        color: var(--text-primary);
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        letter-spacing: 0;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      .page {
+        display: grid;
+        min-height: 100vh;
+        grid-template-rows: 52px 1fr auto;
+      }
+
+      .context-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 52px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .icon-btn {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-secondary);
+      }
+
+      .divider {
+        width: 1px;
+        height: 20px;
+        background: var(--border);
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        height: 28px;
+        padding: 0 10px;
+        border: 1px solid var(--border-light);
+        border-radius: 999px;
+        background: var(--surface-elevated);
+        color: var(--text-secondary);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .chat {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 28px 12px 0;
+      }
+
+      .messages {
+        width: min(880px, 100%);
+        padding-bottom: 18px;
+      }
+
+      .bubble {
+        width: fit-content;
+        max-width: 72%;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 22px;
+      }
+
+      .bubble.user {
+        margin-left: auto;
+        border-color: #bfd7ff;
+        background: var(--primary-light);
+        color: var(--text-primary);
+      }
+
+      .input-shell {
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        padding: 10px 12px 12px;
+      }
+
+      .input-inner {
+        width: min(880px, 100%);
+        margin: 0 auto;
+      }
+
+      .composer-row {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1fr 44px;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .composer {
+        position: relative;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 44px;
+        max-height: 144px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--input-background);
+        padding: 10px 56px 10px 14px;
+        color: var(--text-primary);
+        font-size: 14px;
+        line-height: 22px;
+        outline: none;
+      }
+
+      .send {
+        display: grid;
+        width: 44px;
+        height: 44px;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: var(--primary);
+        color: white;
+      }
+
+      .context-button {
+        position: absolute;
+        right: 10px;
+        bottom: 8px;
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 0;
+        background: transparent;
+        padding: 0;
+        cursor: pointer;
+      }
+
+      .small-ring,
+      .large-ring {
+        --percent: 0.68;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle, var(--surface) 0 55%, transparent 56%),
+          conic-gradient(var(--primary) calc(var(--percent) * 360deg), var(--border-light) 0);
+      }
+
+      .small-ring {
+        width: 25px;
+        height: 25px;
+        font-size: 9px;
+        font-weight: 700;
+      }
+
+      .large-ring {
+        width: 64px;
+        height: 64px;
+      }
+
+      .large-ring-column {
+        display: flex;
+        width: 64px;
+        flex-shrink: 0;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .large-ring-label {
+        margin-top: 5px;
+        color: var(--text-primary);
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .panel {
+        position: absolute;
+        right: 54px;
+        bottom: 52px;
+        width: 320px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        box-shadow: 0 16px 30px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+
+      .panel.hidden {
+        display: none;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 14px 10px;
+      }
+
+      .panel-title {
+        flex: 1;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .status {
+        border-radius: 999px;
+        background: var(--primary-light);
+        color: var(--primary);
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .rule {
+        height: 1px;
+        background: var(--border-light);
+      }
+
+      .panel-summary {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        padding: 14px;
+      }
+
+      .summary-title {
+        margin-bottom: 4px;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .summary-copy {
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .metrics {
+        padding: 0 14px 14px;
+      }
+
+      .metric {
+        padding-bottom: 8px;
+      }
+
+      .metric-top {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 5px;
+      }
+
+      .metric-label {
+        flex: 1;
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+
+      .metric-value {
+        color: var(--text-primary);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .progress {
+        height: 5px;
+        overflow: hidden;
+        border-radius: 99px;
+        background: var(--border-light);
+      }
+
+      .progress span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--primary);
+      }
+
+      .threshold-control {
+        margin: 2px 0 10px;
+        padding: 10px;
+        border: 1px solid var(--border-light);
+        border-radius: 6px;
+        background: var(--surface-elevated);
+      }
+
+      .threshold-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .threshold-row input {
+        flex: 1;
+        accent-color: var(--primary);
+      }
+
+      .threshold-row output {
+        width: 36px;
+        text-align: right;
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .threshold-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .preset {
+        height: 26px;
+        flex: 1;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--text-secondary);
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .preset.active {
+        border-color: rgba(37, 99, 235, 0.36);
+        background: rgba(239, 246, 255, 0.8);
+        color: var(--primary);
+        font-weight: 700;
+      }
+
+      .note {
+        width: 100%;
+        margin-top: 8px;
+        padding: 10px;
+        border: 1px solid rgba(37, 99, 235, 0.14);
+        border-radius: 6px;
+        background: rgba(239, 246, 255, 0.55);
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      @media (max-width: 640px) {
+        .panel {
+          position: fixed;
+          left: 12px;
+          right: 12px;
+          bottom: 72px;
+          width: auto;
+        }
+
+        .bubble {
+          max-width: 86%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="context-bar">
+        <button class="icon-btn">‹</button>
+        <button class="icon-btn">↺</button>
+        <div class="divider"></div>
+        <span class="chip">10.126.126.4</span>
+        <span class="chip">zm3-save-editor</span>
+        <span class="chip">chat-codex</span>
+      </header>
+
+      <section class="chat">
+        <div class="messages">
+          <div class="bubble">当前上下文使用量会在输入框右侧圆环里实时更新。</div>
+          <div class="bubble user">压缩阈值默认 80%，并且允许我自己调。</div>
+        </div>
+      </section>
+
+      <section class="input-shell">
+        <div class="input-inner">
+          <div class="composer-row">
+            <div class="composer">
+              <textarea id="draft" rows="2">按照我当前的 Flutter 已有设计，不要写新的</textarea>
+              <button class="context-button" id="contextButton" aria-label="上下文用量">
+                <span class="small-ring" id="smallRing">68</span>
+              </button>
+
+              <div class="panel" id="panel">
+                <div class="panel-head">
+                  <div class="panel-title">上下文使用量</div>
+                  <div class="status" id="statusText">正常</div>
+                </div>
+                <div class="rule"></div>
+                <div class="panel-summary">
+                  <div class="large-ring-column">
+                    <div class="large-ring" id="largeRing"></div>
+                    <div class="large-ring-label" id="largeRingLabel">68%</div>
+                  </div>
+                  <div>
+                    <div class="summary-title" id="summaryTitle">136k / 200k tokens</div>
+                    <div class="summary-copy">
+                      包含历史摘要、最近对话、工具结果和当前输入的估算上下文。
+                    </div>
+                  </div>
+                </div>
+
+                <div class="metrics">
+                  <div class="metric">
+                    <div class="metric-top">
+                      <div class="metric-label">当前输入</div>
+                      <div class="metric-value" id="draftTokens">24</div>
+                    </div>
+                    <div class="progress"><span id="draftProgress"></span></div>
+                  </div>
+
+                  <div class="metric">
+                    <div class="metric-top">
+                      <div class="metric-label">会话上下文</div>
+                      <div class="metric-value" id="historyTokens">136k</div>
+                    </div>
+                    <div class="progress"><span id="historyProgress"></span></div>
+                  </div>
+
+                  <div class="metric">
+                    <div class="metric-top">
+                      <div class="metric-label">完整额度</div>
+                      <div class="metric-value">200k</div>
+                    </div>
+                    <div class="progress"><span style="width: 100%"></span></div>
+                  </div>
+
+                  <div class="metric">
+                    <div class="metric-top">
+                      <div class="metric-label">自动压缩阈值</div>
+                      <div class="metric-value" id="thresholdTokenText">160k</div>
+                    </div>
+                    <div class="progress"><span id="thresholdProgress"></span></div>
+                  </div>
+
+                  <div class="threshold-control">
+                    <div class="threshold-row">
+                      <input id="thresholdSlider" type="range" min="50" max="95" step="5" value="80" />
+                      <output id="thresholdPercent">80%</output>
+                    </div>
+                    <div class="threshold-actions">
+                      <button class="preset" data-value="70">70%</button>
+                      <button class="preset active" data-value="80">80%</button>
+                      <button class="preset" data-value="90">90%</button>
+                    </div>
+                  </div>
+
+                  <div class="note" id="note">
+                    距离自动压缩还剩约 24k tokens。超过阈值后会保留摘要和最近对话。
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button class="send" aria-label="发送">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M5 12h14M13 6l6 6-6 6"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const totalTokens = 200000
+      const historyBaseTokens = 136000
+      const button = document.querySelector("#contextButton")
+      const panel = document.querySelector("#panel")
+      const draft = document.querySelector("#draft")
+      const slider = document.querySelector("#thresholdSlider")
+      const presets = [...document.querySelectorAll(".preset")]
+
+      function estimateTokens(text) {
+        const trimmed = text.trim()
+        if (!trimmed) return 0
+        return Math.ceil(trimmed.length / 2)
+      }
+
+      function fmt(value) {
+        if (value >= 1000) {
+          const k = value / 1000
+          return `${k >= 10 ? k.toFixed(0) : k.toFixed(1)}k`
+        }
+        return `${value}`
+      }
+
+      function setWidth(id, value) {
+        document.querySelector(id).style.width = `${Math.max(0, Math.min(100, value))}%`
+      }
+
+      function render() {
+        const draftTokens = estimateTokens(draft.value)
+        const used = historyBaseTokens + draftTokens
+        const usedPercent = Math.round((used / totalTokens) * 100)
+        const thresholdPercent = Number(slider.value)
+        const thresholdTokens = Math.round(totalTokens * thresholdPercent / 100)
+        const remaining = thresholdTokens - used
+        const ringValue = Math.min(1, used / totalTokens)
+
+        document.querySelector("#smallRing").style.setProperty("--percent", ringValue)
+        document.querySelector("#largeRing").style.setProperty("--percent", ringValue)
+        document.querySelector("#smallRing").textContent = String(usedPercent)
+        document.querySelector("#largeRingLabel").textContent = `${usedPercent}%`
+        document.querySelector("#summaryTitle").textContent = `${fmt(used)} / ${fmt(totalTokens)} tokens`
+        document.querySelector("#draftTokens").textContent = fmt(draftTokens)
+        document.querySelector("#historyTokens").textContent = fmt(historyBaseTokens)
+        document.querySelector("#thresholdTokenText").textContent = fmt(thresholdTokens)
+        document.querySelector("#thresholdPercent").textContent = `${thresholdPercent}%`
+
+        setWidth("#draftProgress", (draftTokens / totalTokens) * 100)
+        setWidth("#historyProgress", (historyBaseTokens / totalTokens) * 100)
+        setWidth("#thresholdProgress", thresholdPercent)
+
+        presets.forEach((item) => {
+          item.classList.toggle("active", Number(item.dataset.value) === thresholdPercent)
+        })
+
+        if (remaining <= 0) {
+          document.querySelector("#statusText").textContent = "即将压缩"
+          document.querySelector("#note").textContent =
+            "已达到自动压缩阈值，下一次发送前会优先压缩上下文。"
+        } else {
+          document.querySelector("#statusText").textContent = "正常"
+          document.querySelector("#note").textContent =
+            `距离自动压缩还剩约 ${fmt(remaining)} tokens。超过阈值后会保留摘要和最近对话。`
+        }
+      }
+
+      button.addEventListener("click", () => panel.classList.toggle("hidden"))
+      draft.addEventListener("input", render)
+      slider.addEventListener("input", render)
+      presets.forEach((item) => {
+        item.addEventListener("click", () => {
+          slider.value = item.dataset.value
+          render()
+        })
+      })
+
+      document.addEventListener("click", (event) => {
+        if (button.contains(event.target) || panel.contains(event.target)) return
+        panel.classList.add("hidden")
+      })
+
+      render()
+    </script>
+  </body>
+</html>

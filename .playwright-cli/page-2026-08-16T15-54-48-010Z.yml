@@ -1,0 +1,148 @@
+- generic [ref=f2e1]:
+  - banner [ref=f2e2]:
+    - generic [ref=f2e3]: 码控
+  - main [ref=f2e14]:
+    - generic [ref=f2e15]:
+      - generic [ref=f2e16]:
+        - heading "设备卡片重构" [level=1] [ref=f2e17]
+        - paragraph [ref=f2e18]: Machine ID 已从可见界面移除。设备名称按账号同步，未命名时使用系统主机名。
+      - generic [ref=f2e19]: 账号级名称 · 多端同步
+    - generic [ref=f2e22]:
+      - generic [ref=f2e23]:
+        - generic [ref=f2e25]:
+          - generic [ref=f2e26]: A / 03
+          - heading "极简识别" [level=2] [ref=f2e27]
+        - paragraph [ref=f2e28]: 弱化运行细节，只保留识别设备所需的信息。适合设备数量少、进入详情后再操作的使用方式。
+      - generic [ref=f2e29]:
+        - article [ref=f2e30] [cursor=pointer]:
+          - generic [ref=f2e31]:
+            - generic [ref=f2e35]:
+              - heading "工作室 Mac" [level=3] [ref=f2e36]
+              - generic [ref=f2e37]: 个人设备
+            - button "设备菜单" [active] [ref=f2e38]
+          - generic [ref=f2e43]: 在线
+          - generic [ref=f2e45]:
+            - generic [ref=f2e46]: 2 / 3 个 Agent
+            - generic [ref=f2e48]: 刚刚
+          - generic [ref=f2e283]:
+            - button "修改设备名称" [ref=f2e284]
+            - button "复制设备标识" [ref=f2e288]
+        - article [ref=f2e49] [cursor=pointer]:
+          - generic [ref=f2e50]:
+            - generic [ref=f2e63]:
+              - heading "Windows 构建机" [level=3] [ref=f2e64]
+              - generic [ref=f2e65]: 个人设备
+            - button "设备菜单" [ref=f2e66]
+          - generic [ref=f2e71]: 任务中
+          - generic [ref=f2e73]:
+            - generic [ref=f2e74]: 4 / 4 个 Agent
+            - generic [ref=f2e76]: 刚刚
+        - article [ref=f2e77] [cursor=pointer]:
+          - generic [ref=f2e78]:
+            - generic [ref=f2e82]:
+              - heading "移动测试实验室的备用 Android 调试工作站" [level=3] [ref=f2e83]
+              - generic [ref=f2e84]: 个人设备
+            - button "设备菜单" [ref=f2e85]
+          - generic [ref=f2e90]: 离线
+          - generic [ref=f2e92]:
+            - generic [ref=f2e93]: 0 / 2 个 Agent
+            - generic [ref=f2e95]: 昨天 22:41
+    - generic [ref=f2e96]:
+      - generic [ref=f2e97]:
+        - generic [ref=f2e99]:
+          - generic [ref=f2e100]: B / 03
+          - heading "任务状态优先" [level=2] [ref=f2e101]
+          - generic [ref=f2e102]: 推荐
+        - paragraph [ref=f2e103]: 让在线、任务和 Agent 状态形成稳定层级。适合频繁观察多个设备并快速判断是否需要处理。
+      - generic [ref=f2e104]:
+        - article [ref=f2e105] [cursor=pointer]:
+          - generic [ref=f2e106]:
+            - generic [ref=f2e107]:
+              - heading "工作室 Mac" [level=3] [ref=f2e108]
+              - generic [ref=f2e109]: 在线
+            - button "设备菜单" [ref=f2e112]
+          - generic [ref=f2e117]: 当前无运行任务
+          - generic [ref=f2e123]:
+            - generic [ref=f2e124]:
+              - generic [ref=f2e125]: Agent
+              - generic [ref=f2e126]: 2 / 3 启动
+            - generic [ref=f2e127]:
+              - generic [ref=f2e128]: 最后在线
+              - generic [ref=f2e129]: 刚刚
+        - article [ref=f2e130] [cursor=pointer]:
+          - generic [ref=f2e131]:
+            - generic [ref=f2e132]:
+              - heading "Windows 构建机" [level=3] [ref=f2e133]
+              - generic [ref=f2e134]: 任务中
+            - button "设备菜单" [ref=f2e137]
+          - generic [ref=f2e143]:
+            - strong [ref=f2e146]: 正在构建 Android APK
+            - generic [ref=f2e147]: 68%
+          - generic [ref=f2e150]:
+            - generic [ref=f2e151]:
+              - generic [ref=f2e152]: Agent
+              - generic [ref=f2e153]: 4 / 4 启动
+            - generic [ref=f2e154]:
+              - generic [ref=f2e155]: 最后在线
+              - generic [ref=f2e156]: 刚刚
+        - article [ref=f2e157] [cursor=pointer]:
+          - generic [ref=f2e158]:
+            - generic [ref=f2e159]:
+              - heading "移动测试实验室的备用 Android 调试工作站" [level=3] [ref=f2e160]
+              - generic [ref=f2e161]: 离线
+            - button "设备菜单" [ref=f2e164]
+          - generic [ref=f2e169]: 等待设备重新连接
+          - generic [ref=f2e175]:
+            - generic [ref=f2e176]:
+              - generic [ref=f2e177]: Agent
+              - generic [ref=f2e178]: 0 / 2 启动
+            - generic [ref=f2e179]:
+              - generic [ref=f2e180]: 最后在线
+              - generic [ref=f2e181]: 昨天 22:41
+    - generic [ref=f2e182]:
+      - generic [ref=f2e183]:
+        - generic [ref=f2e185]:
+          - generic [ref=f2e186]: C / 03
+          - heading "快捷操作优先" [level=2] [ref=f2e187]
+        - paragraph [ref=f2e188]: 将目录、终端和设备详情入口前置。适合操作频繁，但会增加首页按钮密度。
+      - generic [ref=f2e189]:
+        - article [ref=f2e190] [cursor=pointer]:
+          - generic [ref=f2e191]:
+            - generic [ref=f2e195]:
+              - heading "工作室 Mac" [level=3] [ref=f2e196]
+              - generic [ref=f2e197]: 个人设备
+            - button "设备菜单" [ref=f2e198]
+          - generic [ref=f2e203]: 在线
+          - generic [ref=f2e205]: 2 / 3 个 Agent · 刚刚
+          - generic [ref=f2e206]:
+            - generic [ref=f2e207]: 快捷操作
+            - button "打开目录" [ref=f2e208]
+            - button "打开终端" [ref=f2e211]
+            - button "详情" [ref=f2e215]
+        - article [ref=f2e218] [cursor=pointer]:
+          - generic [ref=f2e219]:
+            - generic [ref=f2e232]:
+              - heading "Windows 构建机" [level=3] [ref=f2e233]
+              - generic [ref=f2e234]: 个人设备
+            - button "设备菜单" [ref=f2e235]
+          - generic [ref=f2e240]: 任务中
+          - generic [ref=f2e242]: 4 / 4 个 Agent · 刚刚
+          - generic [ref=f2e243]:
+            - generic [ref=f2e244]: 快捷操作
+            - button "打开目录" [ref=f2e245]
+            - button "打开终端" [ref=f2e248]
+            - button "详情" [ref=f2e252]
+        - article [ref=f2e255] [cursor=pointer]:
+          - generic [ref=f2e256]:
+            - generic [ref=f2e260]:
+              - heading "移动测试实验室的备用 Android 调试工作站" [level=3] [ref=f2e261]
+              - generic [ref=f2e262]: 个人设备
+            - button "设备菜单" [ref=f2e263]
+          - generic [ref=f2e268]: 离线
+          - generic [ref=f2e270]: 0 / 2 个 Agent · 昨天 22:41
+          - generic [ref=f2e271]:
+            - generic [ref=f2e272]: 快捷操作
+            - button "打开目录" [ref=f2e273]
+            - button "打开终端" [ref=f2e276]
+            - button "详情" [ref=f2e280]
+  - status

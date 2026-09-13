@@ -1,14 +1,16 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../features/settings/settings_provider.dart';
 
 // Web 平台条件导入（Mermaid/HTML iframe 渲染）
-import 'renderer_web.dart' if (dart.library.io) 'renderer_stub.dart' as renderer_platform;
+import 'renderer_web.dart'
+    if (dart.library.io) 'renderer_stub.dart'
+    as renderer_platform;
 
 // ─── 顶层入口：根据设置决定渲染方式 ──────────────────────────────
 class MessageRenderer extends StatelessWidget {
@@ -26,16 +28,26 @@ class MessageRenderer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isUser || !settings.markdownRender) {
-      return SelectableText(
-        content,
-        style: TextStyle(
-          fontSize: 14,
-          height: 1.55,
-          color: isUser ? Colors.white : AppColors.textPrimary,
+      return DefaultSelectionStyle(
+        selectionColor: AppColors.textSelection,
+        child: SelectableText(
+          content,
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.55,
+            color: isUser ? Colors.white : AppColors.textPrimary,
+          ),
         ),
       );
     }
-    return _MarkdownRenderer(content: content, settings: settings);
+    // DefaultSelectionStyle must wrap SelectionArea so Text in code fences
+    // inherits the same blue highlight as body copy.
+    return DefaultSelectionStyle(
+      selectionColor: AppColors.textSelection,
+      child: SelectionArea(
+        child: _MarkdownRenderer(content: content, settings: settings),
+      ),
+    );
   }
 }
 
@@ -48,46 +60,79 @@ class _MarkdownRenderer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MarkdownBody(
-      data: content,
-      selectable: true,
-      extensionSet: md.ExtensionSet.gitHubFlavored,
-      styleSheet: _buildStyleSheet(),
-      builders: {
-        'code': _CodeBlockBuilder(settings: settings),
-      },
-      onTapLink: (text, href, title) {
-        if (href != null) renderer_platform.openUrl(href);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow =
+            constraints.maxWidth.isFinite &&
+            constraints.maxWidth < AppBreakpoints.sm;
+
+        return MarkdownBody(
+          data: content,
+          selectable: false,
+          extensionSet: md.ExtensionSet.gitHubFlavored,
+          styleSheet: _buildStyleSheet(isNarrow: isNarrow),
+          builders: {'code': _CodeBlockBuilder(settings: settings)},
+          onTapLink: (text, href, title) {
+            if (href != null) renderer_platform.openUrl(href);
+          },
+        );
       },
     );
   }
 
-  MarkdownStyleSheet _buildStyleSheet() {
+  MarkdownStyleSheet _buildStyleSheet({required bool isNarrow}) {
     return MarkdownStyleSheet(
-      p: const TextStyle(fontSize: 14, height: 1.6, color: AppColors.textPrimary),
-      h1: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-      h2: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-      h3: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+      p: const TextStyle(
+        fontSize: 14,
+        height: 1.6,
+        color: AppColors.textPrimary,
+      ),
+      h1: const TextStyle(
+        fontSize: 20,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textPrimary,
+      ),
+      h2: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+        color: AppColors.textPrimary,
+      ),
+      h3: const TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.w600,
+        color: AppColors.textPrimary,
+      ),
       code: const TextStyle(
         fontFamily: 'monospace',
         fontSize: 13,
-        color: Color(0xFF1A56DB),
-        backgroundColor: Color(0xFFEFF6FF),
+        color: AppColors.codeText,
       ),
       codeblockDecoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
+        color: AppColors.codeBackground,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: AppColors.border),
       ),
       blockquoteDecoration: BoxDecoration(
-        border: const Border(left: BorderSide(color: AppColors.primary, width: 3)),
+        border: const Border(
+          left: BorderSide(color: AppColors.primary, width: 3),
+        ),
         color: AppColors.primaryLight,
         borderRadius: BorderRadius.circular(4),
       ),
-      blockquote: const TextStyle(fontSize: 14, color: AppColors.textSecondary, fontStyle: FontStyle.italic),
+      blockquote: const TextStyle(
+        fontSize: 14,
+        color: AppColors.textSecondary,
+        fontStyle: FontStyle.italic,
+      ),
       tableHead: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
       tableBody: const TextStyle(fontSize: 13),
       tableBorder: TableBorder.all(color: AppColors.border),
+      tableColumnWidth: isNarrow ? const IntrinsicColumnWidth() : null,
+      tableCellsPadding: isNarrow
+          ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
+          : null,
+      tablePadding: isNarrow ? const EdgeInsets.only(bottom: 10) : null,
+      tableScrollbarThumbVisibility: isNarrow ? true : null,
     );
   }
 }
@@ -104,11 +149,31 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
     TextStyle? preferredStyle,
     TextStyle? parentStyle,
   ) {
-    // 只处理有 class 的 code 元素（即带语言标注的代码块）
-    final lang = element.attributes['class']?.replaceFirst('language-', '') ?? '';
-    final code = element.textContent.trim();
+    final lang =
+        element.attributes['class']?.replaceFirst('language-', '') ?? '';
+    final raw = element.textContent;
+    final code = raw.trim();
+    final isFenced = lang.isNotEmpty || raw.contains('\n');
 
-    if (lang.isEmpty) return null; // 行内 code，不处理
+    if (!isFenced) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: AppColors.codeInlineBackground,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          code,
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 13,
+            height: 1.5,
+            color: AppColors.codeText,
+            backgroundColor: Colors.transparent,
+          ),
+        ),
+      );
+    }
 
     // Mermaid
     if (lang == 'mermaid' && settings.mermaidRender) {
@@ -116,7 +181,9 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
     }
 
     // HTML 预览
-    if ((lang == 'html' || lang == 'htm') && settings.htmlPreview && _isRichHtml(code)) {
+    if ((lang == 'html' || lang == 'htm') &&
+        settings.htmlPreview &&
+        _isRichHtml(code)) {
       return _HtmlPreviewBlock(htmlContent: code);
     }
 
@@ -158,52 +225,71 @@ class _CodeBlockState extends State<_CodeBlock> {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
+        color: AppColors.codeBackground,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: AppColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: AppColors.border)),
-            ),
-            child: Row(
-              children: [
-                if (widget.lang.isNotEmpty)
-                  Text(widget.lang,
+          SelectionContainer.disabled(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: AppColors.border)),
+              ),
+              child: Row(
+                children: [
+                  if (widget.lang.isNotEmpty)
+                    Text(
+                      widget.lang,
                       style: const TextStyle(
-                          fontSize: 11, color: AppColors.textMuted, fontFamily: 'monospace')),
-                const Spacer(),
-                GestureDetector(
-                  onTap: _copy,
-                  child: Row(
-                    children: [
-                      Icon(
-                        _copied ? Icons.check : Icons.copy_outlined,
-                        size: 13,
-                        color: _copied ? AppColors.statusSuccess : AppColors.textMuted,
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                        fontFamily: 'monospace',
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _copied ? '已复制' : '复制',
-                        style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-                      ),
-                    ],
+                    ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: _copy,
+                    child: Row(
+                      children: [
+                        Icon(
+                          _copied ? Icons.check : Icons.copy_outlined,
+                          size: 13,
+                          color: _copied
+                              ? AppColors.statusSuccess
+                              : AppColors.textMuted,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _copied ? '已复制' : '复制',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+          Padding(
             padding: const EdgeInsets.all(12),
-            child: SelectableText(
-              widget.code,
-              style: const TextStyle(
-                  fontFamily: 'monospace', fontSize: 13, height: 1.5, color: Color(0xFF1E293B)),
+            child: SizedBox(
+              width: double.infinity,
+              child: Text(
+                widget.code,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                  height: 1.5,
+                  color: AppColors.codeText,
+                  backgroundColor: Colors.transparent,
+                ),
+              ),
             ),
           ),
         ],
@@ -231,7 +317,7 @@ class _LatexBlock extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
+        color: AppColors.codeBackground,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: AppColors.border),
       ),
@@ -239,7 +325,10 @@ class _LatexBlock extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         child: Math.tex(
           code,
-          textStyle: const TextStyle(fontSize: 16, color: AppColors.textPrimary),
+          textStyle: const TextStyle(
+            fontSize: 16,
+            color: AppColors.textPrimary,
+          ),
           onErrorFallback: (e) => SelectableText(
             code,
             style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
@@ -282,8 +371,10 @@ class InlineLatexRenderer extends StatelessWidget {
     return Math.tex(
       tex,
       textStyle: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
-      onErrorFallback: (e) =>
-          Text('\$$tex\$', style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+      onErrorFallback: (e) => Text(
+        '\$$tex\$',
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+      ),
     );
   }
 }

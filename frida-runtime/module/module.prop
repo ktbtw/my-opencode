@@ -1,0 +1,6 @@
+id=frida_runtime
+name=Frida Runtime (Test)
+version=17.16.4-test
+versionCode=17160400
+author=Chat Codex
+description=Managed Frida server runtime for rooted Android devices.

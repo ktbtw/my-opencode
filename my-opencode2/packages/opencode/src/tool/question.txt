@@ -1,0 +1,13 @@
+Use this tool only when user participation is required to continue. Before calling it, complete all work that can proceed autonomously.
+
+Allowed reasons are limited to:
+1. required_user_input: a user-specific value, credential, file, or fact is missing and no reasonable default exists
+2. irreversible_user_decision: an irreversible action requires the user's explicit choice
+3. material_preference_conflict: available options produce materially different results and the user's preference cannot be inferred
+
+Every call must include a concrete blocking_context and attempted_steps. Do not use this tool for ordinary ambiguity, progress updates, implementation choices with a sensible default, or permission to continue. Choose and apply the most reasonable default yourself.
+
+Usage notes:
+- When `custom` is enabled (default), a "Type your own answer" option is added automatically; don't include "Other" or catch-all options
+- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one
+- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label

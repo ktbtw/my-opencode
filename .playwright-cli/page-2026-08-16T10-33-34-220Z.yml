@@ -1,0 +1,166 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]: 码控
+      - navigation "主导航" [ref=e9]:
+        - button "设备" [ref=e10]
+        - button "Agent" [ref=e15]
+        - button "资源" [ref=e20]
+        - button "设置" [ref=e32]
+      - generic [ref=e38]:
+        - generic [ref=e39]: YM
+        - generic [ref=e40]:
+          - strong [ref=e41]: 管理员
+          - text: 在线
+    - main [ref=e42]:
+      - generic [ref=e43]:
+        - generic [ref=e44]:
+          - strong [ref=e45]: 设备
+          - generic [ref=e48]: YUZHIHAO
+        - generic [ref=e49]:
+          - button "通知中心" [ref=e50] [cursor=pointer]:
+            - generic [ref=e54]: "4"
+            - text: 通知中心
+          - button "刷新设备" [ref=e55] [cursor=pointer]
+          - button "更多操作" [ref=e61] [cursor=pointer]
+      - generic [ref=e66]:
+        - generic [ref=e67]:
+          - generic [ref=e68]:
+            - heading "设备控制台" [level=1] [ref=e69]
+            - paragraph [ref=e70]: 管理运行状态、Agent 和开发资源
+          - generic [ref=e71]: 连接正常
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - text: 在线设备
+            - strong [ref=e74]: 8 +2
+          - generic [ref=e75]:
+            - text: 运行中 Agent
+            - strong [ref=e76]: "12"
+          - generic [ref=e77]:
+            - text: 活动任务
+            - strong [ref=e78]: "3"
+          - generic [ref=e79]:
+            - text: 异常
+            - strong [ref=e80]: "1"
+        - generic [ref=e81]:
+          - generic [ref=e82]:
+            - generic [ref=e83]: 设备
+            - generic [ref=e84]: 系统
+            - generic [ref=e85]: 状态
+            - generic [ref=e86]: 最后连接
+          - generic [ref=e87]:
+            - generic [ref=e92]:
+              - strong [ref=e93]: YUZHIHAO
+              - generic [ref=e94]: 192.168.10.107
+            - generic [ref=e95]: Windows 10
+            - generic [ref=e96]: 在线
+            - generic [ref=e97]: 刚刚
+            - generic [ref=e98]:
+              - button "打开设备" [ref=e99] [cursor=pointer]
+              - button "设备菜单" [ref=e103] [cursor=pointer]
+          - generic [ref=e108]:
+            - generic [ref=e113]:
+              - strong [ref=e114]: 三闻鱼
+              - generic [ref=e115]: m_a115573a0e686b3c81e0
+            - generic [ref=e116]: macOS
+            - generic [ref=e117]: 在线
+            - generic [ref=e118]: 1 分钟前
+            - generic [ref=e119]:
+              - button "打开设备" [ref=e120] [cursor=pointer]
+              - button "设备菜单" [ref=e124] [cursor=pointer]
+          - generic [ref=e129]:
+            - generic [ref=e134]:
+              - strong [ref=e135]: Android 测试机
+              - generic [ref=e136]: Pixel 8 Pro
+            - generic [ref=e137]: Android 15
+            - generic [ref=e138]: 在线
+            - generic [ref=e139]: 3 分钟前
+            - generic [ref=e140]:
+              - button "打开设备" [ref=e141] [cursor=pointer]
+              - button "设备菜单" [ref=e145] [cursor=pointer]
+        - generic "通知状态模拟" [ref=e150]:
+          - button "确定进度" [ref=e151] [cursor=pointer]
+          - button "同步状态" [ref=e156] [cursor=pointer]
+          - button "成功通知" [ref=e162] [cursor=pointer]
+          - button "失败通知" [ref=e166] [cursor=pointer]
+  - region "全局通知":
+    - generic [ref=e169]:
+      - article [ref=e170]:
+        - generic [ref=e172]:
+          - generic [ref=e173]:
+            - generic [ref=e178]:
+              - strong [ref=e179]: 正在启动 Android Agent
+              - generic [ref=e180]: 正在加载运行时与设备配置
+            - generic [ref=e181]:
+              - button "收起通知" [ref=e182] [cursor=pointer]
+              - button "更多操作" [ref=e185] [cursor=pointer]
+          - generic [ref=e190]:
+            - generic [ref=e191]:
+              - generic [ref=e192]:
+                - generic [ref=e193]: 连接设备
+                - generic [ref=e195]: 检查环境
+                - generic [ref=e197]: 加载运行时
+                - generic [ref=e199]: 验证状态
+              - generic [ref=e203]:
+                - generic [ref=e204]: 阶段 3/4 · 加载运行时
+                - generic [ref=e205]: 约 18 秒
+            - generic [ref=e206]: 68%
+          - generic [ref=e208]:
+            - button "查看 Agent" [ref=e209] [cursor=pointer]
+            - button "取消" [ref=e213] [cursor=pointer]
+            - generic [ref=e214]: 刚刚
+      - article [ref=e215]:
+        - generic [ref=e217]:
+          - generic [ref=e218]:
+            - generic [ref=e223]:
+              - strong [ref=e224]: MCP 状态同步中
+              - generic [ref=e225]: 正在获取 6 个服务的运行状态
+            - button "收起通知" [ref=e227] [cursor=pointer]
+          - generic [ref=e230]:
+            - generic [ref=e236]: 等待设备响应
+            - generic "处理中" [ref=e237]
+            - generic [ref=e241]: 12 秒
+      - article [ref=e242]:
+        - generic [ref=e245]:
+          - generic [ref=e250]:
+            - strong [ref=e251]: Agent 配置已保存
+            - generic [ref=e252]: 配置已应用，下次启动时自动生效
+          - button "收起通知" [ref=e254] [cursor=pointer]
+    - button "展开 3 个活动通知":
+      - generic:
+        - strong: 正在启动 Android Agent
+        - generic: 3 个任务进行中
+      - generic:
+        - generic: "68"
+        - generic: "3"
+  - generic:
+    - dialog:
+      - banner:
+        - strong: 通知
+        - generic: 4 条未读
+        - button: 关闭通知中心
+      - tablist:
+        - tab [selected]: 进行中 3
+        - tab: 最近记录
+      - generic:
+        - tabpanel:
+          - generic:
+            - text: 当前任务
+            - button: 全部收起
+          - generic:
+            - generic:
+              - strong: 正在启动 Android Agent
+              - paragraph: 阶段 3/4 · 加载运行时
+            - time: 68%
+          - generic:
+            - generic:
+              - strong: MCP 状态同步中
+              - paragraph: 正在获取 6 个服务的运行状态
+            - time: 12 秒
+          - generic:
+            - generic:
+              - strong: 正在下载 IDA 运行时
+              - paragraph: 等待远端返回文件总大小
+            - time: 1 分钟
+      - contentinfo:
+        - button: 查看全部通知记录

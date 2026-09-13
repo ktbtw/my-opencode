@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Context Compaction Preview</title>
+    <style>
+      :root {
+        --background: #f2f6fc;
+        --surface: #ffffff;
+        --border: #d0ddef;
+        --border-light: #e8eff8;
+        --primary: #2563eb;
+        --primary-light: #eff6ff;
+        --warning: #d97706;
+        --warning-light: #fef3c7;
+        --error: #dc2626;
+        --error-light: #fee2e2;
+        --text-primary: #0f1729;
+        --text-secondary: #4a5d7a;
+        --text-muted: #8fa3bf;
+        --input-background: #f8fafd;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--background);
+        color: var(--text-primary);
+        font-family: "Helvetica Neue", Arial, sans-serif;
+      }
+      .page {
+        display: grid;
+        min-height: 100vh;
+        grid-template-rows: 52px 1fr auto;
+      }
+      .context-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 52px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+      .icon-btn {
+        width: 38px;
+        height: 38px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-secondary);
+      }
+      .divider { width: 1px; height: 20px; background: var(--border); }
+      .pill {
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: var(--warning-light);
+        color: var(--warning);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .chat {
+        display: flex;
+        justify-content: center;
+        padding: 28px 12px 0;
+      }
+      .messages { width: min(880px, 100%); padding-bottom: 18px; }
+      .bubble {
+        width: fit-content;
+        max-width: 72%;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text-secondary);
+        font-size: 14px;
+        line-height: 22px;
+      }
+      .bubble.user {
+        margin-left: auto;
+        border-color: #bfd7ff;
+        background: var(--primary-light);
+        color: var(--text-primary);
+      }
+      .input-shell {
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        padding: 10px 12px 12px;
+      }
+      .input-inner { width: min(880px, 100%); margin: 0 auto; }
+      .composer-row {
+        display: grid;
+        grid-template-columns: 1fr 44px;
+        gap: 8px;
+        align-items: end;
+      }
+      .composer { position: relative; }
+      textarea {
+        width: 100%;
+        min-height: 44px;
+        max-height: 144px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--input-background);
+        padding: 10px 56px 10px 14px;
+        color: var(--text-primary);
+        font-size: 14px;
+        line-height: 22px;
+      }
+      .send {
+        width: 44px;
+        height: 44px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--primary);
+        color: #fff;
+      }
+      .context-button {
+        position: absolute;
+        right: 10px;
+        bottom: 8px;
+        width: 34px;
+        height: 34px;
+        border: 0;
+        background: transparent;
+        padding: 0;
+      }
+      .ring, .ring-lg {
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle, var(--surface) 0 55%, transparent 56%),
+          conic-gradient(var(--primary) calc(var(--p) * 360deg), var(--border-light) 0);
+      }
+      .ring {
+        width: 25px;
+        height: 25px;
+        font-size: 9px;
+        font-weight: 700;
+      }
+      .ring-lg {
+        width: 64px;
+        height: 64px;
+      }
+      .panel {
+        position: absolute;
+        right: 54px;
+        bottom: 52px;
+        width: min(320px, calc(100vw - 32px));
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        box-shadow: 0 16px 30px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px 10px;
+      }
+      .title { font-size: 14px; font-weight: 700; }
+      .panel-body { border-top: 1px solid var(--border-light); padding: 14px; }
+      .top {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .ring-column {
+        display: flex;
+        width: 64px;
+        flex-direction: column;
+        align-items: center;
+      }
+      .ring-label {
+        margin-top: 5px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .desc {
+        margin: 0;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .stats {
+        margin-top: 12px;
+        display: grid;
+        gap: 8px;
+      }
+      .stat {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 9px 10px;
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        background: var(--input-background);
+        font-size: 12px;
+      }
+      .stat b { font-weight: 700; }
+      .hint {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 8px;
+        background: var(--primary-light);
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      @media (max-width: 480px) {
+        .panel {
+          right: 12px;
+          left: 12px;
+          width: auto;
+          bottom: 58px;
+        }
+        .top { align-items: flex-start; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="context-bar">
+        <button class="icon-btn">◀</button>
+        <div class="divider"></div>
+        <span class="pill">距离压缩比例</span>
+      </div>
+
+      <div class="chat">
+        <div class="messages">
+          <div class="bubble user">继续</div>
+          <div class="bubble">当前上下文已接近真实压缩阈值，下一次发送会触发压缩。</div>
+        </div>
+      </div>
+
+      <div class="input-shell">
+        <div class="input-inner">
+          <div class="composer-row">
+            <div class="composer">
+              <textarea placeholder="输入内容..."></textarea>
+              <button class="context-button" id="open">
+                <div class="ring" id="mini-ring" style="--p: .88">88</div>
+              </button>
+            </div>
+            <button class="send">➤</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="panel">
+        <div class="panel-head">
+          <div class="title">上下文使用量</div>
+          <div class="pill" id="status-pill">接近阈值</div>
+        </div>
+        <div class="panel-body">
+          <div class="top">
+            <div class="ring-column">
+              <div class="ring-lg" id="main-ring" style="--p: .88">
+                <div id="main-percent" style="font-size: 15px; font-weight: 800;">88%</div>
+              </div>
+              <div class="ring-label">距离压缩比例</div>
+            </div>
+            <div style="flex: 1">
+              <p class="desc" id="desc">当前圆环显示的是整个会话距离触发压缩还有多近，也就是当前已用上下文相对真实压缩线的占比。</p>
+            </div>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><span>当前已用上下文</span><b id="stat-used">90k tokens</b></div>
+            <div class="stat"><span>本次输入</span><b id="stat-draft">3.0k tokens</b></div>
+            <div class="stat"><span>距离压缩比例</span><b id="stat-ratio">88%</b></div>
+            <div class="stat"><span>真实压缩线</span><b id="stat-threshold">102k tokens</b></div>
+            <div class="stat"><span>模型最大上下文</span><b id="stat-context">280k tokens</b></div>
+          </div>
+
+          <div class="hint" id="hint">
+            小圆环和大圆环只看整个会话是否接近压缩，不看输入框这一条消息本身。完整额度保留在明细里单独展示。
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      const btn = document.getElementById('open');
+      const panel = document.getElementById('panel');
+      const miniRing = document.getElementById('mini-ring');
+      const mainRing = document.getElementById('main-ring');
+      const mainPercent = document.getElementById('main-percent');
+      const statusPill = document.getElementById('status-pill');
+      const desc = document.getElementById('desc');
+      const statDraft = document.getElementById('stat-draft');
+      const statRatio = document.getElementById('stat-ratio');
+      const statUsed = document.getElementById('stat-used');
+      const statThreshold = document.getElementById('stat-threshold');
+      const statContext = document.getElementById('stat-context');
+
+      const state = {
+        draft: 3024,
+        used: 90000,
+        threshold: 102000,
+        context: 280000,
+      };
+
+      function fmt(value) {
+        if (value >= 1000) {
+          const k = value / 1000;
+          return `${k >= 10 ? k.toFixed(0) : k.toFixed(1)}k`;
+        }
+        return `${value}`;
+      }
+
+      function render() {
+        const ratio = state.threshold > 0 ? (state.used / state.threshold) * 100 : 0;
+        const clamped = Math.min(ratio / 100, 1);
+        const remain = Math.max(0, state.threshold - state.used);
+        const ratioText = `${Math.round(ratio)}%`;
+
+        miniRing.textContent = `${Math.round(ratio)}`;
+        miniRing.style.setProperty('--p', String(clamped));
+        mainRing.style.setProperty('--p', String(clamped));
+        mainPercent.textContent = ratioText;
+        statDraft.textContent = `${fmt(state.draft)} tokens`;
+        statRatio.textContent = ratioText;
+        statUsed.textContent = `${fmt(state.used)} tokens`;
+        statThreshold.textContent = `${fmt(state.threshold)} tokens`;
+        statContext.textContent = `${fmt(state.context)} tokens`;
+
+        if (ratio >= 100) {
+          statusPill.textContent = '已超额';
+          statusPill.style.background = 'var(--error-light)';
+          statusPill.style.color = 'var(--error)';
+          desc.textContent = '当前整个会话已经达到真实压缩阈值，下一次发送会直接触发压缩。';
+          return;
+        }
+
+        if (ratio >= 85) {
+          statusPill.textContent = '接近阈值';
+          statusPill.style.background = 'var(--warning-light)';
+          statusPill.style.color = 'var(--warning)';
+        } else {
+          statusPill.textContent = '正常';
+          statusPill.style.background = 'var(--primary-light)';
+          statusPill.style.color = 'var(--primary)';
+        }
+
+        desc.textContent = `当前整个会话距离触发压缩还剩约 ${fmt(remain)} tokens，圆环显示的是当前已用上下文相对真实压缩线的占比。`;
+      }
+
+      btn.addEventListener('click', () => {
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+      });
+      render();
+    </script>
+  </body>
+</html>

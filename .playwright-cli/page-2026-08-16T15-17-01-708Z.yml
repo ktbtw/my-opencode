@@ -1,0 +1,35 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e5]: 码控
+      - generic [ref=e7]: 设备卡片方案
+      - navigation "方案导航" [ref=e8]:
+        - link "极简型" [ref=e9] [cursor=pointer]:
+          - /url: "#minimal"
+        - link "运营型" [ref=e10] [cursor=pointer]:
+          - /url: "#operations"
+        - link "快捷型" [ref=e11] [cursor=pointer]:
+          - /url: "#actions"
+  - main [ref=e12]:
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - heading "设备卡片重构" [level=1] [ref=e15]
+        - paragraph [ref=e16]: Machine ID 已从可见界面移除。设备名称按账号同步，未命名时使用系统主机名。
+      - generic [ref=e17]: 账号级名称 · 多端同步
+    - generic [ref=e19]:
+      - generic [ref=e21]:
+        - generic [ref=e22]: A / 03
+        - heading "极简识别" [level=2] [ref=e23]
+      - paragraph [ref=e24]: 弱化运行细节，只保留识别设备所需的信息。适合设备数量少、进入详情后再操作的使用方式。
+    - generic [ref=e26]:
+      - generic [ref=e28]:
+        - generic [ref=e29]: B / 03
+        - heading "任务状态优先" [level=2] [ref=e30]
+        - generic [ref=e31]: 推荐
+      - paragraph [ref=e32]: 让在线、任务和 Agent 状态形成稳定层级。适合频繁观察多个设备并快速判断是否需要处理。
+    - generic [ref=e34]:
+      - generic [ref=e36]:
+        - generic [ref=e37]: C / 03
+        - heading "快捷操作优先" [level=2] [ref=e38]
+      - paragraph [ref=e39]: 将目录、终端和设备详情入口前置。适合操作频繁，但会增加首页按钮密度。
+  - status

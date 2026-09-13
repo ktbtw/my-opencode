@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>Chat Codex - 移动端队列预览</title>
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <style>
+      :root {
+        --background: #f2f6fc;
+        --surface: #ffffff;
+        --elevated: #fafcff;
+        --border: #d0ddef;
+        --border-light: #e8eff8;
+        --primary: #2563eb;
+        --primary-light: #eff6ff;
+        --text: #0f1729;
+        --secondary: #4a5d7a;
+        --muted: #8fa3bf;
+        --error: #dc2626;
+        --error-light: #fef2f2;
+        --input: #f8fafd;
+      }
+
+      * { box-sizing: border-box; }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        color: var(--text);
+        background: #e7edf6;
+        font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+        letter-spacing: 0;
+      }
+
+      button { font: inherit; }
+      i[data-lucide] { stroke-width: 1.8; }
+
+      .viewport {
+        position: relative;
+        width: min(100vw, 402px);
+        height: min(100vh, 874px);
+        margin: max(0px, calc((100vh - 874px) / 2)) auto 0;
+        overflow: hidden;
+        border: 1px solid #b8c8dc;
+        border-radius: 18px;
+        background: var(--surface);
+        box-shadow: 0 18px 55px rgb(29 52 86 / 18%);
+      }
+
+      .app {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-rows: 52px minmax(0, 1fr) auto auto;
+        background: var(--surface);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 0 8px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .icon-button {
+        width: 34px;
+        height: 34px;
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 auto;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        color: var(--secondary);
+        background: transparent;
+      }
+
+      .icon-button i { width: 17px; height: 17px; }
+
+      .title {
+        min-width: 0;
+        flex: 1;
+        padding-left: 3px;
+      }
+
+      .title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .title-text { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .online { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #16a34a; }
+      .session-id { margin-top: 2px; color: var(--muted); font-size: 9px; }
+
+      .messages {
+        min-height: 0;
+        overflow: hidden;
+        padding: 14px 12px;
+        background: linear-gradient(180deg, #f7faff 0%, #ffffff 66%);
+      }
+
+      .message { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 15px; }
+      .message.user { justify-content: flex-end; }
+
+      .avatar {
+        width: 27px;
+        height: 27px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        color: var(--primary);
+        background: var(--primary-light);
+      }
+
+      .avatar.user-avatar { color: var(--secondary); border-color: var(--border); background: var(--elevated); }
+      .avatar i { width: 14px; height: 14px; }
+
+      .bubble {
+        max-width: 82%;
+        padding: 9px 11px;
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        color: var(--text);
+        background: var(--surface);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .user .bubble { color: #17356d; border-color: #c9dcff; background: var(--primary-light); }
+
+      .running {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 6px;
+        color: var(--primary);
+        font-size: 10px;
+        font-weight: 650;
+      }
+
+      .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 3px #dbeafe; }
+      .tool-line { display: flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--secondary); font-size: 10px; }
+      .tool-line i { width: 12px; height: 12px; color: #16a34a; }
+
+      .queue-collapsed {
+        height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        padding: 0 12px;
+        border: 0;
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        color: var(--text);
+        background: var(--elevated);
+        text-align: left;
+      }
+
+      .queue-collapsed > i { width: 15px; height: 15px; color: var(--secondary); }
+      .queue-collapsed strong { font-size: 12px; }
+
+      .count {
+        min-width: 20px;
+        height: 20px;
+        display: grid;
+        place-items: center;
+        padding: 0 6px;
+        border-radius: 10px;
+        color: var(--primary);
+        background: var(--primary-light);
+        font-size: 10px;
+        font-weight: 700;
+      }
+
+      .queue-preview { min-width: 0; flex: 1; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .queue-collapsed .chevron { width: 15px; height: 15px; color: var(--secondary); }
+
+      .composer { padding: 7px 9px 8px; background: var(--surface); }
+      .tools { display: flex; gap: 5px; margin-bottom: 6px; overflow: hidden; }
+
+      .tool-chip {
+        height: 26px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        flex: 0 0 auto;
+        padding: 0 7px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--secondary);
+        background: var(--input);
+        font-size: 10px;
+      }
+
+      .tool-chip i { width: 12px; height: 12px; }
+      .tool-chip.primary { color: var(--primary); background: var(--primary-light); }
+      .input-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px 42px; gap: 6px; align-items: end; }
+
+      .input-box {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        padding: 9px 10px;
+        border: 1.5px solid var(--primary);
+        border-radius: 8px;
+        color: var(--muted);
+        background: var(--input);
+        font-size: 11px;
+        line-height: 1.4;
+      }
+
+      .stop,
+      .send {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border-radius: 7px;
+      }
+
+      .stop { color: var(--error); border: 1px solid #f0aaaa; background: var(--error-light); }
+      .send { color: #fff; border: 1px solid var(--primary); background: var(--primary); }
+      .stop i, .send i { width: 17px; height: 17px; }
+
+      .backdrop {
+        position: absolute;
+        z-index: 10;
+        inset: 0;
+        opacity: 1;
+        visibility: visible;
+        background: rgb(15 23 41 / 24%);
+        transition: opacity 180ms ease, visibility 180ms ease;
+      }
+
+      .backdrop.closed { opacity: 0; visibility: hidden; pointer-events: none; }
+
+      .sheet {
+        position: absolute;
+        z-index: 11;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        max-height: min(72%, 610px);
+        overflow: hidden;
+        border-top: 1px solid var(--border);
+        border-radius: 14px 14px 0 0;
+        background: var(--surface);
+        box-shadow: 0 -10px 30px rgb(30 57 91 / 16%);
+        transform: translateY(0);
+        transition: transform 220ms ease;
+      }
+
+      .sheet.closed { transform: translateY(102%); }
+
+      .grabber { width: 34px; height: 4px; margin: 8px auto 4px; border-radius: 3px; background: var(--border); }
+
+      .sheet-head {
+        height: 44px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--border-light);
+      }
+
+      .sheet-head > i { width: 16px; height: 16px; color: var(--secondary); }
+      .sheet-head strong { font-size: 13px; }
+      .sheet-head .sub { color: var(--muted); font-size: 10px; }
+      .sheet-head .close { margin-left: auto; }
+
+      .queue-list { max-height: calc(min(72vh, 610px) - 57px); overflow: auto; }
+
+      .queue-item {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) 32px 32px;
+        grid-template-areas:
+          "drag copy insert delete"
+          ". model model model";
+        gap: 7px 6px;
+        padding: 11px 10px 10px;
+        border-bottom: 1px solid var(--border-light);
+        background: var(--elevated);
+      }
+
+      .queue-item.inserting { background: var(--primary-light); }
+      .drag { grid-area: drag; display: grid; place-items: start center; padding-top: 3px; color: var(--muted); }
+      .drag i { width: 15px; height: 15px; }
+      .copy { grid-area: copy; min-width: 0; }
+      .queue-text { color: var(--text); font-size: 11px; font-weight: 560; line-height: 1.4; }
+      .meta { display: flex; align-items: center; gap: 5px; margin-top: 4px; color: var(--muted); font-size: 9px; }
+      .number { color: var(--primary); font-weight: 700; }
+
+      .model-select {
+        grid-area: model;
+        justify-self: start;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 0 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--secondary);
+        background: var(--surface);
+        font-size: 10px;
+      }
+
+      .model-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+      .model-select i { width: 11px; height: 11px; }
+
+      .action {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        color: var(--secondary);
+        background: transparent;
+      }
+
+      .action i { width: 15px; height: 15px; }
+      .action.insert { grid-area: insert; color: var(--primary); border-color: #bfdbfe; background: var(--surface); }
+      .action.delete { grid-area: delete; }
+      .action:disabled { color: var(--muted); border-color: transparent; opacity: 0.55; background: transparent; }
+
+      .insert-state { display: inline-flex; align-items: center; gap: 4px; color: var(--primary); font-weight: 650; }
+
+      .spinner {
+        width: 10px;
+        height: 10px;
+        border: 1.5px solid #bfdbfe;
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      @media (max-width: 520px), (max-height: 700px) {
+        .viewport { width: 100vw; height: 100vh; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="viewport">
+      <section class="app">
+        <header class="topbar">
+          <button class="icon-button" title="返回设备详情" aria-label="返回设备详情"><i data-lucide="chevron-left"></i></button>
+          <button class="icon-button" title="历史会话" aria-label="历史会话"><i data-lucide="history"></i></button>
+          <div class="title">
+            <div class="title-row"><span class="online"></span><span class="title-text">Windows 助手 · chat-codex</span></div>
+            <div class="session-id">ses_a82f19cd24b1</div>
+          </div>
+          <button class="icon-button" title="工作目录文件" aria-label="工作目录文件"><i data-lucide="folder-open"></i></button>
+        </header>
+
+        <section class="messages">
+          <div class="message user">
+            <div class="bubble">再确认最后一条回复有没有完整落库。</div>
+            <div class="avatar user-avatar"><i data-lucide="user"></i></div>
+          </div>
+          <div class="message">
+            <div class="avatar"><i data-lucide="bot"></i></div>
+            <div class="bubble">
+              <div class="running"><span class="pulse"></span>Agent 正在执行 · 2 分 14 秒</div>
+              正在核对 relay 事件顺序和 completion guard 状态。
+              <div class="tool-line"><i data-lucide="circle-check"></i>已读取 Windows 设备日志</div>
+              <div class="tool-line"><i data-lucide="loader-circle"></i>正在比对任务终态</div>
+            </div>
+          </div>
+        </section>
+
+        <button id="openQueue" class="queue-collapsed" aria-label="展开待发送队列">
+          <i data-lucide="list-ordered"></i>
+          <strong>待发送</strong>
+          <span class="count">3</span>
+          <span class="queue-preview">然后补一个回归测试，覆盖最后文本分片晚到...</span>
+          <i class="chevron" data-lucide="chevron-up"></i>
+        </button>
+
+        <section class="composer">
+          <div class="tools">
+            <button class="tool-chip"><i data-lucide="paperclip"></i>附件</button>
+            <button class="tool-chip primary"><i data-lucide="hammer"></i>Build</button>
+            <button class="tool-chip"><i data-lucide="sparkles"></i>GPT-5.2 Codex<i data-lucide="chevron-down"></i></button>
+            <button class="tool-chip"><i data-lucide="brain"></i>high</button>
+          </div>
+          <div class="input-row">
+            <div class="input-box">继续输入，发送后加入队列...</div>
+            <button class="stop" title="终止当前任务" aria-label="终止当前任务"><i data-lucide="square"></i></button>
+            <button class="send" title="发送到队列" aria-label="发送到队列"><i data-lucide="send"></i></button>
+          </div>
+        </section>
+      </section>
+
+      <div id="backdrop" class="backdrop"></div>
+      <section id="queueSheet" class="sheet" aria-label="待发送队列">
+        <div class="grabber"></div>
+        <div class="sheet-head">
+          <i data-lucide="list-ordered"></i>
+          <strong>待发送</strong>
+          <span class="count">3</span>
+          <span class="sub">长按拖动排序</span>
+          <button id="closeQueue" class="icon-button close" title="收起队列" aria-label="收起队列"><i data-lucide="chevron-down"></i></button>
+        </div>
+
+        <div class="queue-list">
+          <article class="queue-item">
+            <span class="drag"><i data-lucide="grip-vertical"></i></span>
+            <div class="copy">
+              <div class="queue-text">然后补一个回归测试，覆盖最后一个文本分片晚到的情况。</div>
+              <div class="meta"><span class="number">#1</span><span>刚刚加入</span></div>
+            </div>
+            <button class="action insert" title="插入当前对话" aria-label="插入当前对话"><i data-lucide="corner-down-left"></i></button>
+            <button class="action delete" title="从队列删除" aria-label="从队列删除"><i data-lucide="trash-2"></i></button>
+            <button class="model-select" title="修改此队列项的模型"><span class="model-dot"></span>GPT-5.2 Codex · high<i data-lucide="chevron-down"></i></button>
+          </article>
+
+          <article class="queue-item inserting">
+            <span class="drag"><i data-lucide="grip-vertical"></i></span>
+            <div class="copy">
+              <div class="queue-text">先提醒当前任务：重点检查数据库中的最终 assistant 正文。</div>
+              <div class="meta"><span class="number">#2</span><span class="insert-state"><span class="spinner"></span>正在插入当前对话</span></div>
+            </div>
+            <button class="action insert" disabled aria-label="正在插入"><i data-lucide="corner-down-left"></i></button>
+            <button class="action delete" title="取消并删除" aria-label="取消并删除"><i data-lucide="trash-2"></i></button>
+            <button class="model-select" title="修改此队列项的模型"><span class="model-dot"></span>Claude Sonnet 4.5<i data-lucide="chevron-down"></i></button>
+          </article>
+
+          <article class="queue-item">
+            <span class="drag"><i data-lucide="grip-vertical"></i></span>
+            <div class="copy">
+              <div class="queue-text">测试通过后更新版本号，并整理 completion loop 的变更说明。</div>
+              <div class="meta"><span class="number">#3</span><span>1 分钟前加入</span></div>
+            </div>
+            <button class="action insert" title="插入当前对话" aria-label="插入当前对话"><i data-lucide="corner-down-left"></i></button>
+            <button class="action delete" title="从队列删除" aria-label="从队列删除"><i data-lucide="trash-2"></i></button>
+            <button class="model-select" title="修改此队列项的模型"><span class="model-dot"></span>GPT-5.2 Codex · medium<i data-lucide="chevron-down"></i></button>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      lucide.createIcons();
+      const sheet = document.getElementById('queueSheet');
+      const backdrop = document.getElementById('backdrop');
+      const setOpen = (open) => {
+        sheet.classList.toggle('closed', !open);
+        backdrop.classList.toggle('closed', !open);
+      };
+      document.getElementById('openQueue').addEventListener('click', () => setOpen(true));
+      document.getElementById('closeQueue').addEventListener('click', () => setOpen(false));
+      backdrop.addEventListener('click', () => setOpen(false));
+    </script>
+  </body>
+</html>

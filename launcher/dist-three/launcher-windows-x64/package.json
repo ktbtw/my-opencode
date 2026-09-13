@@ -1,0 +1,6 @@
+{
+  "name": "launcher-windows-x64",
+  "version": "0.1.177",
+  "os": ["windows"],
+  "cpu": ["amd64"]
+}

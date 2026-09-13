@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>悬浮 Agent 交互式提问预览</title>
+  <style>
+    :root {
+      --background: #f2f6fc;
+      --surface: #ffffff;
+      --surface-elevated: #fafcff;
+      --border: #d0ddef;
+      --border-light: #e8eff8;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-light: #eff6ff;
+      --text-primary: #0f1729;
+      --text-secondary: #4a5d7a;
+      --text-muted: #8fa3bf;
+      --success: #16a34a;
+      --success-light: #dcfce7;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--background);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      display: grid;
+      place-items: center;
+      padding: 32px 18px;
+    }
+
+    .stage {
+      width: min(100%, 760px);
+      display: grid;
+      grid-template-columns: minmax(300px, 388px) minmax(220px, 1fr);
+      gap: 28px;
+      align-items: center;
+    }
+
+    .context { padding: 8px 0; }
+    .eyebrow {
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      margin-bottom: 10px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 25px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .context p {
+      color: var(--text-secondary);
+      font-size: 14px;
+      line-height: 1.75;
+      margin: 0;
+    }
+    .legend {
+      display: grid;
+      gap: 10px;
+      margin-top: 22px;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 9px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
+    .dot.green { background: var(--success); }
+
+    .overlay {
+      width: 100%;
+      max-height: min(720px, calc(100vh - 48px));
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 16px 40px rgba(31, 67, 116, .14);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .overlay-header {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border-light);
+    }
+    .icon-button {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      background: transparent;
+      color: var(--text-secondary);
+      border-radius: var(--radius-sm);
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .icon-button:hover { background: var(--primary-light); color: var(--primary); }
+    .agent-title { min-width: 0; flex: 1; }
+    .agent-title strong {
+      display: block;
+      font-size: 15px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-title span {
+      display: block;
+      color: var(--text-muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+    .status {
+      color: var(--primary);
+      background: var(--primary-light);
+      border: 1px solid #bfd7ff;
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .conversation {
+      overflow: auto;
+      padding: 14px 12px 16px;
+    }
+    .message {
+      background: var(--surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .message-label {
+      color: var(--text-muted);
+      font-size: 11px;
+      margin-bottom: 7px;
+    }
+    .message p {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .question-banner {
+      background: var(--surface);
+      border: 1px solid rgba(37, 99, 235, .2);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 8px;
+      animation: question-enter 280ms cubic-bezier(.22, 1, .36, 1) both;
+    }
+    @keyframes question-enter {
+      from { opacity: 0; transform: translateY(28px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .question-heading {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 22px;
+    }
+    .question-mark {
+      display: grid;
+      place-items: center;
+      width: 16px;
+      height: 16px;
+      border: 1.5px solid var(--primary);
+      border-radius: 50%;
+      color: var(--primary);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .question-heading strong { color: var(--primary); font-size: 13px; }
+    .question-count {
+      margin-left: auto;
+      color: var(--primary);
+      background: rgba(37, 99, 235, .08);
+      border-radius: var(--radius-sm);
+      padding: 2px 7px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .question-block { margin-top: 10px; }
+    .question-block + .question-block { margin-top: 14px; }
+    .question-header { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+    .question-text { color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+    .options { display: grid; gap: 2px; margin-top: 7px; }
+    .option {
+      position: relative;
+      display: grid;
+      grid-template-columns: 20px 1fr;
+      gap: 7px;
+      align-items: start;
+      padding: 7px 6px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+    .option:hover { background: var(--primary-light); }
+    .option input { width: 16px; height: 16px; margin: 1px 0 0; accent-color: var(--primary); }
+    .option label { color: var(--text-primary); font-size: 13px; line-height: 1.45; cursor: pointer; }
+    .option small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+    .custom-answer {
+      width: 100%;
+      min-height: 38px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 13px;
+      padding: 9px 10px 9px 34px;
+      margin-top: 6px;
+      outline: none;
+    }
+    .custom-answer:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, .1); }
+    .custom-wrap { position: relative; }
+    .custom-wrap::before { content: "✎"; position: absolute; z-index: 1; left: 11px; top: 11px; color: var(--text-muted); font-size: 15px; }
+
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+    button.action {
+      min-height: 38px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--primary);
+      padding: 0 12px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .primary-action { background: var(--primary); color: white; }
+    .primary-action:hover { background: var(--primary-hover); }
+    .outline-action { background: var(--surface); color: var(--primary); }
+    .outline-action:hover { background: var(--primary-light); }
+    button:disabled { cursor: default; opacity: .5; }
+    .submitted {
+      display: none;
+      margin-top: 12px;
+      padding: 9px 10px;
+      color: var(--success);
+      background: var(--success-light);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+    }
+    .composer {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px 12px;
+      border-top: 1px solid var(--border-light);
+      background: var(--surface);
+    }
+    .composer input { min-width: 0; flex: 1; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0 11px; color: var(--text-muted); }
+    .composer button { width: 40px; border: 0; border-radius: var(--radius-md); background: var(--primary-light); color: var(--primary); font-size: 17px; }
+
+    @media (max-width: 680px) {
+      body { padding: 12px; place-items: start center; }
+      .stage { grid-template-columns: 1fr; gap: 12px; max-width: 420px; }
+      .context { padding: 4px 4px 0; }
+      .context h1, .context p, .legend { display: none; }
+      .eyebrow { margin: 0; }
+      .overlay { max-height: calc(100vh - 34px); }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <section class="context" aria-label="预览说明">
+      <div class="eyebrow">GLOBAL AGENT · QUESTION</div>
+      <h1>悬浮层问题交互</h1>
+      <p>这版按照 App 对话页的 QuestionBanner 结构重排，问题卡片嵌在消息区域内，提交后继续当前任务。</p>
+      <div class="legend">
+        <div class="legend-item"><span class="dot"></span>主色、卡片和按钮与 App 对话页一致</div>
+        <div class="legend-item"><span class="dot green"></span>支持单选、多选和自定义回答</div>
+      </div>
+    </section>
+
+    <section class="overlay" aria-label="悬浮 Agent 对话面板">
+      <header class="overlay-header">
+        <button class="icon-button" aria-label="返回">‹</button>
+        <div class="agent-title">
+          <strong>逆向专家安卓</strong>
+          <span>MacBook Pro · 需要回答</span>
+        </div>
+        <span class="status">等待选择</span>
+        <button class="icon-button" aria-label="收起">⌄</button>
+      </header>
+
+      <div class="conversation">
+        <article class="question-banner">
+          <div class="question-heading">
+            <span class="question-mark">?</span>
+            <strong>需要选择</strong>
+            <span class="question-count">2 题</span>
+          </div>
+
+          <div class="question-block">
+            <div class="question-header">目标范围</div>
+            <div class="question-text">请选择这次分析需要覆盖的目标范围。</div>
+            <div class="options">
+              <div class="option">
+                <input id="scope-app" type="radio" name="scope" value="APP 主流程">
+                <label for="scope-app">APP 主流程<small>分析启动、登录和核心交互</small></label>
+              </div>
+              <div class="option">
+                <input id="scope-native" type="radio" name="scope" value="Native 层">
+                <label for="scope-native">Native 层<small>分析 JNI、SO 和关键调用链</small></label>
+              </div>
+            </div>
+            <div class="custom-wrap">
+              <textarea id="scope-custom" class="custom-answer" rows="1" placeholder="输入其他回复"></textarea>
+            </div>
+          </div>
+
+          <div class="question-block">
+            <div class="question-header">输出内容</div>
+            <div class="question-text">可以同时选择多个交付方向。</div>
+            <div class="options">
+              <div class="option">
+                <input id="output-report" type="checkbox" name="output" value="分析报告">
+                <label for="output-report">分析报告<small>整理关键发现和结论</small></label>
+              </div>
+              <div class="option">
+                <input id="output-artifact" type="checkbox" name="output" value="交付文件">
+                <label for="output-artifact">交付文件<small>生成可下载的结果文件</small></label>
+              </div>
+              <div class="option">
+                <input id="output-log" type="checkbox" name="output" value="过程日志">
+                <label for="output-log">过程日志<small>保留关键执行过程</small></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="submit" class="action primary-action" disabled>提交选择</button>
+            <button id="reject" class="action outline-action">取消/拒绝</button>
+          </div>
+          <div id="submitted" class="submitted">回答已提交，Agent 正在继续工作</div>
+        </article>
+
+        <article class="message">
+          <div class="message-label">最近回复</div>
+          <p>我已经完成初步环境检查，下一步需要确认分析范围后继续执行。</p>
+        </article>
+      </div>
+
+      <footer class="composer">
+        <input type="text" placeholder="让选中的 Agent 继续工作" aria-label="消息输入">
+        <button aria-label="发送">↑</button>
+      </footer>
+    </section>
+  </main>
+
+  <script>
+    const submit = document.querySelector('#submit');
+    const reject = document.querySelector('#reject');
+    const submitted = document.querySelector('#submitted');
+    const scopeCustom = document.querySelector('#scope-custom');
+    const inputs = [...document.querySelectorAll('input[type="radio"], input[type="checkbox"]')];
+
+    function answered() {
+      const scopeAnswered = document.querySelector('input[name="scope"]:checked') || scopeCustom.value.trim();
+      const outputAnswered = document.querySelectorAll('input[name="output"]:checked').length > 0;
+      return Boolean(scopeAnswered && outputAnswered);
+    }
+    function refresh() { submit.disabled = !answered(); }
+    inputs.forEach(input => input.addEventListener('change', refresh));
+    scopeCustom.addEventListener('input', refresh);
+    submit.addEventListener('click', () => {
+      if (!answered()) return;
+      submitted.style.display = 'block';
+      submit.disabled = true;
+      reject.disabled = true;
+      inputs.forEach(input => input.disabled = true);
+      scopeCustom.disabled = true;
+      submit.textContent = '等待中…';
+    });
+    reject.addEventListener('click', () => {
+      submitted.textContent = '已拒绝问题，Agent 将结束当前任务';
+      submitted.style.display = 'block';
+      submit.disabled = true;
+      reject.disabled = true;
+      inputs.forEach(input => input.disabled = true);
+      scopeCustom.disabled = true;
+    });
+    refresh();
+  </script>
+</body>
+</html>

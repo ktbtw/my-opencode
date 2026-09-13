@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <link rel="icon" href="data:,">
+  <title>Chat Codex - 全局通知 UI 原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f2f6fc;
+      --surface: #ffffff;
+      --surface-raised: #fafcff;
+      --border: #d0ddef;
+      --border-light: #e8eff8;
+      --text: #0f1729;
+      --text-2: #4a5d7a;
+      --muted: #8fa3bf;
+      --blue: #2563eb;
+      --blue-hover: #1d4ed8;
+      --blue-soft: #eff6ff;
+      --green: #16a34a;
+      --green-soft: #dcfce7;
+      --amber: #d97706;
+      --amber-soft: #fef3c7;
+      --red: #dc2626;
+      --red-soft: #fee2e2;
+      --island: #111827;
+      --shadow: 0 18px 48px rgba(29, 56, 101, 0.16), 0 3px 10px rgba(29, 56, 101, 0.08);
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { margin: 0; min-height: 100%; }
+
+    body {
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Helvetica Neue", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+
+    button { font: inherit; letter-spacing: 0; }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      min-height: 100dvh;
+      background: var(--bg);
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 58px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--border-light);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--blue);
+      color: white;
+    }
+
+    .nav { padding: 14px 10px; }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      height: 38px;
+      padding: 0 11px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-2);
+      font-size: 13px;
+      text-align: left;
+    }
+
+    .nav-item + .nav-item { margin-top: 3px; }
+    .nav-item.active { background: var(--blue-soft); color: var(--blue); font-weight: 650; }
+    .nav-item svg { width: 17px; height: 17px; stroke-width: 1.8; }
+
+    .sidebar-foot {
+      margin-top: auto;
+      padding: 14px;
+      border-top: 1px solid var(--border-light);
+    }
+
+    .profile {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--text-2);
+      font-size: 12px;
+    }
+
+    .avatar {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 50%;
+      background: #dbeafe;
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .workspace { min-width: 0; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      height: 58px;
+      padding: 0 18px 0 22px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .crumbs {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .crumbs strong { color: var(--text); font-weight: 650; }
+    .crumbs svg { width: 14px; margin: 0 4px; }
+
+    .top-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+
+    .icon-button {
+      position: relative;
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+    }
+
+    .icon-button:hover { border-color: var(--border); background: var(--surface-raised); }
+    .icon-button:active { transform: translateY(1px); }
+    .icon-button svg { width: 18px; height: 18px; stroke-width: 1.8; }
+
+    .unread-dot {
+      position: absolute;
+      top: 4px;
+      right: 3px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
+      border: 2px solid white;
+      border-radius: 999px;
+      background: var(--red);
+      color: white;
+      font-size: 8px;
+      font-weight: 700;
+      line-height: 11px;
+    }
+
+    .page {
+      height: calc(100dvh - 58px);
+      overflow: auto;
+      padding: 24px;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .page-header h1 { margin: 0; font-size: 22px; line-height: 1.2; }
+    .page-header p { margin: 5px 0 0; color: var(--text-2); font-size: 13px; }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      padding: 5px 8px;
+      border: 1px solid #bbf7d0;
+      border-radius: 999px;
+      background: #f0fdf4;
+      color: #15803d;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .status-chip::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      content: "";
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .summary-item {
+      min-height: 78px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .summary-item span { color: var(--text-2); font-size: 11px; }
+    .summary-item strong { display: block; margin-top: 7px; font-size: 21px; line-height: 1; }
+    .summary-item small { margin-left: 5px; color: var(--green); font-size: 10px; font-weight: 600; }
+
+    .device-panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+    }
+
+    .panel-head, .device-row {
+      display: grid;
+      grid-template-columns: minmax(210px, 1.5fr) 0.8fr 0.7fr 0.8fr 112px;
+      align-items: center;
+      min-height: 48px;
+      padding: 0 15px;
+      column-gap: 12px;
+    }
+
+    .panel-head {
+      min-height: 42px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-raised);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .device-row { border-bottom: 1px solid var(--border-light); font-size: 12px; }
+    .device-row:last-child { border-bottom: 0; }
+
+    .device-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .device-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .device-name small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+
+    .device-icon {
+      display: grid;
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .device-icon svg { width: 15px; }
+    .online { color: var(--green); font-weight: 650; }
+    .online::before { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--green); content: ""; }
+
+    .row-actions { display: flex; justify-content: flex-end; gap: 3px; }
+
+    .demo-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .command-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 34px;
+      padding: 0 11px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--text-2);
+      font-size: 11px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .command-button:hover { border-color: #a9c3e7; background: var(--blue-soft); color: var(--blue); }
+    .command-button:active { transform: translateY(1px); }
+    .command-button svg { width: 14px; height: 14px; }
+
+    .notification-layer {
+      position: fixed;
+      z-index: 50;
+      top: max(70px, calc(env(safe-area-inset-top) + 10px));
+      right: 18px;
+      width: min(386px, calc(100vw - 32px));
+      pointer-events: none;
+    }
+
+    .notification-stack {
+      display: grid;
+      gap: 8px;
+      transform-origin: top right;
+      transition: opacity 180ms ease, transform 260ms cubic-bezier(.2, .8, .2, 1);
+      pointer-events: auto;
+      touch-action: pan-y;
+    }
+
+    .notification-layer.collapsed .notification-stack {
+      opacity: 0;
+      transform: translateY(-22px) scale(.94);
+      pointer-events: none;
+    }
+
+    .notice {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(171, 194, 225, .9);
+      border-radius: var(--radius);
+      background: rgba(255, 255, 255, .97);
+      box-shadow: var(--shadow);
+    }
+
+    .notice-accent { position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--blue); }
+    .notice.success .notice-accent { background: var(--green); }
+    .notice.error .notice-accent { background: var(--red); }
+
+    .notice-main { padding: 14px 14px 13px 16px; }
+
+    .notice-title-row { display: flex; align-items: flex-start; gap: 10px; }
+
+    .notice-icon {
+      position: relative;
+      display: grid;
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .notice-icon.success { background: var(--green-soft); color: var(--green); }
+    .notice-icon.error { background: var(--red-soft); color: var(--red); }
+    .notice-icon svg { width: 16px; height: 16px; stroke-width: 2; }
+
+    .notice-heading { min-width: 0; flex: 1; }
+    .notice-heading strong { display: block; overflow: hidden; color: var(--text); font-size: 13px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+    .notice-heading span { display: block; margin-top: 3px; color: var(--text-2); font-size: 10.5px; line-height: 1.4; }
+
+    .notice-tools { display: flex; gap: 1px; margin: -4px -5px 0 0; }
+    .notice-tools .icon-button { width: 28px; height: 28px; }
+    .notice-tools .icon-button svg { width: 15px; height: 15px; }
+
+    .progress-layout { display: grid; grid-template-columns: 1fr 48px; align-items: center; gap: 13px; margin-top: 14px; }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 10px;
+    }
+
+    .step { position: relative; min-width: 0; padding-top: 13px; color: var(--muted); font-size: 8.5px; text-align: center; }
+    .step::before {
+      position: absolute;
+      z-index: 2;
+      top: 0;
+      left: 50%;
+      width: 7px;
+      height: 7px;
+      border: 2px solid white;
+      border-radius: 50%;
+      background: #c8d5e7;
+      box-shadow: 0 0 0 1px #c8d5e7;
+      content: "";
+      transform: translateX(-50%);
+    }
+
+    .step:not(:last-child)::after { position: absolute; top: 3px; left: calc(50% + 6px); width: calc(100% - 12px); height: 1px; background: #dbe5f2; content: ""; }
+    .step.done::before { background: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .step.done:not(:last-child)::after { background: #86d8a3; }
+    .step.active { color: var(--blue); font-weight: 700; }
+    .step.active::before { background: var(--blue); box-shadow: 0 0 0 3px #dbeafe; }
+    .step span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .bar-line { height: 5px; overflow: hidden; border-radius: 999px; background: #e6edf7; }
+    .bar-fill { width: 68%; height: 100%; border-radius: inherit; background: var(--blue); transition: width 680ms cubic-bezier(.2, .8, .2, 1); }
+
+    .progress-caption { display: flex; justify-content: space-between; margin-top: 6px; color: var(--muted); font-size: 9px; }
+
+    .ring {
+      --value: 68;
+      position: relative;
+      display: grid;
+      width: 46px;
+      height: 46px;
+      place-items: center;
+      border-radius: 50%;
+      background: conic-gradient(var(--blue) calc(var(--value) * 1%), #e5edf8 0);
+      transition: background 500ms ease;
+    }
+
+    .ring::before { position: absolute; width: 36px; height: 36px; border-radius: 50%; background: white; content: ""; }
+    .ring b { position: relative; width: 32px; color: var(--text); font-variant-numeric: tabular-nums; font-size: 10px; text-align: center; }
+
+    .notice-actions { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-light); }
+
+    .primary-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--blue);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .primary-action:hover { background: var(--blue-hover); }
+    .primary-action:active { transform: translateY(1px); }
+    .primary-action svg { width: 13px; height: 13px; }
+
+    .secondary-action {
+      min-height: 30px;
+      padding: 0 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: white;
+      color: var(--text-2);
+      font-size: 10px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .notice-time { margin-left: auto; color: var(--muted); font-size: 9px; }
+
+    .notice.compact .notice-main { padding-top: 12px; padding-bottom: 12px; }
+
+    .indeterminate-line { display: flex; align-items: center; gap: 9px; margin: 10px 0 1px 40px; color: var(--text-2); font-size: 10px; }
+
+    .sync-spinner { width: 14px; height: 14px; color: var(--blue); animation: rotate 1.15s linear infinite; }
+
+    .dots { display: inline-flex; align-items: center; gap: 3px; width: 27px; }
+    .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--blue); animation: jump 1.1s ease-in-out infinite; }
+    .dots i:nth-child(2) { animation-delay: 120ms; }
+    .dots i:nth-child(3) { animation-delay: 240ms; }
+
+    @keyframes rotate { to { transform: rotate(360deg); } }
+    @keyframes jump { 0%, 60%, 100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+
+    .island {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) auto 18px;
+      align-items: center;
+      gap: 9px;
+      width: 306px;
+      height: 54px;
+      padding: 0 12px 0 10px;
+      border: 1px solid rgba(255, 255, 255, .1);
+      border-radius: 999px;
+      background: var(--island);
+      box-shadow: 0 14px 38px rgba(15, 23, 41, .28);
+      color: white;
+      opacity: 0;
+      transform: translateY(-18px) scale(.88);
+      transition: opacity 190ms ease, transform 300ms cubic-bezier(.2, .8, .2, 1);
+      pointer-events: none;
+      cursor: pointer;
+    }
+
+    .notification-layer.collapsed .island { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+    .island:focus-visible { outline: 3px solid rgba(37, 99, 235, .35); outline-offset: 3px; }
+
+    .island-orbit { position: relative; display: grid; width: 34px; height: 34px; place-items: center; }
+    .island-orbit::before { position: absolute; inset: 2px; border: 2px solid rgba(96, 165, 250, .28); border-top-color: #60a5fa; border-radius: 50%; content: ""; animation: rotate 1.2s linear infinite; }
+    .island-orbit svg { width: 14px; color: #93c5fd; }
+    .island-copy { min-width: 0; }
+    .island-copy strong { display: block; overflow: hidden; font-size: 11px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+    .island-copy span { display: block; margin-top: 3px; color: #94a3b8; font-size: 8.5px; }
+
+    .island-count { display: flex; align-items: center; gap: 5px; color: #bfdbfe; font-size: 9px; font-weight: 700; }
+    .mini-ring { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 50%; background: conic-gradient(#60a5fa 68%, #374151 0); }
+    .mini-ring::before { position: absolute; width: 21px; height: 21px; border-radius: 50%; background: var(--island); content: ""; }
+    .mini-ring span { position: relative; font-size: 7px; font-variant-numeric: tabular-nums; }
+    .island > svg { width: 15px; color: #64748b; }
+
+    .drawer-backdrop {
+      position: fixed;
+      z-index: 70;
+      inset: 0;
+      background: rgba(15, 23, 41, .28);
+      opacity: 0;
+      transition: opacity 180ms ease;
+      pointer-events: none;
+    }
+
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+
+    .notification-center {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: flex;
+      flex-direction: column;
+      width: min(400px, 100vw);
+      height: 100%;
+      border-left: 1px solid var(--border);
+      background: var(--surface);
+      box-shadow: -20px 0 50px rgba(29, 56, 101, .16);
+      transform: translateX(100%);
+      transition: transform 280ms cubic-bezier(.2, .8, .2, 1);
+    }
+
+    .drawer-backdrop.open .notification-center { transform: translateX(0); }
+
+    .center-head { display: flex; align-items: center; height: 58px; padding: 0 12px 0 17px; border-bottom: 1px solid var(--border); }
+    .center-head strong { font-size: 15px; }
+    .center-head span { margin-left: 7px; color: var(--muted); font-size: 10px; }
+    .center-head .icon-button { margin-left: auto; }
+
+    .center-tabs { display: grid; grid-template-columns: 1fr 1fr; height: 43px; padding: 5px 12px 0; border-bottom: 1px solid var(--border-light); }
+    .center-tab { position: relative; border: 0; background: transparent; color: var(--text-2); font-size: 11px; font-weight: 650; cursor: pointer; }
+    .center-tab.active { color: var(--blue); }
+    .center-tab.active::after { position: absolute; right: 20px; bottom: -1px; left: 20px; height: 2px; background: var(--blue); content: ""; }
+
+    .center-content { flex: 1; overflow: auto; padding: 12px; }
+    .center-group[hidden] { display: none; }
+
+    .center-empty {
+      padding: 48px 18px;
+      color: var(--muted);
+      font-size: 10px;
+      text-align: center;
+    }
+
+    .center-section-label { display: flex; align-items: center; margin: 5px 2px 8px; color: var(--muted); font-size: 9px; font-weight: 700; }
+    .center-section-label button { margin-left: auto; border: 0; background: transparent; color: var(--blue); font-size: 9px; cursor: pointer; }
+
+    .center-item {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 9px;
+      padding: 11px 9px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .center-item:last-child { border-bottom: 0; }
+    .center-item .notice-icon { width: 28px; height: 28px; }
+    .center-item strong { display: block; font-size: 11px; }
+    .center-item p { margin: 3px 0 0; color: var(--text-2); font-size: 9.5px; line-height: 1.45; }
+    .center-item time { color: var(--muted); font-size: 8px; }
+
+    .center-progress { height: 3px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: #e5edf8; }
+    .center-progress span { display: block; width: 68%; height: 100%; background: var(--blue); }
+
+    .center-footer { padding: 12px; border-top: 1px solid var(--border); }
+    .center-footer button { width: 100%; height: 34px; border: 1px solid var(--border); border-radius: 7px; background: white; color: var(--text-2); font-size: 10px; font-weight: 650; cursor: pointer; }
+
+    .tooltip { position: relative; }
+    .tooltip::after {
+      position: absolute;
+      z-index: 100;
+      right: 0;
+      bottom: -30px;
+      width: max-content;
+      max-width: 180px;
+      padding: 5px 7px;
+      border-radius: 5px;
+      background: #172033;
+      color: white;
+      content: attr(aria-label);
+      font-size: 9px;
+      opacity: 0;
+      transform: translateY(-3px);
+      transition: opacity 120ms ease, transform 120ms ease;
+      pointer-events: none;
+    }
+
+    .tooltip:hover::after, .tooltip:focus-visible::after { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 900px) {
+      .app-shell { grid-template-columns: 64px minmax(0, 1fr); }
+      .sidebar { align-items: center; }
+      .brand { width: 100%; justify-content: center; padding: 0; }
+      .brand span, .nav-item span, .profile > div:last-child { display: none; }
+      .nav { width: 100%; padding: 14px 9px; }
+      .nav-item { justify-content: center; padding: 0; }
+      .sidebar-foot { padding: 14px 0; }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .panel-head, .device-row { grid-template-columns: minmax(180px, 1.3fr) .7fr .6fr 100px; }
+      .panel-head > :nth-child(4), .device-row > :nth-child(4) { display: none; }
+    }
+
+    @media (max-width: 600px) {
+      body { overflow: auto; }
+      .app-shell { display: block; min-height: 100dvh; }
+      .sidebar { display: none; }
+      .topbar { height: 52px; padding: 0 10px 0 14px; }
+      .page { height: calc(100dvh - 52px); padding: 16px 12px; }
+      .page-header { align-items: start; }
+      .page-header h1 { font-size: 18px; }
+      .page-header p { max-width: 230px; font-size: 11px; }
+      .status-chip { display: none; }
+      .summary-grid { gap: 7px; }
+      .summary-item { min-height: 68px; padding: 11px; }
+      .summary-item strong { font-size: 18px; }
+      .panel-head, .device-row { grid-template-columns: minmax(150px, 1fr) 78px; }
+      .panel-head > :nth-child(2), .panel-head > :nth-child(3), .panel-head > :nth-child(4),
+      .device-row > :nth-child(2), .device-row > :nth-child(3), .device-row > :nth-child(4) { display: none; }
+      .device-row { padding: 0 10px; }
+      .demo-actions { display: grid; grid-template-columns: 1fr 1fr; }
+      .command-button { justify-content: center; }
+
+      .notification-layer {
+        top: max(60px, calc(env(safe-area-inset-top) + 54px));
+        right: 50%;
+        width: min(370px, calc(100vw - 16px));
+        transform: translateX(50%);
+      }
+
+      .notification-stack { transform-origin: top center; }
+      .notice:not(:first-child) { display: none; }
+      .notice-main { padding: 12px 12px 12px 14px; }
+      .notice-heading strong { font-size: 12px; }
+      .progress-layout { grid-template-columns: 1fr 44px; gap: 9px; }
+      .steps { margin-right: -4px; margin-left: -4px; }
+      .step { font-size: 8px; }
+      .ring { width: 43px; height: 43px; }
+      .ring::before { width: 33px; height: 33px; }
+      .notice-actions { margin-top: 10px; }
+      .island { right: 50%; width: min(306px, calc(100vw - 34px)); transform: translate(50%, -18px) scale(.88); }
+      .notification-layer.collapsed .island { transform: translate(50%, 0) scale(1); }
+      .notification-center { top: auto; bottom: 0; width: 100%; height: min(82dvh, 680px); border-top: 1px solid var(--border); border-left: 0; border-radius: 12px 12px 0 0; transform: translateY(100%); }
+      .drawer-backdrop.open .notification-center { transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: 120ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell" aria-hidden="false">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark"><i data-lucide="command"></i></span><span>码控</span></div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item active"><i data-lucide="monitor-smartphone"></i><span>设备</span></button>
+        <button class="nav-item"><i data-lucide="bot"></i><span>Agent</span></button>
+        <button class="nav-item"><i data-lucide="boxes"></i><span>资源</span></button>
+        <button class="nav-item"><i data-lucide="settings-2"></i><span>设置</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="profile"><span class="avatar">YM</span><div><strong>管理员</strong><br><span>在线</span></div></div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="crumbs"><strong>设备</strong><i data-lucide="chevron-right"></i><span>YUZHIHAO</span></div>
+        <div class="top-actions">
+          <button class="icon-button tooltip" id="notificationCenterButton" aria-label="通知中心"><i data-lucide="bell"></i><span class="unread-dot">4</span></button>
+          <button class="icon-button tooltip" aria-label="刷新设备"><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button tooltip" aria-label="更多操作"><i data-lucide="ellipsis"></i></button>
+        </div>
+      </header>
+
+      <section class="page">
+        <div class="page-header">
+          <div><h1>设备控制台</h1><p>管理运行状态、Agent 和开发资源</p></div>
+          <span class="status-chip">连接正常</span>
+        </div>
+
+        <div class="summary-grid">
+          <div class="summary-item"><span>在线设备</span><strong>8 <small>+2</small></strong></div>
+          <div class="summary-item"><span>运行中 Agent</span><strong>12</strong></div>
+          <div class="summary-item"><span>活动任务</span><strong id="taskCount">3</strong></div>
+          <div class="summary-item"><span>异常</span><strong>1</strong></div>
+        </div>
+
+        <div class="device-panel">
+          <div class="panel-head"><span>设备</span><span>系统</span><span>状态</span><span>最后连接</span><span></span></div>
+          <div class="device-row">
+            <div class="device-name"><span class="device-icon"><i data-lucide="monitor"></i></span><div><strong>YUZHIHAO</strong><small>192.168.10.107</small></div></div>
+            <span>Windows 10</span><span class="online">在线</span><span>刚刚</span>
+            <div class="row-actions"><button class="icon-button tooltip" aria-label="打开设备"><i data-lucide="arrow-up-right"></i></button><button class="icon-button tooltip" aria-label="设备菜单"><i data-lucide="ellipsis"></i></button></div>
+          </div>
+          <div class="device-row">
+            <div class="device-name"><span class="device-icon"><i data-lucide="laptop"></i></span><div><strong>三闻鱼</strong><small>m_a115573a0e686b3c81e0</small></div></div>
+            <span>macOS</span><span class="online">在线</span><span>1 分钟前</span>
+            <div class="row-actions"><button class="icon-button tooltip" aria-label="打开设备"><i data-lucide="arrow-up-right"></i></button><button class="icon-button tooltip" aria-label="设备菜单"><i data-lucide="ellipsis"></i></button></div>
+          </div>
+          <div class="device-row">
+            <div class="device-name"><span class="device-icon"><i data-lucide="smartphone"></i></span><div><strong>Android 测试机</strong><small>Pixel 8 Pro</small></div></div>
+            <span>Android 15</span><span class="online">在线</span><span>3 分钟前</span>
+            <div class="row-actions"><button class="icon-button tooltip" aria-label="打开设备"><i data-lucide="arrow-up-right"></i></button><button class="icon-button tooltip" aria-label="设备菜单"><i data-lucide="ellipsis"></i></button></div>
+          </div>
+        </div>
+
+        <div class="demo-actions" aria-label="通知状态模拟">
+          <button class="command-button" id="progressDemo"><i data-lucide="circle-gauge"></i>确定进度</button>
+          <button class="command-button" id="syncDemo"><i data-lucide="refresh-cw"></i>同步状态</button>
+          <button class="command-button" id="successDemo"><i data-lucide="circle-check"></i>成功通知</button>
+          <button class="command-button" id="errorDemo"><i data-lucide="triangle-alert"></i>失败通知</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <section class="notification-layer" id="notificationLayer" aria-label="全局通知" aria-live="polite">
+    <div class="notification-stack" id="notificationStack">
+      <article class="notice" id="progressNotice">
+        <span class="notice-accent"></span>
+        <div class="notice-main">
+          <div class="notice-title-row">
+            <span class="notice-icon"><i data-lucide="bot"></i></span>
+            <div class="notice-heading"><strong>正在启动 Android Agent</strong><span id="stageMessage">正在加载运行时与设备配置</span></div>
+            <div class="notice-tools">
+              <button class="icon-button tooltip collapseButton" aria-label="收起通知"><i data-lucide="chevron-up"></i></button>
+              <button class="icon-button tooltip" aria-label="更多操作"><i data-lucide="ellipsis"></i></button>
+            </div>
+          </div>
+
+          <div class="progress-layout">
+            <div>
+              <div class="steps" id="stageSteps">
+                <div class="step done"><span>连接设备</span></div>
+                <div class="step done"><span>检查环境</span></div>
+                <div class="step active"><span>加载运行时</span></div>
+                <div class="step"><span>验证状态</span></div>
+              </div>
+              <div class="bar-line"><div class="bar-fill" id="progressFill"></div></div>
+              <div class="progress-caption"><span id="progressCaption">阶段 3/4 · 加载运行时</span><span id="etaCaption">约 18 秒</span></div>
+            </div>
+            <div class="ring" id="progressRing" style="--value:68"><b id="progressValue">68%</b></div>
+          </div>
+
+          <div class="notice-actions">
+            <button class="primary-action"><i data-lucide="arrow-up-right"></i>查看 Agent</button>
+            <button class="secondary-action">取消</button>
+            <span class="notice-time">刚刚</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="notice compact" id="syncNotice">
+        <span class="notice-accent"></span>
+        <div class="notice-main">
+          <div class="notice-title-row">
+            <span class="notice-icon"><i data-lucide="blocks"></i></span>
+            <div class="notice-heading"><strong>MCP 状态同步中</strong><span>正在获取 6 个服务的运行状态</span></div>
+            <div class="notice-tools"><button class="icon-button tooltip collapseButton" aria-label="收起通知"><i data-lucide="chevron-up"></i></button></div>
+          </div>
+          <div class="indeterminate-line"><i class="sync-spinner" data-lucide="refresh-cw"></i><span>等待设备响应</span><span class="dots" aria-label="处理中"><i></i><i></i><i></i></span><span class="notice-time">12 秒</span></div>
+        </div>
+      </article>
+
+      <article class="notice compact success" id="successNotice">
+        <span class="notice-accent"></span>
+        <div class="notice-main">
+          <div class="notice-title-row">
+            <span class="notice-icon success"><i data-lucide="circle-check"></i></span>
+            <div class="notice-heading"><strong>Agent 配置已保存</strong><span>配置已应用，下次启动时自动生效</span></div>
+            <div class="notice-tools"><button class="icon-button tooltip collapseButton" aria-label="收起通知"><i data-lucide="chevron-up"></i></button></div>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <button class="island" id="dynamicIsland" aria-label="展开 3 个活动通知">
+      <span class="island-orbit"><i data-lucide="bot"></i></span>
+      <span class="island-copy"><strong id="islandTitle">正在启动 Android Agent</strong><span id="islandSubtitle">3 个任务进行中</span></span>
+      <span class="island-count"><span class="mini-ring"><span id="islandProgress">68</span></span><span>3</span></span>
+      <i data-lucide="chevron-down"></i>
+    </button>
+  </section>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" aria-hidden="true" inert>
+    <aside class="notification-center" role="dialog" aria-modal="true" aria-labelledby="centerTitle">
+      <header class="center-head"><strong id="centerTitle">通知</strong><span>4 条未读</span><button class="icon-button tooltip" id="closeCenter" aria-label="关闭通知中心"><i data-lucide="x"></i></button></header>
+      <div class="center-tabs" role="tablist">
+        <button class="center-tab active" id="activeTab" role="tab" aria-selected="true" aria-controls="activeNotifications">进行中 3</button>
+        <button class="center-tab" id="recentTab" role="tab" aria-selected="false" aria-controls="recentNotifications">最近记录</button>
+      </div>
+      <div class="center-content">
+        <div class="center-group" id="activeNotifications" role="tabpanel" aria-labelledby="activeTab">
+          <div class="center-section-label">当前任务 <button id="collapseAll">全部收起</button></div>
+          <div class="center-item">
+            <span class="notice-icon"><i data-lucide="bot"></i></span>
+            <div><strong>正在启动 Android Agent</strong><p>阶段 3/4 · 加载运行时</p><div class="center-progress"><span id="centerProgress"></span></div></div>
+            <time id="centerPercent">68%</time>
+          </div>
+          <div class="center-item">
+            <span class="notice-icon"><i data-lucide="blocks"></i></span>
+            <div><strong>MCP 状态同步中</strong><p>正在获取 6 个服务的运行状态</p></div>
+            <time>12 秒</time>
+          </div>
+          <div class="center-item">
+            <span class="notice-icon"><i data-lucide="download"></i></span>
+            <div><strong>正在下载 IDA 运行时</strong><p>等待远端返回文件总大小</p></div>
+            <time>1 分钟</time>
+          </div>
+        </div>
+
+        <div class="center-group" id="recentNotifications" role="tabpanel" aria-labelledby="recentTab" hidden>
+          <div class="center-section-label">最近完成 <button id="clearRecent">清除</button></div>
+          <div id="recentItems">
+            <div class="center-item">
+              <span class="notice-icon success"><i data-lucide="circle-check"></i></span>
+              <div><strong>Agent 配置已保存</strong><p>配置已应用，下次启动时自动生效</p></div>
+              <time>刚刚</time>
+            </div>
+            <div class="center-item">
+              <span class="notice-icon error"><i data-lucide="triangle-alert"></i></span>
+              <div><strong>资源安装失败</strong><p>网络连接中断，可重新尝试</p></div>
+              <time>8 分钟</time>
+            </div>
+          </div>
+          <div class="center-empty" id="recentEmpty" hidden>暂无最近通知</div>
+        </div>
+      </div>
+      <footer class="center-footer"><button>查看全部通知记录</button></footer>
+    </aside>
+  </div>
+
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script>
+    const layer = document.getElementById('notificationLayer');
+    const stack = document.getElementById('notificationStack');
+    const island = document.getElementById('dynamicIsland');
+    const drawer = document.getElementById('drawerBackdrop');
+    const centerButton = document.getElementById('notificationCenterButton');
+    const closeCenter = document.getElementById('closeCenter');
+    const activeTab = document.getElementById('activeTab');
+    const recentTab = document.getElementById('recentTab');
+    const activeNotifications = document.getElementById('activeNotifications');
+    const recentNotifications = document.getElementById('recentNotifications');
+    const fill = document.getElementById('progressFill');
+    const ring = document.getElementById('progressRing');
+    const value = document.getElementById('progressValue');
+    const centerProgress = document.getElementById('centerProgress');
+    const centerPercent = document.getElementById('centerPercent');
+    const islandProgress = document.getElementById('islandProgress');
+    const progressNotice = document.getElementById('progressNotice');
+    const syncNotice = document.getElementById('syncNotice');
+    const successNotice = document.getElementById('successNotice');
+    let progress = 68;
+    let collapseTimer;
+    let progressTimer;
+    let pointerStartY = null;
+
+    function refreshIcons() {
+      if (window.lucide) window.lucide.createIcons({ attrs: { 'aria-hidden': 'true' } });
+    }
+
+    function scheduleCollapse(delay = 9000) {
+      window.clearTimeout(collapseTimer);
+      collapseTimer = window.setTimeout(collapse, delay);
+    }
+
+    function collapse() {
+      layer.classList.add('collapsed');
+    }
+
+    function expand() {
+      layer.classList.remove('collapsed');
+      scheduleCollapse();
+    }
+
+    function openDrawer() {
+      drawer.removeAttribute('inert');
+      drawer.setAttribute('aria-hidden', 'false');
+      drawer.classList.add('open');
+      closeCenter.focus();
+    }
+
+    function closeDrawer() {
+      drawer.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+      drawer.setAttribute('inert', '');
+      centerButton.focus();
+    }
+
+    function selectCenterTab(selected) {
+      const showActive = selected === 'active';
+      activeTab.classList.toggle('active', showActive);
+      recentTab.classList.toggle('active', !showActive);
+      activeTab.setAttribute('aria-selected', String(showActive));
+      recentTab.setAttribute('aria-selected', String(!showActive));
+      activeNotifications.hidden = !showActive;
+      recentNotifications.hidden = showActive;
+    }
+
+    function setProgress(next) {
+      progress = Math.max(0, Math.min(100, next));
+      fill.style.width = progress + '%';
+      ring.style.setProperty('--value', progress);
+      value.textContent = progress + '%';
+      centerProgress.style.width = progress + '%';
+      centerPercent.textContent = progress + '%';
+      islandProgress.textContent = progress;
+      if (progress >= 100) {
+        document.getElementById('stageMessage').textContent = 'Agent 已启动并通过状态验证';
+        document.getElementById('progressCaption').textContent = '阶段 4/4 · 验证完成';
+        document.getElementById('etaCaption').textContent = '已完成';
+        document.getElementById('islandTitle').textContent = 'Android Agent 已启动';
+        progressNotice.classList.add('success');
+        progressNotice.querySelector('.notice-icon').classList.add('success');
+        document.querySelectorAll('#stageSteps .step').forEach(step => {
+          step.classList.add('done');
+          step.classList.remove('active');
+        });
+      }
+    }
+
+    document.querySelectorAll('.collapseButton').forEach(button => button.addEventListener('click', collapse));
+    island.addEventListener('click', expand);
+
+    stack.addEventListener('pointerdown', event => { pointerStartY = event.clientY; });
+    stack.addEventListener('pointerup', event => {
+      if (pointerStartY !== null && event.clientY - pointerStartY < -34) collapse();
+      pointerStartY = null;
+    });
+    stack.addEventListener('pointercancel', () => { pointerStartY = null; });
+    stack.addEventListener('mouseenter', () => window.clearTimeout(collapseTimer));
+    stack.addEventListener('mouseleave', () => scheduleCollapse(5000));
+
+    centerButton.addEventListener('click', openDrawer);
+    closeCenter.addEventListener('click', closeDrawer);
+    drawer.addEventListener('click', event => { if (event.target === drawer) closeDrawer(); });
+    activeTab.addEventListener('click', () => selectCenterTab('active'));
+    recentTab.addEventListener('click', () => selectCenterTab('recent'));
+    document.getElementById('collapseAll').addEventListener('click', () => {
+      collapse();
+      closeDrawer();
+    });
+    document.getElementById('clearRecent').addEventListener('click', () => {
+      document.getElementById('recentItems').hidden = true;
+      document.getElementById('recentEmpty').hidden = false;
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && drawer.classList.contains('open')) closeDrawer();
+      if (event.key === 'ArrowUp' && event.altKey) collapse();
+    });
+
+    document.getElementById('progressDemo').addEventListener('click', () => {
+      progressNotice.style.display = '';
+      progressNotice.classList.remove('success', 'error');
+      progressNotice.querySelector('.notice-icon').classList.remove('success', 'error');
+      document.getElementById('stageMessage').textContent = '正在加载运行时与设备配置';
+      document.getElementById('progressCaption').textContent = '阶段 3/4 · 加载运行时';
+      document.getElementById('etaCaption').textContent = '约 18 秒';
+      document.getElementById('islandTitle').textContent = '正在启动 Android Agent';
+      const steps = document.querySelectorAll('#stageSteps .step');
+      steps.forEach((step, index) => {
+        step.classList.toggle('done', index < 2);
+        step.classList.toggle('active', index === 2);
+      });
+      setProgress(42);
+      expand();
+      let tick = 42;
+      window.clearInterval(progressTimer);
+      progressTimer = window.setInterval(() => {
+        tick += 7;
+        setProgress(Math.min(tick, 100));
+        if (tick >= 100) window.clearInterval(progressTimer);
+      }, 720);
+    });
+
+    document.getElementById('syncDemo').addEventListener('click', () => {
+      syncNotice.style.display = '';
+      document.getElementById('islandTitle').textContent = 'MCP 状态同步中';
+      expand();
+    });
+
+    document.getElementById('successDemo').addEventListener('click', () => {
+      successNotice.style.display = '';
+      successNotice.querySelector('strong').textContent = 'Agent 启动成功';
+      successNotice.querySelector('.notice-heading span').textContent = 'YUZHIHAO 已连接并开始接收任务';
+      document.getElementById('islandTitle').textContent = 'Agent 启动成功';
+      expand();
+    });
+
+    document.getElementById('errorDemo').addEventListener('click', () => {
+      progressNotice.classList.remove('success');
+      progressNotice.classList.add('error');
+      const icon = progressNotice.querySelector('.notice-icon');
+      icon.classList.remove('success');
+      icon.classList.add('error');
+      document.getElementById('stageMessage').textContent = '设备连接中断，可重新尝试';
+      document.getElementById('progressCaption').textContent = '启动失败 · 连接设备';
+      document.getElementById('etaCaption').textContent = '错误 E_CONN_04';
+      document.getElementById('islandTitle').textContent = 'Agent 启动失败';
+      expand();
+    });
+
+    refreshIcons();
+    setProgress(progress);
+    scheduleCollapse();
+  </script>
+</body>
+</html>

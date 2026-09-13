@@ -1,0 +1,144 @@
+- generic [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - complementary [ref=f1e3]:
+      - generic [ref=f1e4]: OPERIT
+      - navigation [ref=f1e9]:
+        - button [ref=f1e10] [cursor=pointer]: 设备概览
+        - button [ref=f1e16] [cursor=pointer]: AI 配置
+        - button [ref=f1e20] [cursor=pointer]: Agent
+        - button [ref=f1e24] [cursor=pointer]: 项目记忆
+    - main [ref=f1e29]:
+      - generic [ref=f1e30]:
+        - generic [ref=f1e31]:
+          - text: 设备 / MacBook Pro /
+          - strong [ref=f1e32]: AI 配置
+        - generic [ref=f1e33]:
+          - button [ref=f1e34] [cursor=pointer]
+          - button [ref=f1e38] [cursor=pointer]
+      - generic [ref=f1e42]:
+        - generic [ref=f1e44]:
+          - heading [level=1] [ref=f1e45]: 设备级全局配置
+          - paragraph [ref=f1e46]: 管理这台设备上的 AI 供应商、模型与默认能力。
+        - generic [ref=f1e48]:
+          - strong [ref=f1e49]: OpenRouter
+          - generic [ref=f1e50]: 12 个模型
+  - dialog [ref=f1e56]:
+    - banner [ref=f1e57]:
+      - generic [ref=f1e58]:
+        - heading "管理模型 · openrouter" [level=2] [ref=f1e59]
+        - paragraph [ref=f1e60]: https://openrouter.ai/api/v1
+      - button "关闭" [ref=f1e61] [cursor=pointer]
+    - generic [ref=f1e65]:
+      - complementary [ref=f1e66]:
+        - generic [ref=f1e67]:
+          - generic [ref=f1e68]:
+            - searchbox [ref=f1e70]
+            - button "刷新模型" [ref=f1e71] [cursor=pointer]
+          - generic [ref=f1e77]:
+            - generic [ref=f1e78]: 已选择 4 / 4 个模型
+            - button "清空选择" [ref=f1e79] [cursor=pointer]
+        - generic [ref=f1e80]:
+          - button "选择 stealth/ox-alpha stealth/ox-alpha stealth/ox-alpha 已检测 · 强度可调" [ref=f1e81] [cursor=pointer]:
+            - checkbox "选择 stealth/ox-alpha" [checked] [ref=f1e82]
+            - generic [ref=f1e83]:
+              - generic [ref=f1e84]: stealth/ox-alpha
+              - generic [ref=f1e85]: stealth/ox-alpha
+              - generic [ref=f1e86]: 已检测 · 强度可调
+          - button "选择 Grok 4.6 Grok 4.6 x-ai/grok-4.6 Runtime · 强度可调" [ref=f1e89] [cursor=pointer]:
+            - checkbox "选择 Grok 4.6" [checked] [ref=f1e90]
+            - generic [ref=f1e91]:
+              - generic [ref=f1e92]: Grok 4.6
+              - generic [ref=f1e93]: x-ai/grok-4.6
+              - generic [ref=f1e94]: Runtime · 强度可调
+          - button "选择 Claude Sonnet 4.5 Claude Sonnet 4.5 anthropic/claude-sonnet-4.5 手动覆盖 · 3 个档位" [ref=f1e97] [cursor=pointer]:
+            - checkbox "选择 Claude Sonnet 4.5" [checked] [ref=f1e98]
+            - generic [ref=f1e99]:
+              - generic [ref=f1e100]: Claude Sonnet 4.5
+              - generic [ref=f1e101]: anthropic/claude-sonnet-4.5
+              - generic [ref=f1e102]: 手动覆盖 · 3 个档位
+          - button "选择 Legacy Chat Legacy Chat vendor/legacy-chat 未检测到思考能力" [ref=f1e105] [cursor=pointer]:
+            - checkbox "选择 Legacy Chat" [checked] [ref=f1e106]
+            - generic [ref=f1e107]:
+              - generic [ref=f1e108]: Legacy Chat
+              - generic [ref=f1e109]: vendor/legacy-chat
+              - generic [ref=f1e110]: 未检测到思考能力
+      - generic [ref=f1e113]:
+        - generic [ref=f1e114]:
+          - generic [ref=f1e128]:
+            - heading "stealth/ox-alpha" [level=3] [ref=f1e129]
+            - paragraph [ref=f1e130]: openrouter · stealth/ox-alpha
+          - generic [ref=f1e131]: 手动覆盖
+        - generic [ref=f1e133]:
+          - generic [ref=f1e134]:
+            - heading "配置来源" [level=4] [ref=f1e135]
+            - generic [ref=f1e136]: 手动配置始终优先
+          - generic [ref=f1e137]:
+            - button "自动识别" [ref=f1e138] [cursor=pointer]
+            - button "手动覆盖" [active] [ref=f1e139] [cursor=pointer]
+          - generic [ref=f1e184]:
+            - generic [ref=f1e185]:
+              - generic [ref=f1e186]:
+                - strong [ref=f1e187]: 支持思考控制
+                - generic [ref=f1e188]: 关闭后聊天界面不显示思考强度
+              - generic [ref=f1e189]:
+                - checkbox [checked]
+            - generic [ref=f1e191]:
+              - generic [ref=f1e192]:
+                - generic [ref=f1e193]:
+                  - generic [ref=f1e194]: 控制方式
+                  - combobox "控制方式" [ref=f1e195] [cursor=pointer]:
+                    - option "思考强度" [selected]
+                    - option "Token 预算"
+                    - option "仅开关"
+                - generic [ref=f1e196]:
+                  - generic [ref=f1e197]: 参数协议
+                  - combobox "参数协议" [ref=f1e198] [cursor=pointer]:
+                    - option "OpenRouter · reasoning.effort" [selected]
+                    - option "OpenAI 兼容 · reasoning_effort"
+                    - option "Anthropic · thinking"
+                    - option "Google · thinkingConfig"
+                    - option "自定义 variants"
+                - generic [ref=f1e199]:
+                  - generic [ref=f1e200]: 默认档位
+                  - combobox "默认档位" [ref=f1e201] [cursor=pointer]:
+                    - option "不指定，跟随模型默认" [selected]
+                    - option "低"
+                    - option "中"
+                    - option "高"
+                - generic [ref=f1e202]:
+                  - generic [ref=f1e203]: 聊天控件
+                  - combobox "聊天控件" [ref=f1e204] [cursor=pointer]:
+                    - option "自动选择" [selected]
+                    - option "分段控件"
+                    - option "下拉菜单"
+              - generic [ref=f1e205]:
+                - generic [ref=f1e206]:
+                  - strong [ref=f1e207]: 可用档位
+                  - button "添加档位" [ref=f1e208] [cursor=pointer]
+                - generic [ref=f1e210]:
+                  - generic [ref=f1e211]:
+                    - checkbox "启用低档" [checked] [ref=f1e212] [cursor=pointer]
+                    - textbox "档位名称" [ref=f1e213]: 低
+                    - textbox "参数值" [ref=f1e214]: low
+                    - button "删除档位" [ref=f1e215] [cursor=pointer]
+                  - generic [ref=f1e219]:
+                    - checkbox "启用中档" [checked] [ref=f1e220] [cursor=pointer]
+                    - textbox "档位名称" [ref=f1e221]: 中
+                    - textbox "参数值" [ref=f1e222]: medium
+                    - button "删除档位" [ref=f1e223] [cursor=pointer]
+                  - generic [ref=f1e227]:
+                    - checkbox "启用高档" [checked] [ref=f1e228] [cursor=pointer]
+                    - textbox "档位名称" [ref=f1e229]: 高
+                    - textbox "参数值" [ref=f1e230]: high
+                    - button "删除档位" [ref=f1e231] [cursor=pointer]
+              - group [ref=f1e235]:
+                - generic "高级参数 仅编辑当前模型 variants" [ref=f1e236] [cursor=pointer]:
+                  - text: 高级参数
+                  - generic [ref=f1e239]: 仅编辑当前模型 variants
+    - contentinfo [ref=f1e168]:
+      - generic [ref=f1e169]: 配置只作用于当前模型
+      - generic [ref=f1e174]:
+        - button "测试配置" [ref=f1e175] [cursor=pointer]
+        - button "保存模型配置" [ref=f1e179] [cursor=pointer]
+  - status:
+    - generic: 模型能力配置已保存

@@ -1,0 +1,46 @@
+- generic [ref=e59]:
+  - complementary [ref=e60]:
+    - generic [ref=e61]:
+      - generic [ref=e62]: C
+      - generic [ref=e63]:
+        - generic [ref=e64]: 码控
+        - generic [ref=e65]: 本机控制台
+    - button "总览" [ref=e66] [cursor=pointer]
+    - button "Agent" [ref=e67] [cursor=pointer]
+    - button "环境" [ref=e68] [cursor=pointer]
+    - button "远程 SSH" [ref=e69] [cursor=pointer]
+    - button "设置" [ref=e70] [cursor=pointer]
+    - button "诊断" [ref=e71] [cursor=pointer]
+    - generic [ref=e72]:
+      - generic [ref=e73]: Launcher 0.1.133
+      - generic [ref=e74]: 本地已连接
+  - main [ref=e75]:
+    - generic [ref=e76]:
+      - generic [ref=e77]:
+        - heading "设备总览" [level=1] [ref=e78]
+        - paragraph [ref=e79]: 查看 launcher、opencode 和设备运行状态
+      - generic [ref=e80]:
+        - button "刷新" [ref=e81] [cursor=pointer]
+        - button "新建 Agent" [ref=e82] [cursor=pointer]
+    - generic [ref=e83]:
+      - generic [ref=e84]:
+        - generic [ref=e85]: 设备状态
+        - strong [ref=e86]: 运行中
+        - generic [ref=e87]: 运行中
+      - generic [ref=e88]:
+        - generic [ref=e89]: Agent 数量
+        - strong [ref=e90]: "0"
+        - generic [ref=e91]: "0"
+      - generic [ref=e92]:
+        - generic [ref=e93]: launcher 版本
+        - strong [ref=e94]: 0.1.133
+        - generic [ref=e95]: 0.1.133
+      - generic [ref=e96]:
+        - generic [ref=e97]: 自启动
+        - strong [ref=e98]: 已开启
+        - generic [ref=e99]: 已开启
+    - generic [ref=e100]:
+      - generic [ref=e101]:
+        - heading "Agent 概览" [level=2] [ref=e102]
+        - button "查看全部" [ref=e103] [cursor=pointer]
+      - generic [ref=e104]: 还没有 agent，点击右上角新建。

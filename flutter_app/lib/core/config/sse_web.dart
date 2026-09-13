@@ -2,6 +2,7 @@
 import 'dart:async';
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
+import 'sse_parser.dart';
 
 Stream<String> sseStream(Uri uri, Map<String, String> headers) {
   final controller = StreamController<String>();
@@ -10,21 +11,22 @@ Stream<String> sseStream(Uri uri, Map<String, String> headers) {
   headers.forEach((k, v) => xhr.setRequestHeader(k, v));
 
   int processedLength = 0;
+  final parser = SseDataParser();
 
-  void processNewData() {
-    final text = xhr.responseText;
-    if (text == null || text.length <= processedLength) return;
-    final newData = text.substring(processedLength);
-    processedLength = text.length;
-    for (final line in newData.split('\n')) {
-      final trimmed = line.trim();
-      if (trimmed.startsWith('data:')) {
-        final payload = trimmed.substring(5).trim();
-        if (payload.isNotEmpty && !controller.isClosed) {
-          controller.add(payload);
-        }
-      }
+  void emitPayloads(List<String> payloads) {
+    for (final payload in payloads) {
+      if (!controller.isClosed) controller.add(payload);
     }
+  }
+
+  void processNewData({bool flush = false}) {
+    final text = xhr.responseText;
+    if (text != null && text.length > processedLength) {
+      final newData = text.substring(processedLength);
+      processedLength = text.length;
+      emitPayloads(parser.addChunk(newData));
+    }
+    if (flush) emitPayloads(parser.close());
   }
 
   xhr.onProgress.listen((_) {
@@ -33,7 +35,15 @@ Stream<String> sseStream(Uri uri, Map<String, String> headers) {
 
   xhr.onReadyStateChange.listen((_) {
     if (xhr.readyState == 4) {
-      processNewData();
+      final status = xhr.status ?? 0;
+      if (status < 200 || status >= 300) {
+        if (!controller.isClosed) {
+          controller.addError(SseHttpException(status));
+          controller.close();
+        }
+        return;
+      }
+      processNewData(flush: true);
       if (!controller.isClosed) controller.close();
     }
   });

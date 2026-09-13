@@ -1,0 +1,106 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e2]:
+    - complementary [ref=f3e3]:
+      - generic [ref=f3e4]: OPERIT
+      - navigation [ref=f3e9]:
+        - button [ref=f3e10] [cursor=pointer]: 设备概览
+        - button [ref=f3e16] [cursor=pointer]: AI 配置
+        - button [ref=f3e20] [cursor=pointer]: Agent
+        - button [ref=f3e24] [cursor=pointer]: 项目记忆
+    - main [ref=f3e29]:
+      - generic [ref=f3e30]:
+        - generic [ref=f3e31]:
+          - text: 设备 / MacBook Pro /
+          - strong [ref=f3e32]: AI 配置
+        - generic [ref=f3e33]:
+          - button [ref=f3e34] [cursor=pointer]
+          - button [ref=f3e38] [cursor=pointer]
+      - generic [ref=f3e42]:
+        - generic [ref=f3e44]:
+          - heading [level=1] [ref=f3e45]: 设备级全局配置
+          - paragraph [ref=f3e46]: 管理这台设备上的 AI 供应商、模型与默认能力。
+        - generic [ref=f3e48]:
+          - strong [ref=f3e49]: OpenRouter
+          - generic [ref=f3e50]: 12 个模型
+  - dialog [ref=f3e56]:
+    - banner [ref=f3e57]:
+      - generic [ref=f3e58]:
+        - heading "管理模型 · openrouter" [level=2] [ref=f3e59]
+        - paragraph [ref=f3e60]: https://openrouter.ai/api/v1
+      - button "关闭" [ref=f3e61] [cursor=pointer]
+    - generic [ref=f3e65]:
+      - complementary [ref=f3e66]:
+        - generic [ref=f3e67]:
+          - generic [ref=f3e68]:
+            - searchbox [ref=f3e70]
+            - button "刷新模型" [ref=f3e71] [cursor=pointer]
+          - generic [ref=f3e77]:
+            - generic [ref=f3e78]: 已选择 4 / 4 个模型
+            - button "清空选择" [ref=f3e79] [cursor=pointer]
+        - generic [ref=f3e80]:
+          - button "选择 stealth/ox-alpha stealth/ox-alpha stealth/ox-alpha 已检测 · 强度可调" [ref=f3e81] [cursor=pointer]:
+            - checkbox "选择 stealth/ox-alpha" [checked] [ref=f3e82]
+            - generic [ref=f3e83]:
+              - generic [ref=f3e84]: stealth/ox-alpha
+              - generic [ref=f3e85]: stealth/ox-alpha
+              - generic [ref=f3e86]: 已检测 · 强度可调
+          - button "选择 Grok 4.6 Grok 4.6 x-ai/grok-4.6 Runtime · 强度可调" [ref=f3e89] [cursor=pointer]:
+            - checkbox "选择 Grok 4.6" [checked] [ref=f3e90]
+            - generic [ref=f3e91]:
+              - generic [ref=f3e92]: Grok 4.6
+              - generic [ref=f3e93]: x-ai/grok-4.6
+              - generic [ref=f3e94]: Runtime · 强度可调
+          - button "选择 Claude Sonnet 4.5 Claude Sonnet 4.5 anthropic/claude-sonnet-4.5 手动覆盖 · 3 个档位" [ref=f3e97] [cursor=pointer]:
+            - checkbox "选择 Claude Sonnet 4.5" [checked] [ref=f3e98]
+            - generic [ref=f3e99]:
+              - generic [ref=f3e100]: Claude Sonnet 4.5
+              - generic [ref=f3e101]: anthropic/claude-sonnet-4.5
+              - generic [ref=f3e102]: 手动覆盖 · 3 个档位
+          - button "选择 Legacy Chat Legacy Chat vendor/legacy-chat 未检测到思考能力" [ref=f3e105] [cursor=pointer]:
+            - checkbox "选择 Legacy Chat" [checked] [ref=f3e106]
+            - generic [ref=f3e107]:
+              - generic [ref=f3e108]: Legacy Chat
+              - generic [ref=f3e109]: vendor/legacy-chat
+              - generic [ref=f3e110]: 未检测到思考能力
+      - generic [ref=f3e113]:
+        - generic [ref=f3e114]:
+          - generic [ref=f3e128]:
+            - heading "stealth/ox-alpha" [level=3] [ref=f3e129]
+            - paragraph [ref=f3e130]: openrouter · stealth/ox-alpha
+          - generic [ref=f3e131]: 接口已检测
+        - generic [ref=f3e133]:
+          - generic [ref=f3e134]:
+            - heading "配置来源" [level=4] [ref=f3e135]
+            - generic [ref=f3e136]: 手动配置始终优先
+          - generic [ref=f3e137]:
+            - button "自动识别" [ref=f3e138] [cursor=pointer]
+            - button "手动覆盖" [ref=f3e139] [cursor=pointer]
+          - generic [ref=f3e140]:
+            - generic [ref=f3e141]:
+              - generic [ref=f3e147]:
+                - strong [ref=f3e148]: OpenRouter 声明该模型支持可调思考
+                - paragraph [ref=f3e149]: 能力由模型接口返回，OpenCode 已生成可用档位。无需额外配置。
+              - generic [ref=f3e150]:
+                - generic [ref=f3e151]: 支持参数
+                - generic [ref=f3e152]: reasoning
+                - generic [ref=f3e153]: reasoning_effort
+                - generic [ref=f3e154]: include_reasoning
+            - generic [ref=f3e155]:
+              - generic [ref=f3e156]:
+                - text: 控制方式
+                - strong [ref=f3e157]: 思考强度
+              - generic [ref=f3e158]:
+                - text: 参数协议
+                - strong [ref=f3e159]: OpenRouter
+            - generic [ref=f3e160]: 聊天界面将显示
+            - generic [ref=f3e161]:
+              - button "低" [ref=f3e162] [cursor=pointer]
+              - button "高" [ref=f3e163] [cursor=pointer]
+            - generic [ref=f3e164]: 自动识别不会把运行时结果保存成手动覆盖；刷新模型后会继续跟随接口能力变化。
+    - contentinfo [ref=f3e168]:
+      - generic [ref=f3e169]: 配置只作用于当前模型
+      - generic [ref=f3e174]:
+        - button "测试配置" [ref=f3e175] [cursor=pointer]
+        - button "保存模型配置" [ref=f3e179] [cursor=pointer]
+  - status:
+    - generic: 模型能力配置已保存

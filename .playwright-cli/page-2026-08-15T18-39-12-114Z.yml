@@ -1,0 +1,48 @@
+- generic [ref=f3e5]:
+  - generic:
+    - generic:
+      - generic:
+        - dialog:
+          - button "返回设备详情" [ref=f3e62]
+          - button "历史会话" [ref=f3e63]
+          - group:
+            - generic [ref=f3e64]: m_a115573a0e686b3c81e0f9641418aff4
+            - generic [ref=f3e65]: agent_9e20d529
+            - generic [ref=f3e66]: 元气骑士
+            - generic [ref=f3e67]: ...V3HtmxSJPnR7
+          - button "子代理任务" [active] [ref=f3e68]
+          - button "工作目录文件" [ref=f3e69]
+          - button "新建对话" [ref=f3e70]
+          - generic:
+            - group:
+              - textbox "重新发送" [disabled] [ref=f3e72]
+              - group "执行计划 Build 执行中 核对本机 Frida/Node/ADB 环境与 bridge API 生成针对该 APK 的只读 Hook 工程 安装依赖并编译验证 Hook 脚本 整理设备运行命令和已知限制":
+                - button "已完成思考" [ref=f3e73]
+                - textbox [disabled] [ref=f3e75]
+                - button "已调用 4 个工具 bash、bash、webfetch、webfetch" [ref=f3e76]
+                - textbox [disabled] [ref=f3e78]
+              - textbox "重新发送" [disabled] [ref=f3e80]
+              - group "执行计划 Build 执行中 核对本机 Frida/Node/ADB 环境与 bridge API 生成针对该 APK 的只读 Hook 工程 安装依赖并编译验证 Hook 脚本 整理设备运行命令和已知限制":
+                - button "已完成思考" [ref=f3e81]
+                - textbox [disabled] [ref=f3e83]
+                - button "已调用 2 个工具 bash、bash" [ref=f3e84]
+                - textbox [disabled] [ref=f3e86]
+              - textbox "重新发送" [disabled] [ref=f3e88]
+              - generic:
+                - button "已完成思考" [ref=f3e89]
+                - textbox [disabled] [ref=f3e91]
+          - group:
+            - button "附件" [ref=f3e92]
+            - generic [ref=f3e93]: Build
+            - button "目标" [ref=f3e94]
+            - button "默认模型" [ref=f3e95]
+            - generic [ref=f3e96]: 请选择模型后测试
+            - button "需要审批" [ref=f3e97]
+            - button "项目提示词" [ref=f3e98]
+            - button "项目记忆 项目记忆" [ref=f3e99]
+            - button "计划历史 1" [ref=f3e100]
+            - button "MCP工具" [ref=f3e101]
+          - textbox "输入消息" [ref=f3e103]
+          - button "上下文用量 查看上下文用量 22 22%" [ref=f3e104]
+          - button "发送" [ref=f3e105]
+          - generic [ref=f3e106]: 当前会话 ses_005fb620affelKV3HtmxSJPnR7

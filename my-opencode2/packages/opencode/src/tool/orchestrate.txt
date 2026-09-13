@@ -1,0 +1,7 @@
+Create and launch a dependency-aware subagent plan.
+
+Use this for work that benefits from two or more independent exploration, planning, review, research, or test branches. The primary Agent retains all edits, installation, deployment, and final decisions.
+
+Each node has a stable id, a semantic role, a detailed read-only prompt, optional dependency ids, priority from 0 to 100, an optional future-round model, an optional timeout, and a critical flag. Submit no more than 20 nodes. At most 5 nodes run concurrently.
+
+The plan is durable. Node results, status changes, user controls, and recovery status are recorded in the task graph. Continue the primary task after submitting it; completed background results are inserted into the parent task context according to the result wake policy.

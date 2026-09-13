@@ -1,0 +1,10 @@
+Manage background jobs started by the shell or task tools.
+
+Actions:
+- `list`: show jobs and their current states
+- `status`: show one job's state and latest output
+- `logs`: show one job's latest captured output
+- `wait`: make a short wait for one job to finish (1s by default, 5s maximum)
+- `stop`: stop one job and its managed process
+
+Do not repeatedly poll a running job or use it as a long foreground wait. Continue independent work and rely on the completion message added to the conversation.

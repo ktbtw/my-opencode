@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模型能力配置 · 输入方式编辑预览</title>
+<style>
+  :root {
+    --bg: #F2F6FC;
+    --surface: #FFFFFF;
+    --surface-elevated: #FAFCFF;
+    --border: #D0DDEF;
+    --border-light: #E8EFF8;
+    --primary: #2563EB;
+    --primary-hover: #1D4ED8;
+    --primary-light: #EFF6FF;
+    --primary-muted: #BFD7FF;
+    --text-primary: #0F1729;
+    --text-secondary: #4A5D7A;
+    --text-muted: #8FA3BF;
+    --warning: #D97706;
+    --warning-light: #FEF3C7;
+    --success: #16A34A;
+    --input-bg: #F8FAFD;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: var(--text-primary);
+  }
+  .dialog {
+    width: 1000px;
+    height: 720px;
+    background: var(--surface);
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(15, 23, 41, 0.16);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* ===== dialog header ===== */
+  .dialog-header {
+    min-height: 62px;
+    padding: 0 10px 0 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .dialog-title { font-size: 16px; font-weight: 700; }
+  .dialog-sub { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+  .icon-btn {
+    width: 32px; height: 32px; border: none; background: none; border-radius: 8px;
+    cursor: pointer; color: var(--text-secondary);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { background: var(--input-bg); }
+  .icon-btn svg { width: 16px; height: 16px; }
+  .spacer { flex: 1; }
+  /* ===== body ===== */
+  .dialog-body { flex: 1; display: flex; min-height: 0; }
+  .model-list {
+    width: 360px;
+    border-right: 1px solid var(--border);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--surface-elevated);
+  }
+  .model-item {
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    background: var(--surface);
+  }
+  .model-item.active { border-color: var(--primary-muted); background: var(--primary-light); }
+  .model-item .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+  .model-item .m-name { font-size: 12px; font-weight: 700; }
+  .model-item .m-id { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .model-item .m-check { margin-left: auto; color: var(--primary); }
+  .model-item .m-check svg { width: 14px; height: 14px; display: block; }
+  /* ===== editor pane ===== */
+  .editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .editor-header {
+    min-height: 70px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    align-items: center;
+    gap: 11px;
+  }
+  .editor-header .avatar {
+    width: 38px; height: 38px; border-radius: 8px;
+    background: var(--primary-light); color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .editor-header .avatar svg { width: 21px; height: 21px; }
+  .editor-header .m-title { font-size: 15px; font-weight: 700; }
+  .editor-header .m-sub { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+  .pill {
+    max-width: 130px;
+    padding: 5px 8px;
+    border-radius: 999px;
+    background: var(--warning-light);
+    border: 1px solid #FED7AA;
+    color: var(--warning);
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warning); }
+  .editor-scroll { flex: 1; overflow-y: auto; padding: 18px 20px 24px; }
+  .section-title {
+    display: flex; align-items: baseline; justify-content: space-between;
+    font-size: 12px; font-weight: 700;
+  }
+  .section-title .trailing { font-size: 10px; color: var(--text-muted); font-weight: 400; }
+  /* ===== NEW: modality chips ===== */
+  .modality-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 13px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    transition: all .12s ease;
+  }
+  .chip:hover:not(.locked) { border-color: var(--primary-muted); }
+  .chip .check {
+    width: 14px; height: 14px; border-radius: 4px;
+    border: 1.5px solid var(--text-muted);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .12s ease;
+  }
+  .chip .check svg { width: 10px; height: 10px; opacity: 0; transition: opacity .12s ease; }
+  .chip.on {
+    background: var(--primary-light);
+    border-color: var(--primary-muted);
+    color: var(--primary);
+  }
+  .chip.on .check { background: var(--primary); border-color: var(--primary); }
+  .chip.on .check svg { opacity: 1; }
+  .chip.locked {
+    background: var(--input-bg);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+  .chip.locked .check { background: var(--text-muted); border-color: var(--text-muted); }
+  .chip.locked .check svg { opacity: 1; }
+  /* live json preview */
+  .json-preview {
+    margin-top: 8px;
+    background: #0F1729;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #C4D5F0;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .json-preview .k { color: #7DD3FC; }
+  .json-preview .s { color: #86EFAC; }
+  .json-preview-label {
+    margin-top: 14px;
+    font-size: 10px;
+    color: var(--text-muted);
+    display: flex; align-items: center; gap: 5px;
+  }
+  /* ===== existing thinking section (context) ===== */
+  .divider { height: 1px; background: var(--border-light); margin: 20px 0; }
+  .segment {
+    height: 43px; padding: 3px; margin-top: 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    display: flex; gap: 3px;
+  }
+  .segment .seg {
+    flex: 1; border-radius: 9px; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: var(--text-secondary); cursor: pointer;
+  }
+  .segment .seg.on { background: var(--surface); color: var(--primary); box-shadow: 0 1px 3px rgba(15,23,41,.08); }
+  .switch-row { display: flex; align-items: center; margin-top: 14px; }
+  .switch-row .t { font-size: 13px; font-weight: 700; }
+  .switch-row .d { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+  .switch {
+    width: 38px; height: 22px; border-radius: 999px; background: var(--primary);
+    position: relative; cursor: pointer; flex-shrink: 0;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; right: 2px;
+    width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  }
+  .form-row { display: flex; gap: 12px; margin-top: 14px; }
+  .form-field { flex: 1; }
+  .form-field label { font-size: 11px; font-weight: 700; display: block; margin-bottom: 6px; }
+  .select {
+    border: 1px solid var(--border); border-radius: 9px; background: var(--input-bg);
+    padding: 9px 11px; font-size: 12px; color: var(--text-primary);
+    display: flex; justify-content: space-between; align-items: center; cursor: pointer;
+  }
+  .select svg { width: 10px; height: 10px; color: var(--text-muted); }
+  .levels { margin-top: 10px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .level {
+    display: flex; align-items: center; gap: 7px; padding: 6px 7px;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .level:last-child { border-bottom: none; }
+  .level input[type="text"] {
+    flex: 1; border: none; outline: none; background: transparent;
+    font-size: 11px; padding: 6px 4px; color: var(--text-primary);
+  }
+  .level .del { color: var(--text-muted); cursor: pointer; padding: 4px; display: flex; }
+  .level .del svg { width: 15px; height: 15px; }
+  .level .del:hover { color: var(--warning); }
+  .level-header { display: flex; align-items: center; margin-top: 18px; }
+  .level-header .t { font-size: 12px; font-weight: 700; }
+  .link-btn {
+    border: none; background: none; color: var(--primary);
+    font-size: 12px; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .link-btn svg { width: 13px; height: 13px; }
+  .advanced {
+    margin-top: 14px; border-top: 1px solid var(--border-light);
+    padding-top: 12px; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .advanced .sub { font-size: 10px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+  .validate-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .outline-btn {
+    border: 1px solid var(--border); background: var(--surface); border-radius: 9px;
+    padding: 8px 13px; font-size: 12px; font-weight: 700; color: var(--text-secondary); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .outline-btn svg { width: 14px; height: 14px; }
+  /* footer */
+  .dialog-footer {
+    min-height: 66px;
+    padding: 12px 14px;
+    background: var(--surface-elevated);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .footer-note { font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+  .footer-note svg { width: 14px; height: 14px; color: var(--success); }
+  .btn {
+    border: none; border-radius: 9px; padding: 10px 18px;
+    font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  .btn.primary { background: var(--primary); color: #fff; }
+  .btn.primary:hover { background: var(--primary-hover); }
+  .btn.outlined { background: var(--surface); border: 1px solid var(--border); color: var(--text-secondary); }
+  .preview-badge {
+    position: fixed; top: 12px; left: 12px;
+    background: #0F1729; color: #C4D5F0; font-size: 11px;
+    padding: 6px 10px; border-radius: 8px; opacity: .85;
+  }
+</style>
+</head>
+<body>
+<div class="preview-badge">UI 预览原型 · 新增「输入方式」区块（手绘 SVG 图标）</div>
+
+<div class="dialog">
+  <!-- header -->
+  <div class="dialog-header">
+    <div>
+      <div class="dialog-title">管理模型 · kimi</div>
+      <div class="dialog-sub">https://api.moonshot.cn/v1</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" title="搜索模型">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20 20"/></svg>
+    </button>
+    <button class="icon-btn" title="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5"/></svg>
+    </button>
+  </div>
+
+  <div class="dialog-body">
+    <!-- left: model list -->
+    <div class="model-list">
+      <div class="model-item active">
+        <div class="dot"></div>
+        <div><div class="m-name">kimi-k3</div><div class="m-id">kimi-k3</div></div>
+        <div class="m-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></div>
+      </div>
+      <div class="model-item">
+        <div class="dot"></div>
+        <div><div class="m-name">kimi-k2.5</div><div class="m-id">kimi-k2.5</div></div>
+        <div class="m-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></div>
+      </div>
+      <div class="model-item">
+        <div class="dot"></div>
+        <div><div class="m-name">kimi-k2.7-code</div><div class="m-id">kimi-k2.7-code</div></div>
+        <div class="m-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></div>
+      </div>
+    </div>
+
+    <!-- right: capability editor -->
+    <div class="editor">
+      <div class="editor-header">
+        <div class="avatar">
+          <svg viewBox="0 0 22 22" fill="none">
+            <g stroke="currentColor" stroke-opacity="0.35" stroke-width="2.1" stroke-linecap="round">
+              <path d="M11 11 5.2 5.5M11 11l5.8-4.6M11 11l-5.3 5.7M11 11l6.1 5"/>
+            </g>
+            <rect x="6.65" y="6.65" width="8.7" height="8.7" rx="2.6" fill="currentColor"/>
+            <circle cx="11" cy="11" r="2.1" fill="#fff"/>
+            <g fill="currentColor"><circle cx="5.2" cy="5.5" r="3.1"/><circle cx="16.8" cy="6.4" r="3.1"/><circle cx="5.7" cy="16.7" r="3.1"/><circle cx="17.1" cy="16" r="3.1"/></g>
+            <g fill="#fff"><circle cx="5.2" cy="5.5" r="1.15"/><circle cx="16.8" cy="6.4" r="1.15"/><circle cx="5.7" cy="16.7" r="1.15"/><circle cx="17.1" cy="16" r="1.15"/></g>
+          </svg>
+        </div>
+        <div>
+          <div class="m-title">kimi-k3</div>
+          <div class="m-sub">kimi-k3</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="pill">手动覆盖</div>
+      </div>
+
+      <div class="editor-scroll">
+        <!-- ============ NEW SECTION: 输入方式 ============ -->
+        <div class="section-title">
+          <span>输入方式</span>
+          <span class="trailing">控制可发送给模型的内容类型</span>
+        </div>
+        <div class="modality-hint">勾选后聊天中对应类型的附件才会发送给该模型；未勾选图片时，opencode 会拦截图片并提示模型不支持。</div>
+        <div class="chip-row" id="chipRow">
+          <span class="chip locked" title="对话模型必须开启文本输入"><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></span>文本</span>
+          <span class="chip on" data-v="image"><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></span>图片</span>
+          <span class="chip on" data-v="video"><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></span>视频</span>
+          <span class="chip" data-v="audio"><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></span>音频</span>
+          <span class="chip" data-v="pdf"><span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19 7"/></svg></span>PDF</span>
+        </div>
+        <div class="json-preview-label">↓ 将写入 opencode.json 的 modalities 字段（实时联动演示）</div>
+        <div class="json-preview" id="jsonPreview"></div>
+
+        <div class="divider"></div>
+
+        <!-- ============ 原有思考配置（上下文参照） ============ -->
+        <div class="section-title">
+          <span>配置来源</span>
+          <span class="trailing">手动配置始终优先</span>
+        </div>
+        <div class="segment">
+          <div class="seg">自动识别</div>
+          <div class="seg on">手动覆盖</div>
+        </div>
+
+        <div class="switch-row">
+          <div style="flex:1">
+            <div class="t">支持思考控制</div>
+            <div class="d">关闭后聊天界面不显示思考强度</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-field">
+            <label>控制方式</label>
+            <div class="select">思考强度<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5 12 15 17.5 9.5"/></svg></div>
+          </div>
+          <div class="form-field">
+            <label>参数协议</label>
+            <div class="select">OpenAI 兼容 · reasoningEffort<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5 12 15 17.5 9.5"/></svg></div>
+          </div>
+        </div>
+
+        <div class="level-header">
+          <span class="t">可用档位</span>
+          <div class="spacer"></div>
+          <button class="link-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg>添加档位</button>
+        </div>
+        <div class="levels">
+          <div class="level"><input type="checkbox" checked><input type="text" value="low"><input type="text" value="low"><span class="del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V4.8c0-.4.3-.8.8-.8h3.4c.5 0 .8.4.8.8V7M6.5 7l.8 12.2c.05.5.4.8.9.8h7.6c.5 0 .85-.3.9-.8L17.5 7"/><path d="M10 11v5M14 11v5"/></svg></span></div>
+          <div class="level"><input type="checkbox" checked><input type="text" value="high"><input type="text" value="high"><span class="del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V4.8c0-.4.3-.8.8-.8h3.4c.5 0 .8.4.8.8V7M6.5 7l.8 12.2c.05.5.4.8.9.8h7.6c.5 0 .85-.3.9-.8L17.5 7"/><path d="M10 11v5M14 11v5"/></svg></span></div>
+          <div class="level"><input type="checkbox" checked><input type="text" value="max"><input type="text" value="max"><span class="del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V4.8c0-.4.3-.8.8-.8h3.4c.5 0 .8.4.8.8V7M6.5 7l.8 12.2c.05.5.4.8.9.8h7.6c.5 0 .85-.3.9-.8L17.5 7"/><path d="M10 11v5M14 11v5"/></svg></span></div>
+        </div>
+
+        <div class="advanced">
+          ▾ 高级参数 <span class="sub">仅编辑当前模型 variants</span>
+          <span class="caret"></span>
+        </div>
+
+        <div class="validate-row">
+          <button class="outline-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5h4M10.8 3.5v4.6L5.6 18.6c-.4.8.1 1.9 1 1.9h10.8c.9 0 1.4-1.1 1-1.9L13.2 8.1V3.5"/><path d="M8 14.5h8"/></svg>校验配置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- footer -->
+  <div class="dialog-footer">
+    <div class="footer-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 18.5 6v5.1c0 4.3-2.8 7.6-6.5 9.7-3.7-2.1-6.5-5.4-6.5-9.7V6L12 3.2z"/></svg>能力配置只作用于对应模型</div>
+    <div class="spacer"></div>
+    <button class="btn outlined">取消</button>
+    <button class="btn primary">保存</button>
+  </div>
+</div>
+
+<script>
+  const preview = document.getElementById('jsonPreview');
+  function renderJson() {
+    const on = [...document.querySelectorAll('#chipRow .chip.on, #chipRow .chip.locked')]
+      .map(c => c.dataset.v || 'text');
+    const lines = on.map(v => `    <span class="s">"${v}"</span>`).join(',\n');
+    preview.innerHTML =
+      `<span class="k">"modalities"</span>: {\n` +
+      `  <span class="k">"input"</span>: [\n${lines}\n  ],\n` +
+      `  <span class="k">"output"</span>: [ <span class="s">"text"</span> ]\n` +
+      `}`;
+  }
+  document.querySelectorAll('#chipRow .chip:not(.locked)').forEach(chip => {
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('on');
+      renderJson();
+    });
+  });
+  renderJson();
+</script>
+</body>
+</html>

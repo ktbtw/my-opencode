@@ -1,0 +1,6 @@
+{
+  "upstream": "https://github.com/frida/frida.git",
+  "tag": "17.16.4",
+  "commit": "c9867320e284f790f0db8a327c2e4035eb790fe4",
+  "android_ndk": "29.0.13846066-beta3"
+}

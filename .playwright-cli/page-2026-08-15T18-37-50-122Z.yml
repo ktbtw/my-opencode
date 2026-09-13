@@ -1,0 +1,54 @@
+- generic [ref=f3e5] [cursor=pointer]:
+  - generic:
+    - generic:
+      - generic:
+        - dialog:
+          - button "返回设备详情" [ref=f3e6]
+          - button "历史会话" [ref=f3e7]
+          - group:
+            - generic [ref=f3e8]: m_a115573a0e686b3c81e0f9641418aff4
+            - generic [ref=f3e9]: agent_9e20d529
+            - generic [ref=f3e10]: 元气骑士
+            - generic [ref=f3e11]: ...V3HtmxSJPnR7
+          - button "隐藏子代理任务" [active] [ref=f3e54]
+          - button "工作目录文件" [ref=f3e13]
+          - button "新建对话" [ref=f3e14]
+          - generic:
+            - group:
+              - textbox "重新发送" [disabled] [ref=f3e16]
+              - group "执行计划 Build 执行中 核对本机 Frida/Node/ADB 环境与 bridge API 生成针对该 APK 的只读 Hook 工程 安装依赖并编译验证 Hook 脚本 整理设备运行命令和已知限制":
+                - button "已完成思考" [ref=f3e17]
+                - textbox [disabled] [ref=f3e19]
+                - button "已调用 4 个工具 bash、bash、webfetch、webfetch" [ref=f3e20]
+                - textbox [disabled] [ref=f3e22]
+              - textbox "重新发送" [disabled] [ref=f3e24]
+              - group "执行计划 Build 执行中 核对本机 Frida/Node/ADB 环境与 bridge API 生成针对该 APK 的只读 Hook 工程 安装依赖并编译验证 Hook 脚本 整理设备运行命令和已知限制":
+                - button "已完成思考" [ref=f3e25]
+                - textbox [disabled] [ref=f3e27]
+                - button "已调用 2 个工具 bash、bash" [ref=f3e28]
+                - textbox [disabled] [ref=f3e30]
+              - textbox "重新发送" [disabled] [ref=f3e32]
+              - generic:
+                - button "已完成思考" [ref=f3e33]
+                - textbox [disabled] [ref=f3e35]
+                - button "已调用 apply_patch apply_patch" [ref=f3e36]
+                - textbox [disabled] [ref=f3e38]
+          - group:
+            - button "附件" [ref=f3e39]
+            - generic [ref=f3e40]: Build
+            - button "目标" [ref=f3e41]
+            - button "默认模型" [ref=f3e42]
+            - generic [ref=f3e43]: 请选择模型后测试
+            - button "需要审批" [ref=f3e44]
+            - button "项目提示词" [ref=f3e45]
+            - button "项目记忆 项目记忆" [ref=f3e46]
+            - button "计划历史 1" [ref=f3e47]
+            - button "MCP工具" [ref=f3e48]
+          - textbox "输入消息" [ref=f3e50]
+          - button "上下文用量 查看上下文用量 22 22%" [ref=f3e51]
+          - generic [ref=f3e53]: 当前会话 ses_005fb620affelKV3HtmxSJPnR7
+          - button "发送" [ref=f3e52]
+          - generic [ref=f3e56]: 子代理任务
+          - button "关闭子代理任务" [ref=f3e57]
+          - group:
+            - generic [ref=f3e58]: 当前任务还没有子代理

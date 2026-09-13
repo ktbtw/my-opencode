@@ -48,4 +48,10 @@ class AppColors {
   // 输入框
   static const Color inputBackground = Color(0xFFF8FAFD);
   static const Color inputFocused = Color(0xFF2563EB);
+
+  // 代码底画在容器上，不要写进 TextStyle.backgroundColor，否则会盖住选区
+  static const Color codeBackground = Color(0xFFF4F6F9);
+  static const Color codeInlineBackground = Color(0xFFE8EDF3);
+  static const Color codeText = Color(0xFF1E293B);
+  static const Color textSelection = Color(0x993B82F6);
 }

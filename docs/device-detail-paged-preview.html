@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设备详情 · 整页/分页切换预览</title>
+<style>
+  :root {
+    --bg: #F2F6FC;
+    --surface: #FFFFFF;
+    --surface-elevated: #FAFCFF;
+    --border: #D0DDEF;
+    --border-light: #E8EFF8;
+    --primary: #2563EB;
+    --primary-hover: #1D4ED8;
+    --primary-light: #EFF6FF;
+    --primary-muted: #BFD7FF;
+    --text-primary: #0F1729;
+    --text-secondary: #4A5D7A;
+    --text-muted: #8FA3BF;
+    --online: #16A34A; --online-bg: #DCFCE7;
+    --processing: #2563EB; --processing-bg: #EFF6FF;
+    --warning: #D97706; --warning-bg: #FEF3C7;
+    --error: #DC2626; --error-bg: #FEE2E2;
+    --offline: #94A3B8; --offline-bg: #F1F5F9;
+    --input-bg: #F8FAFD;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    padding: 28px;
+    min-width: 1780px;
+  }
+  .page-tip {
+    position: fixed; top: 12px; left: 12px; z-index: 9;
+    background: #0F1729; color: #C4D5F0; font-size: 11px;
+    padding: 6px 10px; border-radius: 8px; opacity: .88;
+  }
+  .frames { display: flex; gap: 28px; align-items: flex-start; justify-content: center; }
+  .frame-wrap .frame-label {
+    font-size: 12px; font-weight: 700; color: var(--text-secondary);
+    margin-bottom: 10px; text-align: center;
+  }
+  .frame {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: 0 18px 48px rgba(15, 23, 41, 0.12);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .frame.pc { width: 1280px; height: 800px; }
+  .frame.phone { width: 390px; height: 800px; border-radius: 28px; }
+  /* ===== top bar ===== */
+  .topbar {
+    height: 56px; flex-shrink: 0;
+    border-bottom: 1px solid var(--border-light);
+    display: flex; align-items: center; gap: 8px;
+    padding: 0 14px;
+  }
+  .topbar .t { font-size: 15px; font-weight: 700; }
+  .icon-btn {
+    width: 34px; height: 34px; border: none; background: none; border-radius: 9px;
+    color: var(--text-secondary); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { background: var(--input-bg); }
+  .icon-btn svg { width: 17px; height: 17px; }
+  .icon-btn.mode { color: var(--primary); background: var(--primary-light); border: 1px solid var(--primary-muted); }
+  .bell { position: relative; }
+  .bell .badge {
+    position: absolute; top: 4px; right: 3px;
+    min-width: 14px; height: 14px; padding: 0 3px;
+    background: var(--error); border-radius: 999px;
+    color: #fff; font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .spacer { flex: 1; }
+  /* ===== body ===== */
+  .frame-body { flex: 1; overflow-y: auto; min-height: 0; }
+  /* ===== segmented control ===== */
+  .seg-wrap { padding: 12px 16px 0; }
+  .seg-bar {
+    display: flex; gap: 3px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 3px;
+  }
+  .seg {
+    flex: 1; border: none; background: none; cursor: pointer;
+    height: 38px; border-radius: 9px;
+    font-size: 12px; font-weight: 700; color: var(--text-secondary);
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    font-family: inherit;
+  }
+  .seg.on { background: var(--surface); color: var(--primary); box-shadow: 0 1px 3px rgba(15,23,41,.08); }
+  .seg .count {
+    font-size: 9px; font-weight: 700;
+    background: var(--offline-bg); color: var(--text-muted);
+    border-radius: 999px; padding: 1px 6px;
+  }
+  .seg.on .count { background: var(--primary-light); color: var(--primary); }
+  .seg .count.busy { background: var(--processing-bg); color: var(--processing); }
+  /* ===== status pill ===== */
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 8px; border-radius: 7px;
+    font-size: 12px; font-weight: 500;
+  }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .pill.online { color: var(--online); background: var(--online-bg); }
+  .pill.busy { color: var(--processing); background: var(--processing-bg); }
+  .pill.off { color: var(--offline); background: var(--offline-bg); }
+  .pill.err { color: var(--error); background: var(--error-bg); }
+  /* ===== agent card ===== */
+  .agent-grid { display: grid; gap: 12px; padding: 14px 16px 20px; }
+  .frame.pc .agent-grid { grid-template-columns: 1fr 1fr; }
+  .frame.phone .agent-grid { grid-template-columns: 1fr; }
+  .agent-card {
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    background: var(--surface);
+    padding: 13px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .agent-card.dim { opacity: .72; }
+  .agent-head { display: flex; align-items: center; gap: 10px; }
+  .agent-glyph {
+    width: 34px; height: 34px; border-radius: 8px;
+    background: var(--primary-light); color: var(--primary);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .agent-glyph svg { width: 19px; height: 19px; }
+  .agent-name { font-size: 13px; font-weight: 700; }
+  .agent-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+  .task-block {
+    background: var(--input-bg); border-radius: 8px; padding: 8px 10px;
+  }
+  .task-block .lb { font-size: 9px; color: var(--text-muted); }
+  .task-block .vl { font-size: 10px; font-family: "SF Mono", Menlo, monospace; color: var(--text-secondary); margin-top: 2px; }
+  .agent-foot {
+    border-top: 1px solid var(--border-light);
+    padding-top: 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .enable { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); }
+  .switch {
+    width: 34px; height: 20px; border-radius: 999px; background: var(--primary);
+    position: relative; cursor: pointer; flex-shrink: 0;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; right: 2px;
+    width: 16px; height: 16px; border-radius: 50%; background: #fff;
+  }
+  .switch.off { background: #CBD5E1; }
+  .switch.off::after { left: 2px; right: auto; }
+  .btn {
+    border: none; border-radius: 8px; padding: 7px 14px;
+    font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .btn.primary { background: var(--primary); color: #fff; }
+  .btn.plain { background: none; color: var(--text-secondary); padding: 7px 8px; }
+  .btn.plain svg { width: 15px; height: 15px; display: block; }
+  /* ===== device page ===== */
+  .device-page { padding: 14px 16px 20px; }
+  .frame.pc .device-page-inner { max-width: 720px; margin: 0 auto; }
+  .device-card {
+    border: 1px solid var(--border-light); border-radius: 12px;
+    background: var(--surface); padding: 16px;
+  }
+  .device-name-row { display: flex; align-items: center; gap: 10px; }
+  .device-name { font-size: 16px; font-weight: 700; }
+  .device-meta { display: flex; flex-wrap: wrap; gap: 14px 26px; margin-top: 14px; }
+  .meta .lb { font-size: 10px; color: var(--text-muted); }
+  .meta .vl { font-size: 12px; font-weight: 700; margin-top: 3px; }
+  .entries { display: grid; gap: 10px; margin-top: 14px; }
+  .frame.pc .entries { grid-template-columns: 1fr 1fr 1fr; }
+  .frame.phone .entries { grid-template-columns: 1fr 1fr; }
+  .entry {
+    border: 1px solid var(--border-light); border-radius: 10px; background: var(--surface);
+    padding: 11px 12px; cursor: pointer; text-align: left; font-family: inherit;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 700; color: var(--text-primary);
+  }
+  .entry:hover { border-color: var(--primary-muted); background: var(--primary-light); }
+  .entry svg { width: 15px; height: 15px; color: var(--primary); flex-shrink: 0; }
+  .sec-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin: 16px 0 0; }
+  /* ===== full(整页) mode ===== */
+  .full-pc { display: flex; height: 100%; }
+  .full-side {
+    width: 320px; flex-shrink: 0; border-right: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+  }
+  .full-main { flex: 1; overflow-y: auto; }
+  .full-main .agent-grid { grid-template-columns: 1fr; }
+  .frame.phone .full-body .device-card { margin: 14px 16px 0; }
+  .panel-title { display: flex; align-items: center; gap: 8px; padding: 16px 16px 0; }
+  .panel-title .t { font-size: 14px; font-weight: 700; }
+  /* ===== empty state ===== */
+  .empty {
+    padding: 60px 0; text-align: center; color: var(--text-muted);
+  }
+  .empty .circle {
+    width: 56px; height: 56px; margin: 0 auto 12px;
+    border: 2px dashed var(--border); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted);
+  }
+  .empty .circle svg { width: 24px; height: 24px; }
+  .empty .txt { font-size: 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page-tip">预览原型 · 点顶栏右侧按钮切换 整页/分页；点分段条切换分页</div>
+
+<div class="frames" id="frames"></div>
+
+<div id="icon-glyphs" hidden>
+  <svg data-icon="agent" viewBox="0 0 22 22" fill="none">
+    <g stroke="currentColor" stroke-opacity="0.35" stroke-width="2.1" stroke-linecap="round"><path d="M11 11 5.2 5.5M11 11l5.8-4.6M11 11l-5.3 5.7M11 11l6.1 5"/></g>
+    <rect x="6.65" y="6.65" width="8.7" height="8.7" rx="2.6" fill="currentColor"/>
+    <circle cx="11" cy="11" r="2.1" fill="#fff"/>
+    <g fill="currentColor"><circle cx="5.2" cy="5.5" r="3.1"/><circle cx="16.8" cy="6.4" r="3.1"/><circle cx="5.7" cy="16.7" r="3.1"/><circle cx="17.1" cy="16" r="3.1"/></g>
+    <g fill="#fff"><circle cx="5.2" cy="5.5" r="1.15"/><circle cx="16.8" cy="6.4" r="1.15"/><circle cx="5.7" cy="16.7" r="1.15"/><circle cx="17.1" cy="16" r="1.15"/></g>
+  </svg>
+  <svg data-icon="back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.5 8.5 12l6.5 6.5"/></svg>
+  <svg data-icon="bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9.2a6 6 0 1 0-12 0c0 5.8-2.4 6.8-2.4 6.8h16.8S18 15 18 9.2"/><path d="M10.2 19.5a2 2 0 0 0 3.6 0"/></svg>
+  <svg data-icon="mode-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M5 9.5h14"/></svg>
+  <svg data-icon="mode-paged" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="6.5" width="12" height="13" rx="2"/><path d="M5.5 16.5v-11a2 2 0 0 1 2-2h11"/></svg>
+  <svg data-icon="dots" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>
+  <svg data-icon="ai" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 8h9M19 8h1M4 16h3M13 16h7"/><circle cx="16" cy="8" r="2.2"/><circle cx="10" cy="16" r="2.2"/></svg>
+  <svg data-icon="mcp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7V3.5M15 7V3.5M7 7h10v4.5a5 5 0 0 1-10 0V7z"/><path d="M12 16.5V21"/></svg>
+  <svg data-icon="skill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2.5 5.5 14H11l-1 7.5L17.5 10H12l1-7.5z"/></svg>
+  <svg data-icon="env" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10.5l3 3-3 3M13 16.5h4"/></svg>
+  <svg data-icon="launcher" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 3 10.5 13.5M21 3l-6.8 18-4.2-6.5L3.5 10.5 21 3z"/></svg>
+  <svg data-icon="memory" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h14v18H6a2 2 0 0 1-2-2zm0 0a2 2 0 0 1 2-2h14"/></svg>
+  <svg data-icon="inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13.5V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7.5"/><path d="M4 13.5h5l1.5 2.5h3L15 13.5h5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4.5z"/></svg>
+</div>
+
+<script>
+  const $ = (s, r) => (r || document).querySelector(s);
+  const icon = (name) => $(`#icon-glyphs [data-icon="${name}"]`).outerHTML;
+
+  const agents = [
+    { name: '造梦西游4', sub: '逆向专家-安卓', status: 'busy', task: 'task_8f3a21c7 · 正在分析登录协议' },
+    { name: 'fastcat', sub: '逆向专家-windows', status: 'busy', task: 'task_21c7b09e · 抓取接口签名' },
+    { name: '网页助手', sub: '通用助手', status: 'idle' },
+    { name: '文档整理', sub: '文档处理', status: 'idle' },
+    { name: '旧采集', sub: '采集任务', status: 'off' },
+  ];
+  const pillText = { busy: '处理中', idle: '空闲', off: '离线' };
+
+  function agentCard(a) {
+    return `
+      <div class="agent-card ${a.status === 'off' ? 'dim' : ''}">
+        <div class="agent-head">
+          <div class="agent-glyph">${icon('agent')}</div>
+          <div style="min-width:0">
+            <div class="agent-name">${a.name}</div>
+            <div class="agent-sub">${a.sub}</div>
+          </div>
+          <div class="spacer"></div>
+          <span class="pill ${a.status}">${pillText[a.status]}</span>
+        </div>
+        ${a.task ? `<div class="task-block"><div class="lb">当前任务</div><div class="vl">${a.task}</div></div>` : ''}
+        <div class="agent-foot">
+          <span class="enable"><span class="switch ${a.status === 'off' ? 'off' : ''}"></span>启用</span>
+          <div class="spacer"></div>
+          <button class="btn primary" ${a.status === 'off' ? 'disabled style="opacity:.45"' : ''}>进入对话</button>
+          <button class="btn plain">${icon('dots')}</button>
+        </div>
+      </div>`;
+  }
+
+  function deviceCardHTML() {
+    const entries = [
+      ['ai', 'AI 配置'], ['mcp', 'MCP 配置'], ['skill', 'Skill 配置'],
+      ['env', '环境变量'], ['launcher', 'Launcher'], ['memory', '项目记忆默认'],
+    ];
+    return `
+      <div class="device-card">
+        <div class="device-name-row">
+          <div class="device-name">我的mac</div>
+          <span class="pill online">在线</span>
+          <div class="spacer"></div>
+          <button class="btn plain" style="font-size:11px;color:var(--text-muted)">改名</button>
+        </div>
+        <div class="device-meta">
+          <div class="meta"><div class="lb">主机名</div><div class="vl">MacBook-Pro.local</div></div>
+          <div class="meta"><div class="lb">Agent 数量</div><div class="vl">2 启动 / 3 总计</div></div>
+          <div class="meta"><div class="lb">最近在线</div><div class="vl">刚刚</div></div>
+        </div>
+        <div class="sec-title">配置入口</div>
+        <div class="entries">
+          ${entries.map(([i, t]) => `<button class="entry">${icon(i)}${t}</button>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function agentPage(list, emptyText) {
+    if (!list.length) {
+      return `<div class="empty"><div class="circle">${icon('inbox')}</div><div class="txt">${emptyText}</div></div>`;
+    }
+    return `<div class="agent-grid">${list.map(agentCard).join('')}</div>`;
+  }
+
+  function pagedBody(frameId) {
+    const busy = agents.filter(a => a.status === 'busy');
+    const idle = agents.filter(a => a.status === 'idle');
+    const off = agents.filter(a => a.status === 'off');
+    const tabs = [
+      ['device', '设备', ''],
+      ['busy', '处理', busy.length],
+      ['idle', '空闲', idle.length],
+      ['off', '离线', off.length],
+    ];
+    return `
+      <div class="seg-wrap">
+        <div class="seg-bar">
+          ${tabs.map(([id, label, n], i) => `
+            <button class="seg ${i === 1 ? 'on' : ''}" data-tab="${id}" onclick="setTab('${frameId}','${id}')">
+              ${label}${n !== '' ? `<span class="count ${id === 'busy' ? 'busy' : ''}">${n}</span>` : ''}
+            </button>`).join('')}
+        </div>
+      </div>
+      <div class="page" data-page="device" hidden><div class="device-page"><div class="device-page-inner">${deviceCardHTML()}</div></div></div>
+      <div class="page" data-page="busy">${agentPage(busy, '当前没有处理中的 Agent')}</div>
+      <div class="page" data-page="idle" hidden>${agentPage(idle, '当前没有空闲的 Agent')}</div>
+      <div class="page" data-page="off" hidden>${agentPage(off, '当前没有离线的 Agent')}</div>`;
+  }
+
+  function fullBody(isPhone) {
+    const list = `<div class="panel-title"><span class="t">Agent 列表</span><span class="pill online">3 个</span></div>
+      <div class="agent-grid">${agents.map(agentCard).join('')}</div>`;
+    if (isPhone) {
+      return `<div class="full-body">${deviceCardHTML()}${list}</div>`;
+    }
+    return `<div class="full-pc">
+      <div class="full-side">${deviceCardHTML()}</div>
+      <div class="full-main">${list}</div>
+    </div>`;
+  }
+
+  function frameHTML(id, cls, label) {
+    return `
+      <div class="frame-wrap">
+        <div class="frame-label">${label}</div>
+        <div class="frame ${cls}" id="${id}">
+          <div class="topbar">
+            <button class="icon-btn">${icon('back')}</button>
+            <span class="t">设备详情</span>
+            <div class="spacer"></div>
+            <button class="icon-btn mode" id="${id}-modebtn" title="切换 整页/分页" onclick="setMode('${id}')">${icon('mode-full')}</button>
+            <button class="icon-btn bell">${icon('bell')}<span class="badge">1</span></button>
+          </div>
+          <div class="frame-body">
+            <div class="mode-paged">${pagedBody(id)}</div>
+            <div class="mode-full" hidden>${fullBody(cls === 'phone')}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  $('#frames').innerHTML =
+    frameHTML('frame-pc', 'pc', 'PC 端（≥900px，分页为双列卡片）') +
+    frameHTML('frame-phone', 'phone', '移动端（<600px，分页为单列卡片）');
+
+  function setTab(frameId, tab) {
+    const frame = $('#' + frameId);
+    frame.querySelectorAll('.seg').forEach(s => s.classList.toggle('on', s.dataset.tab === tab));
+    frame.querySelectorAll('.page').forEach(p => p.hidden = p.dataset.page !== tab);
+  }
+
+  function setMode(frameId) {
+    const frame = $('#' + frameId);
+    const paged = frame.querySelector('.mode-paged');
+    const full = frame.querySelector('.mode-full');
+    const btn = $('#' + frameId + '-modebtn');
+    const toFull = !paged.hidden;
+    paged.hidden = toFull;
+    full.hidden = !toFull;
+    btn.innerHTML = icon(toFull ? 'mode-paged' : 'mode-full');
+    btn.title = toFull ? '当前：整页（点击切回分页）' : '当前：分页（点击切回整页）';
+  }
+</script>
+</body>
+</html>

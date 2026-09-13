@@ -1,0 +1,16 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: C
+    - generic [ref=e8]: 码控
+    - generic [ref=e9]:
+      - generic [ref=e10]: 账号
+      - textbox [ref=e11]
+      - generic [ref=e12]: 密码
+      - textbox [ref=e13]
+      - generic [ref=e14]:
+        - checkbox "记住并自动登录" [checked] [ref=e15]
+        - generic [ref=e16]: 记住并自动登录
+      - generic [ref=e17]:
+        - checkbox "登录成功后开启后台服务自启动" [checked] [ref=e18]
+        - generic [ref=e19]: 登录成功后开启后台服务自启动
+      - button "登录" [ref=e20] [cursor=pointer]

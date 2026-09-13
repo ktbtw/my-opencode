@@ -1,0 +1,42 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - heading "5.x 符号兼容性" [level=1] [ref=e5]
+      - paragraph [ref=e6]: 桌面端保持表格，移动端自动切换为可扫描的行卡片。
+    - generic [ref=e7]: 响应式预览
+  - region [ref=e8]:
+    - generic [ref=e9]:
+      - heading "符号列表" [level=2] [ref=e10]
+      - generic [ref=e11]: 3 项
+    - table [ref=e13]:
+      - rowgroup [ref=e14]:
+        - row [ref=e15]:
+          - columnheader "符号" [ref=e16]
+          - columnheader "5.x 全系列可用？" [ref=e17]
+          - columnheader "说明" [ref=e18]
+      - rowgroup [ref=e19]:
+        - row [ref=e20]:
+          - cell [ref=e21]:
+            - code [ref=e22]: socket_create_kernel_bind/kernel_listen/kernel_accept
+          - cell "是" [ref=e23]
+          - cell "很早就存在的标准导出符号。" [ref=e25]
+        - row [ref=e26]:
+          - cell [ref=e27]:
+            - code [ref=e28]: kernel_sendmsg/kernel_recvmsg/sock_release
+          - cell "是" [ref=e29]
+          - cell "与上一组相同，属于长期稳定接口。" [ref=e31]
+        - row [ref=e32]:
+          - cell [ref=e33]:
+            - code [ref=e34]: sock_alloc_file/kernel_setsockopt
+          - cell "是" [ref=e35]
+          - cell "移动端优先保证代码字段可读，不再被窄列逐字符撑高。" [ref=e37]
+  - region "优化点" [ref=e38]:
+    - generic [ref=e39]:
+      - strong [ref=e40]: 长符号单行展示
+      - text: 代码区域只在自身内部横向滚动。
+    - generic [ref=e41]:
+      - strong [ref=e42]: 移动端行卡片
+      - text: 每行独立，字段标签清晰，避免三列被压扁。
+    - generic [ref=e43]:
+      - strong [ref=e44]: 桌面端不变形
+      - text: 宽屏继续使用传统表格，方便对照阅读。

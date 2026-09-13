@@ -1,11 +1,11 @@
 {
-    "name": "chat_codex_app",
-    "short_name": "chat_codex_app",
+    "name": "码控",
+    "short_name": "码控",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#EFF4FB",
+    "theme_color": "#2563EB",
+    "description": "码控 - 远程设备管理控制台",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -1,0 +1,167 @@
+- generic [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - complementary [ref=f1e3]:
+      - generic [ref=f1e4]: 码控
+      - navigation "主导航" [ref=f1e9]:
+        - button "设备" [ref=f1e10]
+        - button "Agent" [ref=f1e15]
+        - button "资源" [ref=f1e20]
+        - button "设置" [ref=f1e32]
+      - generic [ref=f1e38]:
+        - generic [ref=f1e39]: YM
+        - generic [ref=f1e40]:
+          - strong [ref=f1e41]: 管理员
+          - text: 在线
+    - main [ref=f1e42]:
+      - generic [ref=f1e43]:
+        - generic [ref=f1e44]:
+          - strong [ref=f1e45]: 设备
+          - generic [ref=f1e48]: YUZHIHAO
+        - generic [ref=f1e49]:
+          - button "通知中心" [ref=f1e50] [cursor=pointer]:
+            - generic [ref=f1e54]: "4"
+            - text: 通知中心
+          - button "刷新设备" [ref=f1e55] [cursor=pointer]
+          - button "更多操作" [ref=f1e61] [cursor=pointer]
+      - generic [ref=f1e66]:
+        - generic [ref=f1e67]:
+          - generic [ref=f1e68]:
+            - heading "设备控制台" [level=1] [ref=f1e69]
+            - paragraph [ref=f1e70]: 管理运行状态、Agent 和开发资源
+          - generic [ref=f1e71]: 连接正常
+        - generic [ref=f1e72]:
+          - generic [ref=f1e73]:
+            - text: 在线设备
+            - strong [ref=f1e74]: 8 +2
+          - generic [ref=f1e75]:
+            - text: 运行中 Agent
+            - strong [ref=f1e76]: "12"
+          - generic [ref=f1e77]:
+            - text: 活动任务
+            - strong [ref=f1e78]: "3"
+          - generic [ref=f1e79]:
+            - text: 异常
+            - strong [ref=f1e80]: "1"
+        - generic [ref=f1e81]:
+          - generic [ref=f1e82]:
+            - generic [ref=f1e83]: 设备
+            - generic [ref=f1e84]: 系统
+            - generic [ref=f1e85]: 状态
+            - generic [ref=f1e86]: 最后连接
+          - generic [ref=f1e87]:
+            - generic [ref=f1e92]:
+              - strong [ref=f1e93]: YUZHIHAO
+              - generic [ref=f1e94]: 192.168.10.107
+            - generic [ref=f1e95]: Windows 10
+            - generic [ref=f1e96]: 在线
+            - generic [ref=f1e97]: 刚刚
+            - generic [ref=f1e98]:
+              - button "打开设备" [ref=f1e99] [cursor=pointer]
+              - button "设备菜单" [ref=f1e103] [cursor=pointer]
+          - generic [ref=f1e108]:
+            - generic [ref=f1e113]:
+              - strong [ref=f1e114]: 三闻鱼
+              - generic [ref=f1e115]: m_a115573a0e686b3c81e0
+            - generic [ref=f1e116]: macOS
+            - generic [ref=f1e117]: 在线
+            - generic [ref=f1e118]: 1 分钟前
+            - generic [ref=f1e119]:
+              - button "打开设备" [ref=f1e120] [cursor=pointer]
+              - button "设备菜单" [ref=f1e124] [cursor=pointer]
+          - generic [ref=f1e129]:
+            - generic [ref=f1e134]:
+              - strong [ref=f1e135]: Android 测试机
+              - generic [ref=f1e136]: Pixel 8 Pro
+            - generic [ref=f1e137]: Android 15
+            - generic [ref=f1e138]: 在线
+            - generic [ref=f1e139]: 3 分钟前
+            - generic [ref=f1e140]:
+              - button "打开设备" [ref=f1e141] [cursor=pointer]
+              - button "设备菜单" [ref=f1e145] [cursor=pointer]
+        - generic "通知状态模拟" [ref=f1e150]:
+          - button "确定进度" [ref=f1e151] [cursor=pointer]
+          - button "同步状态" [ref=f1e156] [cursor=pointer]
+          - button "成功通知" [ref=f1e162] [cursor=pointer]
+          - button "失败通知" [ref=f1e166] [cursor=pointer]
+  - region "全局通知":
+    - generic:
+      - article:
+        - generic:
+          - generic:
+            - generic:
+              - strong: 正在启动 Android Agent
+              - generic: 正在加载运行时与设备配置
+            - generic:
+              - button "收起通知"
+              - button "更多操作"
+          - generic:
+            - generic:
+              - generic:
+                - generic: 连接设备
+                - generic: 检查环境
+                - generic: 加载运行时
+                - generic: 验证状态
+              - generic:
+                - generic: 阶段 3/4 · 加载运行时
+                - generic: 约 18 秒
+            - generic: 68%
+          - generic:
+            - button "查看 Agent"
+            - button "取消"
+            - generic: 刚刚
+      - article:
+        - generic:
+          - generic:
+            - generic:
+              - strong: MCP 状态同步中
+              - generic: 正在获取 6 个服务的运行状态
+            - generic:
+              - button "收起通知"
+          - generic:
+            - generic: 等待设备响应
+            - generic "处理中"
+            - generic: 12 秒
+      - article:
+        - generic:
+          - generic:
+            - generic:
+              - strong: Agent 配置已保存
+              - generic: 配置已应用，下次启动时自动生效
+            - generic:
+              - button "收起通知"
+    - button "展开 3 个活动通知" [ref=f1e257] [cursor=pointer]:
+      - generic [ref=f1e262]:
+        - strong [ref=f1e263]: 正在启动 Android Agent
+        - generic [ref=f1e264]: 3 个任务进行中
+      - generic [ref=f1e265]:
+        - generic [ref=f1e266]: "68"
+        - generic [ref=f1e268]: "3"
+  - dialog [ref=f1e272]:
+    - banner [ref=f1e273]:
+      - strong [ref=f1e274]: 通知
+      - generic [ref=f1e275]: 4 条未读
+      - button "关闭通知中心" [active] [ref=f1e276] [cursor=pointer]
+    - tablist [ref=f1e280]:
+      - tab "进行中 3" [selected] [ref=f1e281] [cursor=pointer]
+      - tab "最近记录" [ref=f1e282] [cursor=pointer]
+    - tabpanel "进行中 3" [ref=f1e284]:
+      - generic [ref=f1e285]:
+        - text: 当前任务
+        - button "全部收起" [ref=f1e286] [cursor=pointer]
+      - generic [ref=f1e287]:
+        - generic [ref=f1e292]:
+          - strong [ref=f1e293]: 正在启动 Android Agent
+          - paragraph [ref=f1e294]: 阶段 3/4 · 加载运行时
+        - time [ref=f1e297]: 68%
+      - generic [ref=f1e298]:
+        - generic [ref=f1e303]:
+          - strong [ref=f1e304]: MCP 状态同步中
+          - paragraph [ref=f1e305]: 正在获取 6 个服务的运行状态
+        - time [ref=f1e306]: 12 秒
+      - generic [ref=f1e307]:
+        - generic [ref=f1e312]:
+          - strong [ref=f1e313]: 正在下载 IDA 运行时
+          - paragraph [ref=f1e314]: 等待远端返回文件总大小
+        - time [ref=f1e315]: 1 分钟
+    - contentinfo [ref=f1e316]:
+      - button "查看全部通知记录" [ref=f1e317] [cursor=pointer]

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat Codex · 插入消息显示预览</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      --bg: #f2f6fc; --surface: #fff; --elevated: #fafcff;
+      --border: #d0ddef; --border-light: #e8eff8;
+      --primary: #2563eb; --primary-light: #eff6ff; --primary-muted: #bfd7ff;
+      --text: #0f1729; --secondary: #4a5d7a; --muted: #8fa3bf;
+      --green: #16a34a; --green-light: #dcfce7; --input: #f8fafd;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif; letter-spacing: 0; }
+    body { padding: 28px; }
+    button { font: inherit; cursor: pointer; }
+    i[data-lucide] { width: 16px; height: 16px; stroke-width: 1.8; }
+    .page { max-width: 1220px; margin: 0 auto; }
+    .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
+    .page-title { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: 0; }
+    .page-subtitle { margin: 5px 0 0; color: var(--secondary); font-size: 12px; }
+    .view-toggle { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+    .view-toggle button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: 5px; color: var(--secondary); background: transparent; font-size: 12px; }
+    .view-toggle button.active { color: var(--primary); background: var(--primary-light); font-weight: 650; }
+    .views { display: grid; grid-template-columns: minmax(0, 1fr) 402px; gap: 18px; align-items: start; }
+    .preview { overflow: hidden; min-height: 720px; border: 1px solid #b8c8dc; border-radius: 10px; background: var(--surface); box-shadow: 0 16px 42px rgb(29 52 86 / 11%); }
+    .preview.mobile { width: 402px; min-height: 720px; }
+    .app { display: grid; grid-template-rows: 52px minmax(0, 1fr) auto auto; height: 720px; background: var(--surface); }
+    .topbar { display: flex; align-items: center; gap: 9px; padding: 0 14px; border-bottom: 1px solid var(--border); }
+    .icon-btn { width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 6px; color: var(--secondary); background: transparent; }
+    .icon-btn:hover { color: var(--primary); background: var(--primary-light); }
+    .session-title { min-width: 0; font-size: 13px; font-weight: 650; }
+    .session-meta { margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .online { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .top-spacer { flex: 1; }
+    .messages { min-height: 0; overflow: hidden; padding: 22px 30px 12px; background: linear-gradient(180deg, #f7faff 0%, #fff 68%); }
+    .message { display: flex; align-items: flex-start; gap: 10px; max-width: 900px; margin: 0 auto 20px; }
+    .message.user { justify-content: flex-end; }
+    .avatar { width: 29px; height: 29px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid #bfdbfe; border-radius: 7px; color: var(--primary); background: var(--primary-light); }
+    .avatar.user { border-color: var(--border); color: var(--secondary); background: var(--elevated); }
+    .bubble { max-width: min(660px, 78%); padding: 10px 13px; border: 1px solid var(--border-light); border-radius: 8px; background: var(--surface); font-size: 13px; line-height: 1.65; }
+    .user .bubble { color: #17356d; border-color: #c9dcff; background: var(--primary-light); }
+    .agent-label { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: var(--primary); font-size: 11px; font-weight: 650; }
+    .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 3px #dbeafe; }
+    .tool { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--secondary); font-size: 11px; }
+    .tool i { color: var(--green); width: 13px; height: 13px; }
+    .insert-node { position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 9px; max-width: 900px; margin: -2px auto 18px; padding: 2px 0 2px 0; }
+    .insert-node::before { content: ""; position: absolute; left: 11px; top: -16px; bottom: -15px; width: 1px; background: var(--primary-muted); }
+    .insert-mark { position: relative; z-index: 1; width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--primary-muted); border-radius: 50%; color: var(--primary); background: var(--primary-light); }
+    .insert-mark i { width: 14px; height: 14px; }
+    .insert-copy { min-width: 0; padding: 8px 11px; border: 1px solid #c9dcff; border-left: 2px solid var(--primary); border-radius: 6px; background: var(--primary-light); }
+    .insert-heading { display: flex; align-items: center; gap: 7px; color: var(--primary); font-size: 11px; font-weight: 700; }
+    .insert-heading span { color: var(--muted); font-size: 10px; font-weight: 500; }
+    .insert-text { margin-top: 4px; overflow: hidden; color: #17356d; font-size: 12px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+    .insert-source { margin-top: 5px; color: var(--secondary); font-size: 10px; }
+    .queue { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--elevated); }
+    .queue-head { height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 13px; border-bottom: 1px solid var(--border-light); font-size: 12px; font-weight: 650; }
+    .queue-head i { color: var(--secondary); width: 15px; height: 15px; }
+    .queue-count { min-width: 20px; height: 20px; display: grid; place-items: center; padding: 0 5px; border-radius: 10px; color: var(--primary); background: var(--primary-light); font-size: 10px; }
+    .queue-head small { margin-left: auto; color: var(--muted); font-size: 10px; font-weight: 500; }
+    .queue-item { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 56px; padding: 7px 11px; border-bottom: 1px solid var(--border-light); }
+    .queue-item:last-child { border-bottom: 0; }
+    .drag { color: var(--muted); }
+    .queue-text { overflow: hidden; font-size: 12px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-meta { display: flex; align-items: center; gap: 7px; margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .model { color: var(--primary); }
+    .queue-actions { display: flex; align-items: center; gap: 2px; }
+    .queue-actions button { width: 31px; height: 31px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 6px; color: var(--secondary); background: transparent; }
+    .queue-actions button.insert { color: var(--primary); }
+    .queue-actions button:hover { background: var(--primary-light); }
+    .queue-item.done { background: #f6fbf7; }
+    .queue-item.done .insert { color: var(--green); }
+    .composer { padding: 8px 12px 10px; background: var(--surface); }
+    .composer-tools { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; color: var(--secondary); font-size: 10px; }
+    .tool-chip { display: inline-flex; align-items: center; gap: 5px; height: 25px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--input); }
+    .tool-chip i { width: 12px; height: 12px; }
+    .input-row { display: grid; grid-template-columns: minmax(0, 1fr) 38px 38px; gap: 6px; }
+    .input { min-height: 42px; display: flex; align-items: center; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--input); font-size: 11px; }
+    .round-btn { width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 7px; color: #fff; background: var(--primary); }
+    .round-btn.stop { color: var(--primary); border: 1px solid var(--primary-muted); background: var(--primary-light); }
+    .note { margin: 12px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.55; }
+    .note strong { color: var(--text); }
+    .mobile-only { display: none; }
+    @media (max-width: 900px) {
+      body { padding: 14px; }
+      .page-head { align-items: flex-start; flex-direction: column; }
+      .views { display: block; }
+      .preview.desktop { display: none; }
+      .preview.mobile { width: min(402px, 100%); margin: 0 auto; }
+      .mobile-only { display: block; }
+    }
+    @media (min-width: 901px) { .preview.mobile { display: block; } }
+    @media (max-width: 520px) { body { padding: 0; } .page-head { padding: 16px 14px 0; } .preview.mobile { border-radius: 0; border-left: 0; border-right: 0; box-shadow: none; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">插入消息 · 当前任务上下文节点</h1>
+        <p class="page-subtitle">插入内容不再伪装成新的用户气泡，而是嵌入当前 Agent 回合之间。</p>
+      </div>
+      <div class="view-toggle" role="tablist" aria-label="预览尺寸">
+        <button class="active" data-view="both"><i data-lucide="panels-top-left"></i>双视图</button>
+        <button data-view="desktop"><i data-lucide="monitor"></i>桌面</button>
+        <button data-view="mobile"><i data-lucide="smartphone"></i>移动</button>
+      </div>
+    </header>
+    <section class="views" id="views">
+      <article class="preview desktop" data-preview="desktop">
+        <div class="app">
+          <div class="topbar"><button class="icon-btn"><i data-lucide="panel-left"></i></button><span class="online"></span><div><div class="session-title">检查 Windows 最近一次对话</div><div class="session-meta">reverse-android · 正在运行</div></div><span class="top-spacer"></span><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div>
+          <div class="messages">
+            <div class="message user"><div class="bubble">先检查 Windows 端最近的失败日志，告诉我真正的失败点。</div><div class="avatar user"><i data-lucide="user-round"></i></div></div>
+            <div class="message"><div class="avatar"><i data-lucide="bot"></i></div><div class="bubble"><div class="agent-label"><span class="pulse"></span>正在分析任务</div>我先读取设备日志并对照最近一次任务的事件时间线。<div class="tool"><i data-lucide="check-circle-2"></i>读取 device.log · 已完成</div></div></div>
+            <div class="insert-node" data-insert-node>
+              <div class="insert-mark"><i data-lucide="corner-down-right"></i></div>
+              <div class="insert-copy"><div class="insert-heading">已追加到当前任务 <span>第 2 轮上下文</span></div><div class="insert-text">你看一下 Windows 最近一次对话，怎么失败了？</div><div class="insert-source">来自发送队列 · Claude Sonnet 4</div></div>
+            </div>
+            <div class="message"><div class="avatar"><i data-lucide="bot"></i></div><div class="bubble"><div class="agent-label"><span class="pulse"></span>继续处理</div>我已把这条提示加入下一轮上下文，正在结合失败前后的命令输出重新判断。<div class="tool"><i data-lucide="loader-circle"></i>等待下一批日志</div></div></div>
+            <div class="message user"><div class="bubble">重点看有没有 agent_busy 或超时。</div><div class="avatar user"><i data-lucide="user-round"></i></div></div>
+          </div>
+          <div class="queue"><div class="queue-head"><i data-lucide="send"></i><span>待发送</span><span class="queue-count">2</span><small>运行中可追加</small></div><div class="queue-item"><i class="drag" data-lucide="grip-vertical"></i><div><div class="queue-text">确认 agent_busy 的触发条件</div><div class="queue-meta"><span class="model">Claude Sonnet 4</span><span>刚刚</span></div></div><div class="queue-actions"><button class="insert" data-insert-button title="插入当前任务"><i data-lucide="corner-down-right"></i></button><button title="删除"><i data-lucide="trash-2"></i></button></div></div><div class="queue-item"><i class="drag" data-lucide="grip-vertical"></i><div><div class="queue-text">整理最终修复建议</div><div class="queue-meta"><span class="model">GPT-5</span><span>队列第 2 项</span></div></div><div class="queue-actions"><button class="insert" data-insert-button title="插入当前任务"><i data-lucide="corner-down-right"></i></button><button title="删除"><i data-lucide="trash-2"></i></button></div></div></div>
+          <div class="composer"><div class="composer-tools"><span class="tool-chip"><i data-lucide="paperclip"></i>附件</span><span class="tool-chip"><i data-lucide="cpu"></i>Claude Sonnet 4</span><span class="top-spacer"></span><span>当前任务进行中</span></div><div class="input-row"><div class="input">继续输入，发送后会加入队列</div><button class="round-btn stop" title="终止"><i data-lucide="square"></i></button><button class="round-btn" title="发送"><i data-lucide="send"></i></button></div></div>
+        </div>
+      </article>
+      <article class="preview mobile" data-preview="mobile">
+        <div class="app">
+          <div class="topbar"><button class="icon-btn"><i data-lucide="panel-left"></i></button><span class="online"></span><div><div class="session-title">Windows 最近一次对话</div><div class="session-meta">正在运行 · 第 2 轮</div></div><span class="top-spacer"></span><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div>
+          <div class="messages">
+            <div class="message user"><div class="bubble">先检查 Windows 端最近的失败日志。</div><div class="avatar user"><i data-lucide="user-round"></i></div></div>
+            <div class="message"><div class="avatar"><i data-lucide="bot"></i></div><div class="bubble"><div class="agent-label"><span class="pulse"></span>正在分析任务</div>我先读取设备日志并对照最近一次任务。<div class="tool"><i data-lucide="check-circle-2"></i>读取日志 · 已完成</div></div></div>
+            <div class="insert-node" data-insert-node><div class="insert-mark"><i data-lucide="corner-down-right"></i></div><div class="insert-copy"><div class="insert-heading">已追加到当前任务 <span>第 2 轮</span></div><div class="insert-text">你看一下 Windows 最近一次对话，怎么失败了？</div><div class="insert-source">发送队列 · Claude Sonnet 4</div></div></div>
+            <div class="message"><div class="avatar"><i data-lucide="bot"></i></div><div class="bubble"><div class="agent-label"><span class="pulse"></span>继续处理</div>我会把这条提示加入下一轮上下文，继续判断失败原因。</div></div>
+          </div>
+          <div class="queue"><div class="queue-head"><i data-lucide="send"></i><span>待发送</span><span class="queue-count">2</span><small>运行中可追加</small></div><div class="queue-item"><i class="drag" data-lucide="grip-vertical"></i><div><div class="queue-text">确认 agent_busy 的触发条件</div><div class="queue-meta"><span class="model">Claude Sonnet 4</span></div></div><div class="queue-actions"><button class="insert" data-insert-button title="插入当前任务"><i data-lucide="corner-down-right"></i></button><button title="删除"><i data-lucide="trash-2"></i></button></div></div><div class="queue-item"><i class="drag" data-lucide="grip-vertical"></i><div><div class="queue-text">整理最终修复建议</div><div class="queue-meta"><span class="model">GPT-5</span></div></div><div class="queue-actions"><button class="insert" data-insert-button title="插入当前任务"><i data-lucide="corner-down-right"></i></button><button title="删除"><i data-lucide="trash-2"></i></button></div></div></div>
+          <div class="composer"><div class="composer-tools"><span class="tool-chip"><i data-lucide="paperclip"></i>附件</span><span class="tool-chip"><i data-lucide="cpu"></i>Claude Sonnet 4</span></div><div class="input-row"><div class="input">继续输入...</div><button class="round-btn stop" title="终止"><i data-lucide="square"></i></button><button class="round-btn" title="发送"><i data-lucide="send"></i></button></div></div>
+        </div>
+      </article>
+    </section>
+    <p class="note"><strong>重点：</strong>插入节点仍然按真实时间顺序出现在对话流中，但不再显示用户头像、重试操作或独立气泡；它只标记“这段内容已进入当前任务的下一轮上下文”。点击队列右侧的插入箭头可查看完成态。</p>
+  </main>
+  <script>
+    const refreshIcons = () => window.lucide && lucide.createIcons();
+    refreshIcons();
+    document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-view]').forEach((item) => item.classList.toggle('active', item === button));
+      const mode = button.dataset.view;
+      document.querySelectorAll('[data-preview]').forEach((preview) => {
+        preview.style.display = mode === 'both' || mode === preview.dataset.preview ? '' : 'none';
+      });
+      document.querySelector('.views').style.gridTemplateColumns = mode === 'mobile' ? '1fr' : '';
+    }));
+    document.querySelectorAll('[data-insert-button]').forEach((button) => button.addEventListener('click', () => {
+      const item = button.closest('.queue-item');
+      if (item.classList.contains('done')) return;
+      item.classList.add('done');
+      button.innerHTML = '<i data-lucide="check"></i>';
+      button.title = '已追加到当前任务';
+      const node = item.parentElement.closest('.app').querySelector('[data-insert-node]');
+      const text = item.querySelector('.queue-text')?.textContent?.trim() || '';
+      const target = node?.querySelector('.insert-text');
+      if (target && text) target.textContent = text;
+      const heading = node?.querySelector('.insert-heading');
+      if (heading) heading.firstChild.textContent = '已追加到当前任务';
+      refreshIcons();
+    }));
+  </script>
+</body>
+</html>

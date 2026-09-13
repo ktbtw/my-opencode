@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,33 +17,44 @@ import (
 var ErrOffline = errors.New("device offline")
 
 type Device struct {
-	ID          string
-	OperatorID  int64
-	MachineID   string
-	Hostname    string
-	Version     string
-	Projects    []model.HelloProject
-	SeenAt      time.Time
-	CurrentTask string
-	ModelsJSON  json.RawMessage // 缓存的模型列表原始 JSON
-	conn        *websocket.Conn
-	mu          sync.Mutex
+	ID           string
+	OperatorID   int64
+	MachineID    string
+	Hostname     string
+	Version      string
+	Kind         string
+	Projects     []model.HelloProject
+	Capabilities []string
+	SeenAt       time.Time
+	CurrentTask  string
+	conn         *websocket.Conn
+	mu           sync.Mutex
+}
+
+type ModelCache struct {
+	OperatorID int64
+	Payload    map[string]any
+	UpdatedAt  time.Time
 }
 
 type Broker struct {
-	mu      sync.RWMutex
-	devices map[string]*Device
+	mu          sync.RWMutex
+	devices     map[string]*Device
+	modelCaches map[string]ModelCache
+	observerMu  sync.RWMutex
+	onUpsert    func(int64, model.Agent)
+	onRemove    func(int64, model.Agent)
 }
 
 func New() *Broker {
 	return &Broker{
-		devices: map[string]*Device{},
+		devices:     map[string]*Device{},
+		modelCaches: map[string]ModelCache{},
 	}
 }
 
 func (b *Broker) Add(conn *websocket.Conn, hello model.HelloPayload, operatorID int64) *Device {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	id := hello.AgentID
 	if id == "" {
 		id = hello.DeviceID
@@ -55,64 +68,191 @@ func (b *Broker) Add(conn *websocket.Conn, hello model.HelloPayload, operatorID 
 		}
 	}
 	dev := &Device{
-		ID:         id,
-		OperatorID: operatorID,
-		MachineID:  machineID,
-		Hostname:   hello.Hostname,
-		Version:    hello.Version,
-		Projects:   hello.Projects,
-		SeenAt:     time.Now().UTC(),
-		conn:       conn,
+		ID:           id,
+		OperatorID:   operatorID,
+		MachineID:    machineID,
+		Hostname:     hello.Hostname,
+		Version:      hello.Version,
+		Kind:         hello.Kind,
+		Projects:     hello.Projects,
+		Capabilities: append([]string(nil), hello.Capabilities...),
+		SeenAt:       time.Now().UTC(),
+		conn:         conn,
 	}
-	b.devices[id] = dev
+	key := deviceKey(operatorID, id)
+	previous := b.devices[key]
+	b.devices[key] = dev
+	b.mu.Unlock()
+	if previous != nil && previous != dev && previous.conn != nil {
+		_ = previous.conn.Close(websocket.StatusNormalClosure, "replaced by newer connection")
+	}
+	b.notifyUpsert(operatorID, snapshot(dev))
 	return dev
 }
 
 func (b *Broker) Touch(id, currentTask string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if dev, ok := b.devices[id]; ok {
+	changed := make([]model.Agent, 0, 1)
+	for _, dev := range b.devices {
+		if dev.ID != id {
+			continue
+		}
+		previousTask := dev.CurrentTask
 		dev.SeenAt = time.Now().UTC()
 		dev.CurrentTask = currentTask
+		if previousTask != currentTask {
+			changed = append(changed, snapshot(dev))
+		}
+	}
+	b.mu.Unlock()
+	for _, agent := range changed {
+		b.notifyUpsert(agent.OperatorID, agent)
 	}
 }
 
-func (b *Broker) Remove(id string) {
+func (b *Broker) TouchDevice(dev *Device, currentTask string) bool {
+	if dev == nil {
+		return false
+	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.devices, id)
+	current, ok := b.devices[deviceKey(dev.OperatorID, dev.ID)]
+	if !ok || current != dev {
+		b.mu.Unlock()
+		return false
+	}
+	previousTask := current.CurrentTask
+	current.SeenAt = time.Now().UTC()
+	current.CurrentTask = currentTask
+	agent := snapshot(current)
+	b.mu.Unlock()
+	if previousTask != currentTask {
+		b.notifyUpsert(agent.OperatorID, agent)
+	}
+	return true
 }
 
-func (b *Broker) SetModels(id string, data json.RawMessage) {
+func (b *Broker) ClearTask(agentID, taskID string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if dev, ok := b.devices[id]; ok {
-		dev.ModelsJSON = data
+	changed := make([]model.Agent, 0, 1)
+	for _, dev := range b.devices {
+		if dev.ID == agentID && dev.CurrentTask == taskID {
+			dev.CurrentTask = ""
+			changed = append(changed, snapshot(dev))
+		}
+	}
+	b.mu.Unlock()
+	for _, agent := range changed {
+		b.notifyUpsert(agent.OperatorID, agent)
 	}
 }
 
-func (b *Broker) GetModels(id string) (json.RawMessage, bool) {
+func (b *Broker) ClearTaskForOperator(operatorID int64, agentID, taskID string) {
+	b.mu.Lock()
+	var changed *model.Agent
+	if dev, ok := b.devices[deviceKey(operatorID, agentID)]; ok && dev.CurrentTask == taskID {
+		dev.CurrentTask = ""
+		agent := snapshot(dev)
+		changed = &agent
+	}
+	b.mu.Unlock()
+	if changed != nil {
+		b.notifyUpsert(operatorID, *changed)
+	}
+}
+
+func (b *Broker) Remove(dev *Device) bool {
+	if dev == nil {
+		return false
+	}
+	b.mu.Lock()
+	current, ok := b.devices[deviceKey(dev.OperatorID, dev.ID)]
+	if !ok || current != dev {
+		b.mu.Unlock()
+		return false
+	}
+	agent := snapshot(current)
+	if current.MachineID != "" {
+		delete(b.modelCaches, machineKey(dev.OperatorID, dev.MachineID))
+	}
+	delete(b.devices, deviceKey(dev.OperatorID, dev.ID))
+	b.mu.Unlock()
+	b.notifyRemove(dev.OperatorID, agent)
+	return true
+}
+
+func (b *Broker) SetObserver(onUpsert, onRemove func(int64, model.Agent)) {
+	b.observerMu.Lock()
+	b.onUpsert = onUpsert
+	b.onRemove = onRemove
+	b.observerMu.Unlock()
+}
+
+func (b *Broker) notifyUpsert(operatorID int64, agent model.Agent) {
+	b.observerMu.RLock()
+	observer := b.onUpsert
+	b.observerMu.RUnlock()
+	if observer != nil {
+		observer(operatorID, agent)
+	}
+}
+
+func (b *Broker) notifyRemove(operatorID int64, agent model.Agent) {
+	b.observerMu.RLock()
+	observer := b.onRemove
+	b.observerMu.RUnlock()
+	if observer != nil {
+		observer(operatorID, agent)
+	}
+}
+
+func (b *Broker) SetModelCache(operatorID int64, machineID string, payload map[string]any) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.modelCaches[machineKey(operatorID, machineID)] = ModelCache{OperatorID: operatorID, Payload: payload, UpdatedAt: time.Now().UTC()}
+}
+
+func (b *Broker) ClearModelCache(operatorID int64, machineID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.modelCaches, machineKey(operatorID, machineID))
+}
+
+func (b *Broker) GetModelCache(operatorID int64, machineID string) (ModelCache, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	dev, ok := b.devices[id]
-	if !ok || dev.ModelsJSON == nil {
-		return nil, false
-	}
-	return dev.ModelsJSON, true
+	cache, ok := b.modelCaches[machineKey(operatorID, machineID)]
+	return cache, ok
 }
 
 func (b *Broker) Has(id string) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	_, ok := b.devices[id]
-	return ok
+	for _, dev := range b.devices {
+		if dev.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
-func (b *Broker) Get(id string) (model.Agent, bool) {
+func (b *Broker) Get(id string, operatorID ...int64) (model.Agent, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	dev, ok := b.devices[id]
-	if !ok {
+	if len(operatorID) > 0 && operatorID[0] > 0 {
+		dev, ok := b.devices[deviceKey(operatorID[0], id)]
+		if !ok {
+			return model.Agent{}, false
+		}
+		return snapshot(dev), true
+	}
+	var dev *Device
+	for _, item := range b.devices {
+		if item.ID == id {
+			dev = item
+			break
+		}
+	}
+	if dev == nil {
 		return model.Agent{}, false
 	}
 	return snapshot(dev), true
@@ -151,13 +291,23 @@ func (b *Broker) ListMachines(operatorID int64) []model.Machine {
 		if dev.SeenAt.After(machine.SeenAt) {
 			machine.SeenAt = dev.SeenAt
 		}
+		if dev.Kind == "launcher" {
+			machine.LauncherOnline = true
+			continue
+		}
 		machine.Agents = append(machine.Agents, snapshot(dev))
 	}
 
 	out := make([]model.Machine, 0, len(index))
 	for _, machine := range index {
+		sort.SliceStable(machine.Agents, func(i, j int) bool {
+			return machine.Agents[i].ID < machine.Agents[j].ID
+		})
 		out = append(out, *machine)
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].MachineID < out[j].MachineID
+	})
 	return out
 }
 
@@ -172,7 +322,27 @@ func (b *Broker) GetMachine(operatorID int64, machineID string) (model.Machine, 
 
 func (b *Broker) Dispatch(ctx context.Context, deviceID string, env model.Envelope) error {
 	b.mu.RLock()
-	dev, ok := b.devices[deviceID]
+	key := ""
+	for candidate, item := range b.devices {
+		if item.ID == deviceID {
+			key = candidate
+			break
+		}
+	}
+	b.mu.RUnlock()
+	if key == "" {
+		return ErrOffline
+	}
+	return b.dispatch(ctx, key, env)
+}
+
+func (b *Broker) DispatchForOperator(ctx context.Context, operatorID int64, deviceID string, env model.Envelope) error {
+	return b.dispatch(ctx, deviceKey(operatorID, deviceID), env)
+}
+
+func (b *Broker) dispatch(ctx context.Context, key string, env model.Envelope) error {
+	b.mu.RLock()
+	dev, ok := b.devices[key]
 	b.mu.RUnlock()
 	if !ok {
 		return ErrOffline
@@ -187,17 +357,44 @@ func (b *Broker) Dispatch(ctx context.Context, deviceID string, env model.Envelo
 	return dev.conn.Write(ctx, websocket.MessageText, buf)
 }
 
+func deviceKey(operatorID int64, id string) string {
+	return fmt.Sprintf("%d:%s", operatorID, id)
+}
+
+func machineKey(operatorID int64, machineID string) string {
+	return fmt.Sprintf("%d:%s", operatorID, machineID)
+}
+
 func snapshot(dev *Device) model.Agent {
 	projects := make([]model.HelloProject, len(dev.Projects))
 	copy(projects, dev.Projects)
 	return model.Agent{
-		ID:          dev.ID,
-		OperatorID:  dev.OperatorID,
-		MachineID:   dev.MachineID,
-		Hostname:    dev.Hostname,
-		Version:     dev.Version,
-		Projects:    projects,
-		SeenAt:      dev.SeenAt,
-		CurrentTask: dev.CurrentTask,
+		ID:           dev.ID,
+		OperatorID:   dev.OperatorID,
+		MachineID:    dev.MachineID,
+		Hostname:     dev.Hostname,
+		Version:      dev.Version,
+		Enabled:      true,
+		Status:       "online",
+		Kind:         dev.Kind,
+		Projects:     projects,
+		Capabilities: append([]string(nil), dev.Capabilities...),
+		SeenAt:       dev.SeenAt,
+		CurrentTask:  dev.CurrentTask,
 	}
+}
+
+func (b *Broker) GetLauncher(machineID string, operatorID ...int64) (model.Agent, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for _, dev := range b.devices {
+		if dev.Kind != "launcher" || dev.MachineID != machineID {
+			continue
+		}
+		if len(operatorID) > 0 && operatorID[0] > 0 && dev.OperatorID != operatorID[0] {
+			continue
+		}
+		return snapshot(dev), true
+	}
+	return model.Agent{}, false
 }

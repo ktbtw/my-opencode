@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Context Token Ring Preview</title>
+    <style>
+      :root {
+        --background: #f2f6fc;
+        --surface: #ffffff;
+        --surface-elevated: #fafcff;
+        --border: #d0ddef;
+        --border-light: #e8eff8;
+        --primary: #2563eb;
+        --primary-light: #eff6ff;
+        --text-primary: #0f1729;
+        --text-secondary: #4a5d7a;
+        --text-muted: #8fa3bf;
+        --input-background: #f8fafd;
+        --success: #16a34a;
+        --success-light: #dcfce7;
+        --warning: #d97706;
+        --warning-light: #fef3c7;
+        --error: #dc2626;
+        --error-light: #fee2e2;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--background);
+        color: var(--text-primary);
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        letter-spacing: 0;
+      }
+
+      .page {
+        display: grid;
+        min-height: 100vh;
+        grid-template-rows: 1fr auto;
+      }
+
+      .chat {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 28px 12px 0;
+      }
+
+      .messages {
+        width: min(880px, 100%);
+        padding-bottom: 18px;
+      }
+
+      .bubble {
+        width: fit-content;
+        max-width: 72%;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--border-light);
+        border-radius: 10px;
+        background: var(--surface);
+        font-size: 14px;
+        color: var(--text-secondary);
+      }
+
+      .bubble.user {
+        margin-left: auto;
+        border-color: #bfd7ff;
+        background: var(--primary-light);
+        color: var(--text-primary);
+      }
+
+      .input-shell {
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        padding: 10px 12px 12px;
+      }
+
+      .input-inner {
+        width: min(880px, 100%);
+        margin: 0 auto;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        overflow: hidden;
+        padding-bottom: 6px;
+        white-space: nowrap;
+      }
+
+      .tool {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 28px;
+        padding: 0 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--input-background);
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+
+      .input-row {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1fr 44px;
+        gap: 8px;
+        align-items: end;
+      }
+
+      .composer-wrap {
+        position: relative;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 44px;
+        max-height: 144px;
+        resize: vertical;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--input-background);
+        padding: 10px 56px 10px 14px;
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 14px;
+        line-height: 22px;
+        outline: none;
+      }
+
+      textarea:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 1px var(--primary);
+      }
+
+      .send {
+        display: grid;
+        width: 44px;
+        height: 44px;
+        place-items: center;
+        border: 0;
+        border-radius: 6px;
+        background: var(--primary);
+        color: white;
+        cursor: pointer;
+      }
+
+      .token-trigger {
+        position: absolute;
+        right: 10px;
+        bottom: 8px;
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        cursor: pointer;
+        padding: 0;
+      }
+
+      .token-trigger:hover {
+        background: transparent;
+      }
+
+      .ring {
+        --percent: 0.42;
+        --color: var(--primary);
+        position: relative;
+        width: 25px;
+        height: 25px;
+        border-radius: 50%;
+        background: conic-gradient(
+          var(--color) calc(var(--percent) * 360deg),
+          var(--border-light) 0
+        );
+      }
+
+      .ring::after {
+        content: "";
+        position: absolute;
+        inset: 4px;
+        border-radius: 50%;
+        background: var(--surface);
+      }
+
+      .ring span {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        color: var(--text-secondary);
+        font-size: 9px;
+        font-weight: 700;
+      }
+
+      .popover {
+        position: absolute;
+        right: 54px;
+        bottom: 52px;
+        width: min(320px, calc(100vw - 32px));
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        box-shadow: 0 16px 42px rgba(15, 23, 41, 0.12);
+        overflow: hidden;
+      }
+
+      .popover.hidden {
+        display: none;
+      }
+
+      .popover-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px 10px;
+        border-bottom: 1px solid var(--border-light);
+      }
+
+      .popover-title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .pill {
+        border-radius: 999px;
+        background: var(--primary-light);
+        color: var(--primary);
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .token-main {
+        display: grid;
+        grid-template-columns: 66px 1fr;
+        gap: 14px;
+        align-items: center;
+        padding: 14px;
+      }
+
+      .big-ring {
+        --percent: 0.42;
+        --color: var(--primary);
+        position: relative;
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        background: conic-gradient(
+          var(--color) calc(var(--percent) * 360deg),
+          var(--border-light) 0
+        );
+      }
+
+      .big-ring::after {
+        content: "";
+        position: absolute;
+        inset: 8px;
+        border-radius: 50%;
+        background: var(--surface);
+      }
+
+      .big-ring strong {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        font-size: 16px;
+      }
+
+      .metric-title {
+        margin-bottom: 4px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .metric-subtitle {
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .metric-list {
+        display: grid;
+        gap: 8px;
+        padding: 0 14px 14px;
+      }
+
+      .metric {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: center;
+        font-size: 12px;
+      }
+
+      .metric label {
+        color: var(--text-secondary);
+      }
+
+      .metric value {
+        color: var(--text-primary);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .bar {
+        grid-column: 1 / -1;
+        height: 5px;
+        overflow: hidden;
+        border-radius: 99px;
+        background: var(--border-light);
+      }
+
+      .bar span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--primary);
+      }
+
+      .threshold {
+        margin: 0 14px 14px;
+        padding: 9px 10px;
+        border: 1px solid var(--warning-light);
+        border-radius: 8px;
+        background: #fffaf0;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      @media (max-width: 640px) {
+        .toolbar {
+          padding-bottom: 8px;
+        }
+
+        .popover {
+          right: 0;
+          bottom: 54px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="chat">
+        <div class="messages">
+          <div class="bubble">已加载最近会话，模型正在等待输入。</div>
+          <div class="bubble user">继续看上下文压缩和 token 使用情况。</div>
+        </div>
+      </section>
+
+      <section class="input-shell">
+        <div class="input-inner">
+          <div class="toolbar">
+            <div class="tool">附件</div>
+            <div class="tool">Build</div>
+            <div class="tool">目标模式</div>
+            <div class="tool">Claude Sonnet</div>
+            <div class="tool">自动审批</div>
+            <div class="tool">项目提示词</div>
+          </div>
+
+          <div class="input-row">
+            <div class="composer-wrap">
+              <textarea>输入消息，Ctrl+Enter 发送</textarea>
+
+              <button class="token-trigger" aria-label="查看上下文 token 使用详情">
+                <div class="ring" style="--percent: 0.42">
+                  <span>42</span>
+                </div>
+              </button>
+
+              <aside class="popover">
+                <div class="popover-head">
+                  <div class="popover-title">上下文使用量</div>
+                  <div class="pill">正常</div>
+                </div>
+                <div class="token-main">
+                  <div class="big-ring" style="--percent: 0.42">
+                    <strong>42%</strong>
+                  </div>
+                  <div>
+                    <div class="metric-title">53.8k / 128k tokens</div>
+                    <div class="metric-subtitle">包含历史摘要、最近对话、工具结果和本次输入的估算上下文。</div>
+                  </div>
+                </div>
+                <div class="metric-list">
+                  <div class="metric">
+                    <label>当前输入</label>
+                    <value>1.2k</value>
+                    <div class="bar"><span style="width: 2%"></span></div>
+                  </div>
+                  <div class="metric">
+                    <label>会话上下文</label>
+                    <value>52.6k</value>
+                    <div class="bar"><span style="width: 41%"></span></div>
+                  </div>
+                  <div class="metric">
+                    <label>完整额度</label>
+                    <value>128k</value>
+                    <div class="bar"><span style="width: 100%"></span></div>
+                  </div>
+                  <div class="metric">
+                    <label>自动压缩阈值</label>
+                    <value>约 84%</value>
+                    <div class="bar"><span style="width: 84%; background: var(--warning)"></span></div>
+                  </div>
+                </div>
+                <div class="threshold">
+                  距离自动压缩还剩约 54.2k tokens。超过阈值后会保留摘要和最近对话。
+                </div>
+              </aside>
+            </div>
+
+            <button class="send" aria-label="发送">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M5 12L3 4l18 8-18 8 2-8Zm0 0h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

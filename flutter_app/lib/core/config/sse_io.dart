@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'sse_parser.dart';
 
 Stream<String> sseStream(Uri uri, Map<String, String> headers) async* {
   final client = HttpClient();
@@ -10,29 +11,19 @@ Stream<String> sseStream(Uri uri, Map<String, String> headers) async* {
     final request = await client.getUrl(uri);
     headers.forEach((k, v) => request.headers.set(k, v));
     final response = await request.close();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      await response.drain<void>();
+      throw SseHttpException(response.statusCode);
+    }
 
-    final buffer = StringBuffer();
+    final parser = SseDataParser();
     await for (final chunk in response.transform(utf8.decoder)) {
-      buffer.write(chunk);
-      // 处理 buffer 中已有的完整行
-      while (true) {
-        final str = buffer.toString();
-        final idx = str.indexOf('\n');
-        if (idx < 0) break;
-        final line = str.substring(0, idx).trim();
-        buffer.clear();
-        buffer.write(str.substring(idx + 1));
-        if (line.startsWith('data:')) {
-          final payload = line.substring(5).trim();
-          if (payload.isNotEmpty) yield payload;
-        }
+      for (final payload in parser.addChunk(chunk)) {
+        yield payload;
       }
     }
-    // 处理最后剩余内容
-    final remaining = buffer.toString().trim();
-    if (remaining.startsWith('data:')) {
-      final payload = remaining.substring(5).trim();
-      if (payload.isNotEmpty) yield payload;
+    for (final payload in parser.close()) {
+      yield payload;
     }
   } finally {
     client.close();

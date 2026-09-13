@@ -1,0 +1,100 @@
+- generic [ref=f2e1]:
+  - main [ref=f2e29]:
+    - generic [ref=f2e30]:
+      - generic [ref=f2e31]:
+        - text: 设备 / MacBook Pro /
+        - strong [ref=f2e32]: AI 配置
+      - generic [ref=f2e33]:
+        - button [ref=f2e34] [cursor=pointer]
+        - button [ref=f2e38] [cursor=pointer]
+    - generic [ref=f2e42]:
+      - generic [ref=f2e44]:
+        - heading [level=1] [ref=f2e45]: 设备级全局配置
+        - paragraph [ref=f2e46]: 管理这台设备上的 AI 供应商、模型与默认能力。
+      - generic [ref=f2e48]:
+        - strong [ref=f2e49]: OpenRouter
+        - generic [ref=f2e50]: 12 个模型
+  - dialog [ref=f2e56]:
+    - banner [ref=f2e57]:
+      - heading "管理模型 · openrouter" [level=2] [ref=f2e59]
+      - button "关闭" [ref=f2e61] [cursor=pointer]
+    - generic [ref=f2e113]:
+      - generic [ref=f2e114]:
+        - button "返回模型列表" [ref=f2e184] [cursor=pointer]
+        - generic [ref=f2e128]:
+          - heading "stealth/ox-alpha" [level=3] [ref=f2e129]
+          - paragraph [ref=f2e130]: openrouter · stealth/ox-alpha
+        - generic [ref=f2e131]: 手动覆盖
+      - generic [ref=f2e133]:
+        - generic [ref=f2e134]:
+          - heading "配置来源" [level=4] [ref=f2e135]
+          - generic [ref=f2e136]: 手动配置始终优先
+        - generic [ref=f2e137]:
+          - button "自动识别" [ref=f2e138] [cursor=pointer]
+          - button "手动覆盖" [active] [ref=f2e139] [cursor=pointer]
+        - generic [ref=f2e193]:
+          - generic [ref=f2e194]:
+            - generic [ref=f2e195]:
+              - strong [ref=f2e196]: 支持思考控制
+              - generic [ref=f2e197]: 关闭后聊天界面不显示思考强度
+            - generic [ref=f2e198]:
+              - checkbox [checked]
+          - generic [ref=f2e200]:
+            - generic [ref=f2e201]:
+              - generic [ref=f2e202]:
+                - generic [ref=f2e203]: 控制方式
+                - combobox "控制方式" [ref=f2e204] [cursor=pointer]:
+                  - option "思考强度" [selected]
+                  - option "Token 预算"
+                  - option "仅开关"
+              - generic [ref=f2e205]:
+                - generic [ref=f2e206]: 参数协议
+                - combobox "参数协议" [ref=f2e207] [cursor=pointer]:
+                  - option "OpenRouter · reasoning.effort" [selected]
+                  - option "OpenAI 兼容 · reasoning_effort"
+                  - option "Anthropic · thinking"
+                  - option "Google · thinkingConfig"
+                  - option "自定义 variants"
+              - generic [ref=f2e208]:
+                - generic [ref=f2e209]: 默认档位
+                - combobox "默认档位" [ref=f2e210] [cursor=pointer]:
+                  - option "不指定，跟随模型默认" [selected]
+                  - option "低"
+                  - option "中"
+                  - option "高"
+              - generic [ref=f2e211]:
+                - generic [ref=f2e212]: 聊天控件
+                - combobox "聊天控件" [ref=f2e213] [cursor=pointer]:
+                  - option "自动选择" [selected]
+                  - option "分段控件"
+                  - option "下拉菜单"
+            - generic [ref=f2e214]:
+              - generic [ref=f2e215]:
+                - strong [ref=f2e216]: 可用档位
+                - button "添加档位" [ref=f2e217] [cursor=pointer]
+              - generic [ref=f2e219]:
+                - generic [ref=f2e220]:
+                  - checkbox "启用低档" [checked] [ref=f2e221] [cursor=pointer]
+                  - textbox "档位名称" [ref=f2e222]: 低
+                  - textbox "参数值" [ref=f2e223]: low
+                  - button "删除档位" [ref=f2e224] [cursor=pointer]
+                - generic [ref=f2e228]:
+                  - checkbox "启用中档" [checked] [ref=f2e229] [cursor=pointer]
+                  - textbox "档位名称" [ref=f2e230]: 中
+                  - textbox "参数值" [ref=f2e231]: medium
+                  - button "删除档位" [ref=f2e232] [cursor=pointer]
+                - generic [ref=f2e236]:
+                  - checkbox "启用高档" [checked] [ref=f2e237] [cursor=pointer]
+                  - textbox "档位名称" [ref=f2e238]: 高
+                  - textbox "参数值" [ref=f2e239]: high
+                  - button "删除档位" [ref=f2e240] [cursor=pointer]
+            - group [ref=f2e244]:
+              - generic "高级参数 仅编辑当前模型 variants" [ref=f2e245] [cursor=pointer]:
+                - text: 高级参数
+                - generic [ref=f2e248]: 仅编辑当前模型 variants
+    - contentinfo [ref=f2e168]:
+      - generic [ref=f2e174]:
+        - button "测试配置" [ref=f2e175] [cursor=pointer]
+        - button "保存模型配置" [ref=f2e179] [cursor=pointer]
+  - status:
+    - generic: 模型能力配置已保存

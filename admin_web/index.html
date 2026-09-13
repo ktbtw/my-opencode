@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat Codex 控制台</title>
+    <link rel="stylesheet" href="./styles.css?v=202606102140" />
+  </head>
+  <body>
+    <main id="loginView" class="login-view">
+      <section class="login-card">
+        <div class="brand-mark">CC</div>
+        <p class="eyebrow">Chat Codex</p>
+        <h1>欢迎回来</h1>
+        <p class="muted">进入控制台，继续整理你的工作空间。</p>
+        <form id="loginForm" class="stack-form">
+          <label>
+            <span>服务地址</span>
+            <input id="loginBaseUrl" name="baseUrl" autocomplete="url" placeholder="http://127.0.0.1:8080" />
+          </label>
+          <label>
+            <span>管理员账号</span>
+            <input id="loginUsername" name="username" autocomplete="username" placeholder="admin" />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" />
+          </label>
+          <button id="loginButton" class="primary-button" type="submit">登录管理端</button>
+        </form>
+      </section>
+    </main>
+
+    <main id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-mark small">CC</div>
+          <div>
+            <strong>Chat Codex</strong>
+            <span>控制台</span>
+          </div>
+        </div>
+        <nav>
+          <a class="active" href="#mcp-catalog" data-view="mcpCatalog">MCP 库</a>
+          <a href="#skills" data-view="skills">Skill 库</a>
+          <a href="#tool-catalog" data-view="tools">工具库</a>
+          <a href="#semantic-agents" data-view="semantic">语义 Agent</a>
+          <a href="#runtime-catalog" data-view="runtime">运行时环境</a>
+          <a href="#environment-presets" data-view="environment">环境变量预设</a>
+        </nav>
+        <div class="sidebar-footer">
+          <span id="currentUser">admin</span>
+          <button id="logoutButton" class="ghost-button" type="button">退出</button>
+        </div>
+      </aside>
+
+      <section class="content">
+        <header class="topbar">
+          <div>
+            <p id="topbarEyebrow" class="eyebrow">MCP Catalog</p>
+            <h1 id="topbarTitle">MCP 库</h1>
+            <p id="topbarDescription" class="muted">维护可被客户端发现的 MCP，推荐项会显示在前面。</p>
+          </div>
+          <div class="topbar-actions">
+            <button id="refreshButton" class="secondary-button" type="button">刷新</button>
+            <button id="newButton" class="primary-button" type="button">新增 MCP</button>
+          </div>
+        </header>
+
+        <section class="stats-grid">
+          <article class="stat-card">
+            <span id="statTotalLabel">MCP 总数</span>
+            <strong id="statTotal">0</strong>
+          </article>
+          <article class="stat-card">
+            <span id="statEnabledLabel">已启用</span>
+            <strong id="statEnabled">0</strong>
+          </article>
+          <article class="stat-card">
+            <span id="statDisabledLabel">已停用</span>
+            <strong id="statDisabled">0</strong>
+          </article>
+          <article class="stat-card">
+            <span id="statCategoriesLabel">推荐数量</span>
+            <strong id="statCategories">0</strong>
+          </article>
+        </section>
+
+        <section class="toolbar">
+          <label class="search-box">
+            <span>搜索</span>
+            <input id="searchInput" placeholder="搜索标题、服务名、描述、命令或环境变量" />
+          </label>
+          <label>
+            <span>分类</span>
+            <select id="categoryFilter"></select>
+          </label>
+          <label>
+            <span>状态</span>
+            <select id="statusFilter">
+              <option value="all">全部</option>
+              <option value="enabled">已启用</option>
+              <option value="disabled">已停用</option>
+            </select>
+          </label>
+        </section>
+
+        <section id="grid" class="recommendation-grid"></section>
+        <section id="emptyState" class="empty-state hidden">
+          <strong id="emptyTitle">没有匹配的 MCP</strong>
+          <span id="emptyDescription">调整筛选条件，或点击右上角新增 MCP。</span>
+        </section>
+      </section>
+    </main>
+
+    <section id="drawerOverlay" class="drawer-overlay hidden" aria-hidden="true">
+      <form id="editorForm" class="drawer" aria-label="MCP 编辑器" novalidate>
+        <div class="drawer-header">
+          <div>
+            <p class="eyebrow">Editor</p>
+            <h2 id="drawerTitle">新增 MCP</h2>
+          </div>
+          <button id="closeDrawerButton" class="icon-button" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="drawer-body">
+          <section class="form-section mcp-editor-section">
+            <div class="section-title">
+              <h3>粘贴识别</h3>
+              <span>可选</span>
+            </div>
+            <textarea id="importJson" rows="5" placeholder='粘贴 {"mcpServers": {...}} 或单个 MCP JSON'></textarea>
+            <button id="parseImportButton" class="secondary-button full" type="button">识别并填入表单</button>
+          </section>
+
+          <section class="form-section mcp-editor-section">
+            <div class="section-title">
+              <h3>基础信息</h3>
+              <span>商店展示</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>标题</span>
+                <input id="fieldTitle" required placeholder="Verify MCP" />
+              </label>
+              <label class="catalog-editor-field hidden">
+                <span>MCP ID</span>
+                <input id="catalogFieldId" placeholder="frida-mcp" />
+              </label>
+              <label>
+                <span>服务名</span>
+                <input id="fieldName" required placeholder="verify" />
+              </label>
+              <label class="catalog-editor-field hidden">
+                <span>标签，逗号分隔</span>
+                <input id="catalogFieldTags" placeholder="reverse, android" />
+              </label>
+              <label>
+                <span>来源</span>
+                <input id="fieldSource" placeholder="自定义" />
+              </label>
+              <label class="catalog-editor-field hidden">
+                <span>分类</span>
+                <input id="catalogFieldCategory" placeholder="逆向分析" />
+              </label>
+              <label>
+                <span>排序</span>
+                <input id="fieldSortOrder" type="number" step="1" placeholder="100" />
+              </label>
+              <label class="switch-row">
+                <span id="fieldEnabledText">启用 MCP</span>
+                <input id="fieldEnabled" type="checkbox" />
+              </label>
+              <label class="switch-row catalog-editor-field hidden">
+                <span>推荐显示</span>
+                <input id="catalogFieldRecommended" type="checkbox" />
+              </label>
+            </div>
+            <label>
+              <span>凭证获取地址</span>
+              <input id="fieldCredentialUrl" placeholder="https://example.com/keys" />
+            </label>
+            <label>
+              <span>描述</span>
+              <textarea id="fieldDescription" rows="3" placeholder="说明这个 MCP 能解决什么问题"></textarea>
+            </label>
+          </section>
+
+          <section class="form-section mcp-editor-section">
+            <div class="section-title">
+              <h3>启动配置</h3>
+              <span>启动信息</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>类型</span>
+                <select id="fieldType">
+                  <option value="local">本地 stdio</option>
+                  <option value="remote">远程 HTTP</option>
+                </select>
+              </label>
+              <label>
+                <span>超时毫秒</span>
+                <input id="fieldTimeout" type="number" min="0" step="1000" placeholder="30000" />
+              </label>
+            </div>
+            <label id="commandGroup">
+              <span>启动命令，每行一个参数</span>
+              <textarea id="fieldCommand" rows="4" placeholder="npx&#10;-y&#10;@ktbtw/verify-mcp"></textarea>
+            </label>
+            <label id="urlGroup" class="hidden">
+              <span>远程 URL</span>
+              <input id="fieldUrl" placeholder="https://example.com/mcp" />
+            </label>
+            <label>
+              <span>环境变量 JSON</span>
+              <textarea id="fieldEnvironment" rows="5" spellcheck="false" placeholder='{"API_KEY":"YOUR_API_KEY"}'></textarea>
+            </label>
+            <label>
+              <span>请求头 JSON</span>
+              <textarea id="fieldHeaders" rows="4" spellcheck="false" placeholder='{"Authorization":"Bearer xxx"}'></textarea>
+            </label>
+          </section>
+
+          <section class="form-section mcp-editor-section">
+            <div class="section-title">
+              <h3>安装信息</h3>
+              <span>路径解析</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>源码地址</span>
+                <input id="fieldSourceUrl" placeholder="https://github.com/example/mcp" />
+              </label>
+              <label>
+                <span>包管理器</span>
+                <input id="fieldInstallPackageManager" placeholder="uv / npm / pip / git" />
+              </label>
+            </div>
+            <label>
+              <span>安装命令，每行一条</span>
+              <textarea id="fieldInstallCommands" rows="4" spellcheck="false" placeholder="git clone https://github.com/example/mcp&#10;uv sync"></textarea>
+            </label>
+            <label>
+              <span>构建命令，每行一条</span>
+              <textarea id="fieldBuildCommands" rows="3" spellcheck="false" placeholder="npm install&#10;npm run build"></textarea>
+            </label>
+            <label>
+              <span>运行命令模板，每行一个参数</span>
+              <textarea id="fieldRunCommandTemplate" rows="4" spellcheck="false" placeholder="node&#10;${MCP_HOME}/build/index.js"></textarea>
+            </label>
+            <label>
+              <span>配置文件模板路径</span>
+              <input id="fieldConfigPathTemplate" placeholder="${MCP_HOME}/mcp.toml" />
+            </label>
+            <label>
+              <span>可执行文件名，逗号分隔</span>
+              <input id="fieldExecutableNames" placeholder="frida-analykit-mcp" />
+            </label>
+            <label>
+              <span>安装环境变量 JSON</span>
+              <textarea id="fieldInstallEnvironment" rows="4" spellcheck="false" placeholder='{"GHIDRA_INSTALL_DIR":"${RUNTIME_HOME}/ghidra"}'></textarea>
+            </label>
+            <label>
+              <span>安装说明</span>
+              <textarea id="fieldInstallNotes" rows="3" placeholder="说明授权、外部工具或配置文件要求"></textarea>
+            </label>
+          </section>
+
+          <section class="form-section semantic-editor-section hidden">
+            <div class="section-title">
+              <h3>基础信息</h3>
+              <span>语义配置</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>Agent ID</span>
+                <input id="agentFieldId" disabled />
+              </label>
+              <label>
+                <span>名称</span>
+                <input id="agentFieldName" required />
+              </label>
+              <label>
+                <span>opencode Agent</span>
+                <input id="agentFieldOpencodeName" placeholder="reverse-expert" />
+              </label>
+              <label>
+                <span>图标</span>
+                <input id="agentFieldIcon" placeholder="reverse" />
+              </label>
+              <label>
+                <span>颜色</span>
+                <input id="agentFieldColor" placeholder="primary" />
+              </label>
+              <label>
+                <span>排序</span>
+                <input id="agentFieldSortOrder" type="number" step="1" />
+              </label>
+              <label class="switch-row">
+                <span>启用 Agent</span>
+                <input id="agentFieldEnabled" type="checkbox" />
+              </label>
+            </div>
+            <label>
+              <span>描述</span>
+              <textarea id="agentFieldDescription" rows="3"></textarea>
+            </label>
+          </section>
+
+          <section class="form-section semantic-editor-section hidden">
+            <div class="section-title">
+              <h3>提示词</h3>
+              <span>运行时注入</span>
+            </div>
+            <textarea id="agentFieldPrompt" rows="12" spellcheck="false"></textarea>
+          </section>
+
+          <section class="form-section semantic-editor-section hidden">
+            <div class="section-title">
+              <h3>技能与工具</h3>
+              <span>引用选择</span>
+            </div>
+            <div class="reference-field">
+              <div class="reference-label">
+                <span>Skill</span>
+                <button id="addAgentSkillButton" class="secondary-button compact-button" type="button">添加 Skill</button>
+              </div>
+              <div id="agentSkillPicker" class="selected-reference-list"></div>
+            </div>
+            <div class="reference-field">
+              <div class="reference-label">
+                <span>MCP</span>
+                <button id="addAgentMcpButton" class="secondary-button compact-button" type="button">添加 MCP</button>
+              </div>
+              <div id="agentMcpPicker" class="selected-reference-list"></div>
+            </div>
+            <div class="reference-field">
+              <div class="reference-label">
+                <span>运行时环境</span>
+                <button id="addAgentRuntimeButton" class="secondary-button compact-button" type="button">添加运行时</button>
+              </div>
+              <div id="agentRuntimePicker" class="selected-reference-list"></div>
+            </div>
+            <div class="reference-field">
+              <div class="reference-label">
+                <span>工具权限</span>
+                <button id="resetToolPermissionsButton" class="secondary-button compact-button" type="button">按工具库重置</button>
+              </div>
+              <div id="agentToolPermissionList" class="tool-permission-list"></div>
+            </div>
+            <details class="advanced-editor">
+              <summary>查看 JSON</summary>
+              <textarea id="agentFieldToolPermissions" rows="8" spellcheck="false" placeholder='{"read":"allow","bash":{"*":"ask"}}'></textarea>
+              <button id="applyToolPermissionsJsonButton" class="secondary-button compact-button" type="button">从 JSON 更新列表</button>
+            </details>
+          </section>
+
+          <section class="form-section runtime-editor-section hidden">
+            <div class="section-title">
+              <h3>基础信息</h3>
+              <span>运行时</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>运行时 ID</span>
+                <input id="runtimeFieldId" required placeholder="python" />
+              </label>
+              <label>
+                <span>名称</span>
+                <input id="runtimeFieldName" required placeholder="Python" />
+              </label>
+              <label>
+                <span>类型</span>
+                <select id="runtimeFieldKind">
+                  <option value="language">语言</option>
+                  <option value="package_manager">包管理器</option>
+                  <option value="tool">工具</option>
+                </select>
+              </label>
+              <label>
+                <span>安装策略</span>
+                <select id="runtimeFieldInstallStrategy">
+                  <option value="archive">归档包</option>
+                  <option value="uv_python">uv Python</option>
+                  <option value="custom_command">自定义命令</option>
+                </select>
+              </label>
+              <label>
+                <span>默认版本约束</span>
+                <input id="runtimeFieldDefaultConstraint" placeholder=">=3.12 <3.15" />
+              </label>
+              <label>
+                <span>可执行文件，逗号分隔</span>
+                <input id="runtimeFieldExecutables" placeholder="python, pip" />
+              </label>
+              <label>
+                <span>标签，逗号分隔</span>
+                <input id="runtimeFieldTags" placeholder="language, mcp" />
+              </label>
+              <label>
+                <span>排序</span>
+                <input id="runtimeFieldSortOrder" type="number" step="1" />
+              </label>
+              <label class="switch-row">
+                <span>启用运行时</span>
+                <input id="runtimeFieldEnabled" type="checkbox" />
+              </label>
+            </div>
+            <label>
+              <span>描述</span>
+              <textarea id="runtimeFieldDescription" rows="3"></textarea>
+            </label>
+            <label>
+              <span>环境模板 JSON</span>
+              <textarea id="runtimeFieldEnvTemplate" rows="5" spellcheck="false" placeholder='{"PIP_INDEX_URL":"{python_index_url}"}'></textarea>
+            </label>
+          </section>
+
+          <section class="form-section runtime-editor-section hidden">
+            <div class="section-title">
+              <h3>版本列表</h3>
+              <button id="addRuntimeVersionButton" class="secondary-button compact-button" type="button">添加版本</button>
+            </div>
+            <div id="runtimeVersionList" class="runtime-nested-list"></div>
+          </section>
+
+          <section class="form-section runtime-editor-section hidden">
+            <div class="section-title">
+              <h3>镜像源</h3>
+              <button id="addRuntimeMirrorButton" class="secondary-button compact-button" type="button">添加镜像</button>
+            </div>
+            <div id="runtimeMirrorList" class="runtime-nested-list"></div>
+          </section>
+
+          <section class="form-section runtime-editor-section hidden">
+            <div class="section-title">
+              <h3>平台包</h3>
+              <button id="addRuntimeArtifactButton" class="secondary-button compact-button" type="button">添加包</button>
+            </div>
+            <div id="runtimeArtifactList" class="runtime-nested-list"></div>
+          </section>
+
+          <section class="form-section skill-editor-section hidden">
+            <div class="section-title">
+              <h3>基础信息</h3>
+              <span>Skill</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>Skill ID</span>
+                <input id="skillFieldId" required placeholder="reverse-custom" />
+              </label>
+              <label>
+                <span>名称</span>
+                <input id="skillFieldName" required />
+              </label>
+              <label>
+                <span>来源</span>
+                <input id="skillFieldSource" placeholder="自定义" />
+              </label>
+              <label>
+                <span>分类</span>
+                <input id="skillFieldCategory" placeholder="逆向分析" />
+              </label>
+              <label>
+                <span>标签，逗号分隔</span>
+                <input id="skillFieldTags" placeholder="reverse, android" />
+              </label>
+              <label>
+                <span>排序</span>
+                <input id="skillFieldSortOrder" type="number" step="1" />
+              </label>
+              <label class="switch-row">
+                <span>启用 Skill</span>
+                <input id="skillFieldEnabled" type="checkbox" />
+              </label>
+            </div>
+            <label>
+              <span>描述</span>
+              <textarea id="skillFieldDescription" rows="3"></textarea>
+            </label>
+            <label>
+              <span>内容</span>
+              <textarea id="skillFieldContent" rows="14" spellcheck="false"></textarea>
+            </label>
+            <label>
+              <span>配套文件 JSON</span>
+              <textarea id="skillFieldPackageFiles" rows="8" spellcheck="false" placeholder='[{"path":"references/guide.md","content":"..."}]'></textarea>
+            </label>
+          </section>
+
+          <section class="form-section environment-editor-section hidden">
+            <div class="section-title">
+              <h3>基础信息</h3>
+              <span>环境预设</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>预设 ID</span>
+                <input id="envFieldId" required placeholder="http-proxy-local" />
+              </label>
+              <label>
+                <span>名称</span>
+                <input id="envFieldName" required />
+              </label>
+              <label>
+                <span>分类</span>
+                <input id="envFieldCategory" placeholder="代理" />
+              </label>
+              <label>
+                <span>来源</span>
+                <input id="envFieldSource" placeholder="自定义" />
+              </label>
+              <label>
+                <span>标签，逗号分隔</span>
+                <input id="envFieldTags" placeholder="proxy, network" />
+              </label>
+              <label>
+                <span>排序</span>
+                <input id="envFieldSortOrder" type="number" step="1" />
+              </label>
+              <label class="switch-row">
+                <span>启用预设</span>
+                <input id="envFieldEnabled" type="checkbox" />
+              </label>
+            </div>
+            <label>
+              <span>描述</span>
+              <textarea id="envFieldDescription" rows="3"></textarea>
+            </label>
+            <label>
+              <span>环境变量 JSON</span>
+              <textarea id="envFieldVariables" rows="8" spellcheck="false" placeholder='{"HTTP_PROXY":"http://127.0.0.1:7897"}'></textarea>
+            </label>
+          </section>
+
+          <section class="form-section tool-editor-section hidden">
+            <div class="section-title">
+              <h3>基础信息</h3>
+              <span>工具库</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>工具 ID</span>
+                <input id="toolFieldId" required placeholder="bash-file" />
+              </label>
+              <label>
+                <span>名称</span>
+                <input id="toolFieldName" required />
+              </label>
+              <label>
+                <span>分类</span>
+                <input id="toolFieldCategory" placeholder="基础" />
+              </label>
+              <label>
+                <span>权限键</span>
+                <input id="toolFieldPermissionKey" required placeholder="bash" />
+              </label>
+              <label>
+                <span>匹配模式</span>
+                <input id="toolFieldPattern" placeholder="*" />
+              </label>
+              <label>
+                <span>默认权限</span>
+                <select id="toolFieldDefaultAction">
+                  <option value="ask">询问</option>
+                  <option value="allow">允许</option>
+                  <option value="deny">拒绝</option>
+                </select>
+              </label>
+              <label>
+                <span>标签，逗号分隔</span>
+                <input id="toolFieldTags" placeholder="reverse, shell" />
+              </label>
+              <label>
+                <span>排序</span>
+                <input id="toolFieldSortOrder" type="number" step="1" />
+              </label>
+              <label class="switch-row">
+                <span>启用工具</span>
+                <input id="toolFieldEnabled" type="checkbox" />
+              </label>
+            </div>
+            <label>
+              <span>描述</span>
+              <textarea id="toolFieldDescription" rows="3"></textarea>
+            </label>
+          </section>
+        </div>
+
+        <div class="drawer-footer">
+          <button id="deleteButton" class="danger-button hidden" type="button">删除</button>
+          <div class="spacer"></div>
+          <button class="secondary-button" type="button" id="cancelButton">取消</button>
+          <button id="saveButton" class="primary-button" type="submit">保存</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="confirmOverlay" class="modal-overlay hidden" aria-hidden="true">
+      <div class="confirm-modal">
+        <h2 id="confirmTitle">确认操作</h2>
+        <p id="confirmMessage">确认继续？</p>
+        <div class="modal-actions">
+          <button id="confirmCancel" class="secondary-button" type="button">取消</button>
+          <button id="confirmOk" class="danger-button" type="button">确认</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="referencePickerOverlay" class="modal-overlay hidden" aria-hidden="true">
+      <div class="reference-picker-modal" role="dialog" aria-modal="true" aria-labelledby="referencePickerTitle">
+        <div class="reference-picker-header">
+          <div>
+            <p class="eyebrow">Reference</p>
+            <h2 id="referencePickerTitle">选择引用</h2>
+          </div>
+          <button id="referencePickerClose" class="icon-button" type="button" aria-label="关闭">×</button>
+        </div>
+        <label class="reference-search">
+          <span>搜索</span>
+          <input id="referencePickerSearch" placeholder="搜索名称、描述、来源或标签" />
+        </label>
+        <div id="referencePickerList" class="reference-picker-list"></div>
+        <div class="modal-actions">
+          <button id="referencePickerCancel" class="secondary-button" type="button">取消</button>
+          <button id="referencePickerApply" class="primary-button" type="button">确定</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="./app.js?v=202606062220"></script>
+  </body>
+</html>

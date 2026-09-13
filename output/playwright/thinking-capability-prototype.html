@@ -1,0 +1,989 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="data:,">
+  <title>模型思考能力配置原型</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      --bg: #f2f6fc;
+      --surface: #ffffff;
+      --surface-raised: #fafcff;
+      --input: #f8fafd;
+      --border: #d0ddef;
+      --border-light: #e8eff8;
+      --text: #0f1729;
+      --text-2: #4a5d7a;
+      --muted: #8fa3bf;
+      --blue: #2563eb;
+      --blue-hover: #1d4ed8;
+      --blue-soft: #eff6ff;
+      --blue-border: #bfd7ff;
+      --green: #15803d;
+      --green-soft: #f0fdf4;
+      --green-border: #bbf7d0;
+      --amber: #b45309;
+      --amber-soft: #fff7ed;
+      --amber-border: #fed7aa;
+      --red: #dc2626;
+      --red-soft: #fef2f2;
+      --shadow: 0 24px 70px rgba(34, 59, 97, .19), 0 4px 16px rgba(34, 59, 97, .08);
+      --radius-sm: 6px;
+      --radius: 8px;
+      --radius-lg: 14px;
+    }
+
+    * { box-sizing: border-box; letter-spacing: 0; }
+
+    html, body { margin: 0; min-height: 100%; }
+
+    body {
+      min-width: 320px;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+    }
+
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { letter-spacing: 0; }
+    button, select, input[type="checkbox"] { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, .18);
+      outline-offset: 2px;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: 226px minmax(0, 1fr);
+      min-height: 100dvh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 60px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--border-light);
+      font-size: 15px;
+      font-weight: 750;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 29px;
+      height: 29px;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--blue);
+      color: white;
+    }
+
+    .brand-mark svg { width: 17px; height: 17px; stroke-width: 2; }
+    .nav { padding: 14px 10px; }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      height: 40px;
+      padding: 0 11px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-2);
+      text-align: left;
+    }
+
+    .nav-item + .nav-item { margin-top: 3px; }
+    .nav-item.active { background: var(--blue-soft); color: var(--blue); font-weight: 650; }
+    .nav-item svg { width: 17px; height: 17px; stroke-width: 1.8; }
+
+    .workspace { min-width: 0; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      height: 60px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, .96);
+    }
+
+    .crumb { color: var(--muted); font-size: 12px; }
+    .crumb strong { color: var(--text); font-weight: 650; }
+    .topbar-actions { display: flex; gap: 5px; margin-left: auto; }
+
+    .icon-button {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--text-2);
+    }
+
+    .icon-button:hover { border-color: var(--border); background: var(--surface-raised); }
+    .icon-button:active, .button:active, .seg-button:active { transform: translateY(1px); }
+    .icon-button svg { width: 18px; height: 18px; stroke-width: 1.9; }
+
+    .page {
+      height: calc(100dvh - 60px);
+      overflow: hidden;
+      padding: 28px;
+      background: linear-gradient(145deg, #eff4fb 0%, #f7faff 68%, #f2f6fc 100%);
+    }
+
+    .page-head { display: flex; align-items: flex-end; gap: 16px; max-width: 1100px; margin: 0 auto 18px; }
+    .page-head h1 { margin: 0; font-size: 23px; line-height: 1.2; }
+    .page-head p { margin: 6px 0 0; color: var(--text-2); font-size: 13px; }
+
+    .ghost-panel {
+      max-width: 1100px;
+      min-height: 350px;
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      opacity: .65;
+    }
+
+    .ghost-head { display: flex; align-items: center; height: 58px; padding: 0 18px; border-bottom: 1px solid var(--border-light); }
+    .ghost-head strong { font-size: 14px; }
+    .ghost-head span { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .ghost-lines { padding: 18px; }
+    .ghost-line { height: 58px; border-bottom: 1px solid var(--border-light); }
+
+    .scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(37, 52, 75, .28);
+      backdrop-filter: blur(2px);
+    }
+
+    .dialog {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      width: min(100%, 1000px);
+      height: min(760px, calc(100dvh - 48px));
+      overflow: hidden;
+      border: 1px solid rgba(208, 221, 239, .95);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .dialog-header {
+      display: flex;
+      align-items: center;
+      min-height: 64px;
+      padding: 0 16px 0 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .dialog-title { min-width: 0; }
+    .dialog-title h2 { margin: 0; font-size: 16px; line-height: 1.25; }
+    .dialog-title p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+    .dialog-header .icon-button { margin-left: auto; }
+
+    .dialog-body {
+      display: grid;
+      grid-template-columns: 352px minmax(0, 1fr);
+      min-height: 0;
+    }
+
+    .model-pane {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 0;
+      border-right: 1px solid var(--border);
+      background: var(--surface-raised);
+    }
+
+    .model-tools { padding: 14px 14px 12px; border-bottom: 1px solid var(--border-light); }
+    .tools-row { display: flex; align-items: center; gap: 8px; }
+
+    .search-wrap {
+      position: relative;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .search-wrap svg {
+      position: absolute;
+      top: 50%;
+      left: 11px;
+      width: 16px;
+      height: 16px;
+      color: var(--muted);
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+
+    .search-input, .field, textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--input);
+    }
+
+    .search-input {
+      height: 38px;
+      padding: 0 11px 0 35px;
+      font-size: 12px;
+    }
+
+    .search-input::placeholder, textarea::placeholder { color: var(--muted); }
+    .search-input:focus, .field:focus, textarea:focus { border-color: var(--blue); background: white; outline: none; }
+
+    .refresh-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      flex: 0 0 38px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text-2);
+    }
+
+    .refresh-button svg { width: 16px; height: 16px; }
+    .refresh-button.loading svg { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .tool-meta { display: flex; align-items: center; margin-top: 10px; color: var(--muted); font-size: 11px; }
+    .tool-meta button { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--blue); font-size: 11px; }
+
+    .model-list { min-height: 0; overflow: auto; padding: 8px; }
+
+    .model-row {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr) 32px;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 70px;
+      padding: 9px 8px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      background: transparent;
+      text-align: left;
+    }
+
+    .model-row + .model-row { margin-top: 4px; }
+    .model-row:hover { background: white; border-color: var(--border-light); }
+    .model-row.selected { background: var(--blue-soft); border-color: var(--blue-border); }
+    .model-row input { width: 17px; height: 17px; margin: 0; accent-color: var(--blue); }
+    .model-main { min-width: 0; }
+    .model-name { display: block; overflow: hidden; font-size: 13px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+    .model-id { display: block; overflow: hidden; margin-top: 3px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .model-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .model-status::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
+    .model-status.runtime { color: var(--blue); }
+    .model-status.manual { color: var(--amber); }
+    .model-status.none { color: var(--muted); }
+
+    .row-open {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .model-row:hover .row-open, .model-row.selected .row-open { color: var(--blue); background: white; }
+    .row-open svg { width: 16px; height: 16px; }
+
+    .config-pane {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+      min-height: 0;
+      background: var(--surface);
+    }
+
+    .config-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 72px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border-light);
+    }
+
+    .mobile-back { display: none; }
+    .model-symbol {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      flex: 0 0 38px;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .model-symbol svg { width: 19px; height: 19px; stroke-width: 1.9; }
+    .config-title { min-width: 0; }
+    .config-title h3 { overflow: hidden; margin: 0; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+    .config-title p { overflow: hidden; margin: 4px 0 0; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .source-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 26px;
+      margin-left: auto;
+      padding: 0 8px;
+      border: 1px solid var(--green-border);
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .source-badge::before { width: 6px; height: 6px; border-radius: 50%; background: currentColor; content: ""; }
+    .source-badge.runtime { border-color: var(--blue-border); background: var(--blue-soft); color: var(--blue); }
+    .source-badge.manual { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+    .source-badge.none { border-color: var(--border); background: var(--input); color: var(--muted); }
+
+    .config-scroll { min-height: 0; overflow: auto; padding: 18px 20px 24px; }
+
+    .section + .section { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--border-light); }
+    .section-heading { display: flex; align-items: center; margin-bottom: 11px; }
+    .section-heading h4 { margin: 0; font-size: 12px; font-weight: 750; }
+    .section-heading span { margin-left: auto; color: var(--muted); font-size: 10px; }
+
+    .segment {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      width: 100%;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--input);
+    }
+
+    .seg-button {
+      height: 36px;
+      border: 0;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-2);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .seg-button.active { background: white; color: var(--blue); box-shadow: 0 1px 4px rgba(44, 72, 113, .12); }
+
+    .detected-block {
+      margin-top: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface-raised);
+    }
+
+    .detected-top { display: flex; align-items: flex-start; gap: 10px; padding: 12px; }
+    .detected-icon { display: grid; width: 28px; height: 28px; flex: 0 0 28px; place-items: center; border-radius: 7px; background: var(--green-soft); color: var(--green); }
+    .detected-icon svg { width: 15px; height: 15px; }
+    .detected-copy { min-width: 0; }
+    .detected-copy strong { display: block; font-size: 12px; }
+    .detected-copy p { margin: 4px 0 0; color: var(--text-2); font-size: 11px; line-height: 1.55; }
+
+    .parameter-line {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 37px;
+      padding: 7px 12px;
+      border-top: 1px solid var(--border-light);
+      color: var(--muted);
+      font-size: 10px;
+      overflow-x: auto;
+    }
+
+    .code-chip { padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: white; color: var(--text-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 12px; }
+    .summary-item { min-height: 62px; padding: 10px 11px; border: 1px solid var(--border-light); border-radius: var(--radius); background: var(--surface); }
+    .summary-item span { color: var(--muted); font-size: 10px; }
+    .summary-item strong { display: block; margin-top: 7px; font-size: 12px; }
+
+    .level-label { display: block; margin: 14px 0 8px; color: var(--text-2); font-size: 11px; font-weight: 650; }
+    .level-pills { display: flex; flex-wrap: wrap; gap: 7px; }
+
+    .level-pill {
+      min-width: 64px;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--text-2);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .level-pill.selected { border-color: var(--blue-border); background: var(--blue-soft); color: var(--blue); }
+
+    .notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 10px 11px;
+      border-left: 3px solid var(--blue);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      background: var(--blue-soft);
+      color: var(--text-2);
+      font-size: 10px;
+      line-height: 1.55;
+    }
+
+    .notice svg { width: 14px; height: 14px; flex: 0 0 14px; margin-top: 1px; color: var(--blue); }
+    .manual-panel[hidden], .auto-panel[hidden], .json-body[hidden] { display: none; }
+
+    .toggle-row { display: flex; align-items: center; min-height: 42px; }
+    .toggle-copy { min-width: 0; }
+    .toggle-copy strong { display: block; font-size: 12px; }
+    .toggle-copy span { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+
+    .switch { position: relative; width: 42px; height: 24px; margin-left: auto; flex: 0 0 42px; }
+    .switch input { position: absolute; opacity: 0; pointer-events: none; }
+    .switch-track { position: absolute; inset: 0; border-radius: 999px; background: #cbd5e1; transition: .18s ease; }
+    .switch-track::after { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(15, 23, 41, .2); content: ""; transition: .18s ease; }
+    .switch input:checked + .switch-track { background: var(--blue); }
+    .switch input:checked + .switch-track::after { transform: translateX(18px); }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-top: 14px; }
+    .form-group label { display: block; margin-bottom: 6px; color: var(--text-2); font-size: 10px; font-weight: 650; }
+    .field { height: 38px; padding: 0 10px; font-size: 11px; }
+
+    .level-editor { margin-top: 15px; }
+    .editor-head { display: flex; align-items: center; margin-bottom: 7px; }
+    .editor-head strong { font-size: 11px; }
+
+    .text-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+      padding: 4px 6px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--blue);
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .text-action:hover { background: var(--blue-soft); }
+    .text-action svg { width: 13px; height: 13px; }
+    .level-table { overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); }
+
+    .level-row {
+      display: grid;
+      grid-template-columns: 28px minmax(80px, .8fr) minmax(100px, 1fr) 30px;
+      align-items: center;
+      gap: 7px;
+      min-height: 43px;
+      padding: 5px 7px;
+      border-bottom: 1px solid var(--border-light);
+      background: white;
+    }
+
+    .level-row:last-child { border-bottom: 0; }
+    .level-row input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+    .mini-input { width: 100%; height: 31px; padding: 0 8px; border: 1px solid transparent; border-radius: 5px; background: var(--input); font-size: 10px; }
+    .mini-input:focus { border-color: var(--blue); background: white; outline: none; }
+    .delete-level { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); }
+    .delete-level:hover { background: var(--red-soft); color: var(--red); }
+    .delete-level svg { width: 14px; height: 14px; }
+
+    .advanced { margin-top: 16px; border-top: 1px solid var(--border-light); }
+    .advanced summary { display: flex; align-items: center; min-height: 42px; color: var(--text-2); font-size: 11px; font-weight: 650; cursor: pointer; list-style: none; }
+    .advanced summary::-webkit-details-marker { display: none; }
+    .advanced summary svg { width: 14px; height: 14px; margin-right: 7px; transition: transform .18s; }
+    .advanced[open] summary svg { transform: rotate(90deg); }
+    .advanced summary span { margin-left: auto; color: var(--muted); font-size: 9px; font-weight: 500; }
+    .json-toolbar { display: flex; align-items: center; margin-bottom: 7px; }
+    .json-toolbar span { color: var(--muted); font-size: 9px; }
+    .json-toolbar .text-action { margin-left: auto; }
+
+    textarea {
+      min-height: 142px;
+      resize: vertical;
+      padding: 10px;
+      color: #23324a;
+      font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .dialog-footer {
+      display: flex;
+      align-items: center;
+      min-height: 68px;
+      padding: 0 18px;
+      border-top: 1px solid var(--border);
+      background: var(--surface-raised);
+    }
+
+    .footer-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+    .footer-status svg { width: 14px; height: 14px; color: var(--green); }
+    .footer-actions { display: flex; gap: 9px; margin-left: auto; }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-width: 94px;
+      height: 38px;
+      padding: 0 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: white;
+      color: var(--text-2);
+      font-size: 11px;
+      font-weight: 680;
+      white-space: nowrap;
+    }
+
+    .button:hover { border-color: var(--blue-border); color: var(--blue); }
+    .button.primary { border-color: var(--blue); background: var(--blue); color: white; }
+    .button.primary:hover { border-color: var(--blue-hover); background: var(--blue-hover); color: white; }
+    .button svg { width: 15px; height: 15px; }
+    .button.testing svg { animation: spin .8s linear infinite; }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 0 14px;
+      border: 1px solid #2b3a50;
+      border-radius: 8px;
+      background: #111827;
+      color: white;
+      box-shadow: 0 12px 30px rgba(15, 23, 41, .25);
+      font-size: 11px;
+      opacity: 0;
+      transform: translate(-50%, 14px);
+      transition: .2s ease;
+      pointer-events: none;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .toast svg { width: 15px; height: 15px; color: #86efac; }
+    .empty { display: none; padding: 36px 12px; color: var(--muted); text-align: center; font-size: 11px; }
+
+    @media (max-width: 760px) {
+      .app-shell { display: block; }
+      .sidebar { display: none; }
+      .topbar { height: 54px; padding: 0 14px; }
+      .page { height: calc(100dvh - 54px); padding: 18px 14px; }
+      .page-head h1 { font-size: 19px; }
+      .page-head p { max-width: 280px; font-size: 11px; }
+      .scrim { padding: 0; place-items: stretch; background: rgba(37, 52, 75, .18); backdrop-filter: none; }
+      .dialog { width: 100%; height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
+      .dialog-header { min-height: 58px; padding: 0 10px 0 16px; }
+      .dialog-title h2 { font-size: 15px; }
+      .dialog-title p { display: none; }
+      .dialog-body { display: block; position: relative; min-height: 0; overflow: hidden; }
+      .model-pane, .config-pane { position: absolute; inset: 0; width: 100%; transition: transform .22s ease, visibility .22s; }
+      .model-pane { border-right: 0; transform: translateX(0); visibility: visible; }
+      .config-pane { background: white; transform: translateX(100%); visibility: hidden; }
+      .dialog.mobile-config .model-pane { transform: translateX(-24%); visibility: hidden; }
+      .dialog.mobile-config .config-pane { transform: translateX(0); visibility: visible; }
+      .model-tools { padding: 12px 14px; }
+      .model-list { padding: 8px 10px 18px; }
+      .model-row { min-height: 76px; padding: 10px 9px; }
+      .mobile-back { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border: 0; border-radius: 7px; background: var(--input); color: var(--text-2); }
+      .mobile-back svg { width: 18px; height: 18px; }
+      .config-head { min-height: 64px; padding: 10px 14px; gap: 9px; }
+      .model-symbol { display: none; }
+      .config-title h3 { font-size: 14px; }
+      .source-badge { padding: 0 7px; }
+      .config-scroll { padding: 16px 14px 28px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .section + .section { margin-top: 18px; padding-top: 18px; }
+      .dialog-footer { min-height: 66px; padding: 0 12px; }
+      .footer-status { display: none; }
+      .footer-actions { display: grid; grid-template-columns: 1fr 1.15fr; width: 100%; margin: 0; }
+      .button { min-width: 0; }
+      .level-row { grid-template-columns: 25px minmax(68px, .7fr) minmax(90px, 1fr) 28px; gap: 5px; padding: 5px; }
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      .toast { bottom: 78px; width: max-content; max-width: calc(100% - 28px); }
+    }
+
+    @media (max-width: 390px) {
+      .source-badge { max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+      .summary-grid { grid-template-columns: 1fr; }
+      .level-row { grid-template-columns: 23px minmax(60px, .7fr) minmax(82px, 1fr) 27px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell" aria-hidden="true">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark"><i data-lucide="terminal-square"></i></span>OPERIT</div>
+      <nav class="nav">
+        <button class="nav-item"><i data-lucide="layout-dashboard"></i>设备概览</button>
+        <button class="nav-item active"><i data-lucide="cpu"></i>AI 配置</button>
+        <button class="nav-item"><i data-lucide="bot"></i>Agent</button>
+        <button class="nav-item"><i data-lucide="database"></i>项目记忆</button>
+      </nav>
+    </aside>
+    <main class="workspace">
+      <header class="topbar">
+        <div class="crumb">设备 / MacBook Pro / <strong>AI 配置</strong></div>
+        <div class="topbar-actions"><button class="icon-button"><i data-lucide="bell"></i></button><button class="icon-button"><i data-lucide="settings"></i></button></div>
+      </header>
+      <section class="page">
+        <div class="page-head"><div><h1>设备级全局配置</h1><p>管理这台设备上的 AI 供应商、模型与默认能力。</p></div></div>
+        <div class="ghost-panel"><div class="ghost-head"><strong>OpenRouter</strong><span>12 个模型</span></div><div class="ghost-lines"><div class="ghost-line"></div><div class="ghost-line"></div><div class="ghost-line"></div></div></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="scrim">
+    <section class="dialog" id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+      <header class="dialog-header">
+        <div class="dialog-title">
+          <h2 id="dialog-title">管理模型 · openrouter</h2>
+          <p>https://openrouter.ai/api/v1</p>
+        </div>
+        <button class="icon-button" type="button" title="关闭"><i data-lucide="x"></i></button>
+      </header>
+
+      <div class="dialog-body">
+        <aside class="model-pane">
+          <div class="model-tools">
+            <div class="tools-row">
+              <label class="search-wrap">
+                <i data-lucide="search"></i>
+                <input class="search-input" id="model-search" type="search" placeholder="搜索模型名称或 ID" autocomplete="off">
+              </label>
+              <button class="refresh-button" id="refresh-button" type="button" title="刷新模型"><i data-lucide="refresh-cw"></i></button>
+            </div>
+            <div class="tool-meta"><span id="model-count">已选择 4 / 4 个模型</span><button type="button" id="toggle-all">清空选择</button></div>
+          </div>
+
+          <div class="model-list" id="model-list">
+            <button class="model-row selected" type="button" data-model="ox-alpha" data-search="stealth ox alpha openrouter">
+              <input type="checkbox" checked aria-label="选择 stealth/ox-alpha" onclick="event.stopPropagation()">
+              <span class="model-main"><span class="model-name">stealth/ox-alpha</span><span class="model-id">stealth/ox-alpha</span><span class="model-status">已检测 · 强度可调</span></span>
+              <span class="row-open"><i data-lucide="sliders-horizontal"></i></span>
+            </button>
+            <button class="model-row" type="button" data-model="grok" data-search="grok 4.6 xai runtime">
+              <input type="checkbox" checked aria-label="选择 Grok 4.6" onclick="event.stopPropagation()">
+              <span class="model-main"><span class="model-name">Grok 4.6</span><span class="model-id">x-ai/grok-4.6</span><span class="model-status runtime">Runtime · 强度可调</span></span>
+              <span class="row-open"><i data-lucide="sliders-horizontal"></i></span>
+            </button>
+            <button class="model-row" type="button" data-model="claude" data-search="claude sonnet 4.5 anthropic manual">
+              <input type="checkbox" checked aria-label="选择 Claude Sonnet 4.5" onclick="event.stopPropagation()">
+              <span class="model-main"><span class="model-name">Claude Sonnet 4.5</span><span class="model-id">anthropic/claude-sonnet-4.5</span><span class="model-status manual">手动覆盖 · 3 个档位</span></span>
+              <span class="row-open"><i data-lucide="sliders-horizontal"></i></span>
+            </button>
+            <button class="model-row" type="button" data-model="legacy" data-search="legacy chat vendor unsupported">
+              <input type="checkbox" checked aria-label="选择 Legacy Chat" onclick="event.stopPropagation()">
+              <span class="model-main"><span class="model-name">Legacy Chat</span><span class="model-id">vendor/legacy-chat</span><span class="model-status none">未检测到思考能力</span></span>
+              <span class="row-open"><i data-lucide="sliders-horizontal"></i></span>
+            </button>
+            <div class="empty" id="empty-search">没有匹配的模型</div>
+          </div>
+        </aside>
+
+        <section class="config-pane">
+          <header class="config-head">
+            <button class="mobile-back" id="mobile-back" type="button" title="返回模型列表"><i data-lucide="arrow-left"></i></button>
+            <span class="model-symbol"><i data-lucide="brain-circuit"></i></span>
+            <div class="config-title"><h3 id="config-name">stealth/ox-alpha</h3><p id="config-id">openrouter · stealth/ox-alpha</p></div>
+            <span class="source-badge" id="source-badge">接口已检测</span>
+          </header>
+
+          <div class="config-scroll">
+            <section class="section">
+              <div class="section-heading"><h4>配置来源</h4><span>手动配置始终优先</span></div>
+              <div class="segment" id="source-segment">
+                <button class="seg-button active" type="button" data-source="auto">自动识别</button>
+                <button class="seg-button" type="button" data-source="manual">手动覆盖</button>
+              </div>
+
+              <div class="auto-panel" id="auto-panel">
+                <div class="detected-block">
+                  <div class="detected-top">
+                    <span class="detected-icon"><i data-lucide="badge-check"></i></span>
+                    <div class="detected-copy"><strong id="detected-title">OpenRouter 声明该模型支持可调思考</strong><p id="detected-copy">能力由模型接口返回，OpenCode 已生成可用档位。无需额外配置。</p></div>
+                  </div>
+                  <div class="parameter-line" id="parameters"><span>支持参数</span><span class="code-chip">reasoning</span><span class="code-chip">reasoning_effort</span><span class="code-chip">include_reasoning</span></div>
+                </div>
+
+                <div class="summary-grid">
+                  <div class="summary-item"><span>控制方式</span><strong id="auto-control">思考强度</strong></div>
+                  <div class="summary-item"><span>参数协议</span><strong id="auto-protocol">OpenRouter</strong></div>
+                </div>
+
+                <span class="level-label">聊天界面将显示</span>
+                <div class="level-pills" id="auto-levels"><button class="level-pill selected" type="button">低</button><button class="level-pill" type="button">高</button></div>
+                <div class="notice"><i data-lucide="info"></i><span>自动识别不会把运行时结果保存成手动覆盖；刷新模型后会继续跟随接口能力变化。</span></div>
+              </div>
+
+              <div class="manual-panel" id="manual-panel" hidden>
+                <div class="toggle-row">
+                  <div class="toggle-copy"><strong>支持思考控制</strong><span>关闭后聊天界面不显示思考强度</span></div>
+                  <label class="switch"><input id="thinking-enabled" type="checkbox" checked><span class="switch-track"></span></label>
+                </div>
+
+                <div id="manual-fields">
+                  <div class="form-grid">
+                    <div class="form-group"><label for="control-type">控制方式</label><select class="field" id="control-type"><option value="effort">思考强度</option><option value="budget">Token 预算</option><option value="toggle">仅开关</option></select></div>
+                    <div class="form-group"><label for="protocol-type">参数协议</label><select class="field" id="protocol-type"><option>OpenRouter · reasoning.effort</option><option>OpenAI 兼容 · reasoning_effort</option><option>Anthropic · thinking</option><option>Google · thinkingConfig</option><option>自定义 variants</option></select></div>
+                    <div class="form-group"><label for="default-level">默认档位</label><select class="field" id="default-level"><option>不指定，跟随模型默认</option><option>低</option><option>中</option><option>高</option></select></div>
+                    <div class="form-group"><label for="display-type">聊天控件</label><select class="field" id="display-type"><option>自动选择</option><option>分段控件</option><option>下拉菜单</option></select></div>
+                  </div>
+
+                  <div class="level-editor">
+                    <div class="editor-head"><strong>可用档位</strong><button class="text-action" id="add-level" type="button"><i data-lucide="plus"></i>添加档位</button></div>
+                    <div class="level-table" id="level-table">
+                      <div class="level-row"><input type="checkbox" checked aria-label="启用低档"><input class="mini-input" value="低" aria-label="档位名称"><input class="mini-input" value="low" aria-label="参数值"><button class="delete-level" type="button" title="删除档位"><i data-lucide="trash-2"></i></button></div>
+                      <div class="level-row"><input type="checkbox" checked aria-label="启用中档"><input class="mini-input" value="中" aria-label="档位名称"><input class="mini-input" value="medium" aria-label="参数值"><button class="delete-level" type="button" title="删除档位"><i data-lucide="trash-2"></i></button></div>
+                      <div class="level-row"><input type="checkbox" checked aria-label="启用高档"><input class="mini-input" value="高" aria-label="档位名称"><input class="mini-input" value="high" aria-label="参数值"><button class="delete-level" type="button" title="删除档位"><i data-lucide="trash-2"></i></button></div>
+                    </div>
+                  </div>
+
+                  <details class="advanced">
+                    <summary><i data-lucide="chevron-right"></i>高级参数<span>仅编辑当前模型 variants</span></summary>
+                    <div class="json-body">
+                      <div class="json-toolbar"><span>保存前自动校验 JSON 结构</span><button class="text-action" id="format-json" type="button"><i data-lucide="braces"></i>格式化</button></div>
+                      <textarea id="json-editor" spellcheck="false">{
+  "low": { "reasoning": { "effort": "low" } },
+  "medium": { "reasoning": { "effort": "medium" } },
+  "high": { "reasoning": { "effort": "high" } }
+}</textarea>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </div>
+
+      <footer class="dialog-footer">
+        <div class="footer-status"><i data-lucide="shield-check"></i><span>配置只作用于当前模型</span></div>
+        <div class="footer-actions">
+          <button class="button" id="test-button" type="button"><i data-lucide="flask-conical"></i><span>测试配置</span></button>
+          <button class="button primary" id="save-button" type="button"><i data-lucide="save"></i>保存模型配置</button>
+        </div>
+      </footer>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status"><i data-lucide="circle-check"></i><span>模型能力配置已保存</span></div>
+
+  <script>
+    const models = {
+      "ox-alpha": {
+        name: "stealth/ox-alpha", id: "openrouter · stealth/ox-alpha", source: "接口已检测", sourceClass: "",
+        title: "OpenRouter 声明该模型支持可调思考", copy: "能力由模型接口返回，OpenCode 已生成可用档位。无需额外配置。",
+        control: "思考强度", protocol: "OpenRouter", params: ["reasoning", "reasoning_effort", "include_reasoning"], levels: ["低", "高"], mode: "auto"
+      },
+      grok: {
+        name: "Grok 4.6", id: "openrouter · x-ai/grok-4.6", source: "Runtime 已确认", sourceClass: "runtime",
+        title: "OpenCode Runtime 已确认该模型支持可调思考", copy: "当前运行时返回了两个可用 variants，聊天界面可以直接切换。",
+        control: "思考强度", protocol: "OpenRouter", params: ["reasoning"], levels: ["低", "高"], mode: "auto"
+      },
+      claude: {
+        name: "Claude Sonnet 4.5", id: "openrouter · anthropic/claude-sonnet-4.5", source: "手动覆盖", sourceClass: "manual",
+        title: "当前使用模型级手动配置", copy: "手动配置优先于接口声明和 OpenCode 推断结果。",
+        control: "思考强度", protocol: "Anthropic", params: ["thinking", "effort"], levels: ["低", "中", "高"], mode: "manual"
+      },
+      legacy: {
+        name: "Legacy Chat", id: "openrouter · vendor/legacy-chat", source: "未检测到", sourceClass: "none",
+        title: "接口没有返回思考能力声明", copy: "该模型可能不支持思考控制，也可以切换到手动覆盖进行配置。",
+        control: "未识别", protocol: "未识别", params: [], levels: [], mode: "auto"
+      }
+    };
+
+    const dialog = document.getElementById("dialog");
+    const rows = [...document.querySelectorAll(".model-row")];
+    const sourceButtons = [...document.querySelectorAll("[data-source]")];
+    const autoPanel = document.getElementById("auto-panel");
+    const manualPanel = document.getElementById("manual-panel");
+    const badge = document.getElementById("source-badge");
+    let activeModel = "ox-alpha";
+
+    function iconRefresh() { if (window.lucide) lucide.createIcons(); }
+
+    function setSource(mode) {
+      sourceButtons.forEach(button => button.classList.toggle("active", button.dataset.source === mode));
+      autoPanel.hidden = mode !== "auto";
+      manualPanel.hidden = mode !== "manual";
+      const model = models[activeModel];
+      badge.textContent = mode === "manual" ? "手动覆盖" : model.source;
+      badge.className = "source-badge " + (mode === "manual" ? "manual" : model.sourceClass);
+    }
+
+    function renderModel(key) {
+      activeModel = key;
+      const model = models[key];
+      document.getElementById("config-name").textContent = model.name;
+      document.getElementById("config-id").textContent = model.id;
+      document.getElementById("detected-title").textContent = model.title;
+      document.getElementById("detected-copy").textContent = model.copy;
+      document.getElementById("auto-control").textContent = model.control;
+      document.getElementById("auto-protocol").textContent = model.protocol;
+
+      const params = document.getElementById("parameters");
+      params.innerHTML = "<span>支持参数</span>" + (model.params.length ? model.params.map(item => `<span class="code-chip">${item}</span>`).join("") : '<span class="code-chip">无声明</span>');
+      document.getElementById("auto-levels").innerHTML = model.levels.length ? model.levels.map((item, index) => `<button class="level-pill ${index === 0 ? "selected" : ""}" type="button">${item}</button>`).join("") : '<button class="level-pill" type="button">默认</button>';
+      rows.forEach(row => row.classList.toggle("selected", row.dataset.model === key));
+      setSource(model.mode);
+      if (window.innerWidth <= 760) dialog.classList.add("mobile-config");
+    }
+
+    rows.forEach(row => row.addEventListener("click", event => {
+      if (event.target.matches('input[type="checkbox"]')) return;
+      renderModel(row.dataset.model);
+    }));
+
+    sourceButtons.forEach(button => button.addEventListener("click", () => {
+      models[activeModel].mode = button.dataset.source;
+      setSource(button.dataset.source);
+    }));
+
+    document.getElementById("mobile-back").addEventListener("click", () => dialog.classList.remove("mobile-config"));
+
+    const search = document.getElementById("model-search");
+    search.addEventListener("input", () => {
+      const query = search.value.trim().toLowerCase();
+      let visible = 0;
+      rows.forEach(row => {
+        const show = row.dataset.search.includes(query);
+        row.style.display = show ? "grid" : "none";
+        if (show) visible += 1;
+      });
+      document.getElementById("empty-search").style.display = visible ? "none" : "block";
+    });
+
+    function updateCount() {
+      const checks = rows.map(row => row.querySelector('input[type="checkbox"]'));
+      const selected = checks.filter(item => item.checked).length;
+      document.getElementById("model-count").textContent = `已选择 ${selected} / ${checks.length} 个模型`;
+      document.getElementById("toggle-all").textContent = selected ? "清空选择" : "全部选择";
+    }
+
+    rows.forEach(row => row.querySelector('input[type="checkbox"]').addEventListener("change", updateCount));
+    document.getElementById("toggle-all").addEventListener("click", () => {
+      const checks = rows.map(row => row.querySelector('input[type="checkbox"]'));
+      const next = !checks.some(item => item.checked);
+      checks.forEach(item => item.checked = next);
+      updateCount();
+    });
+
+    document.getElementById("refresh-button").addEventListener("click", event => {
+      const button = event.currentTarget;
+      button.classList.add("loading");
+      setTimeout(() => { button.classList.remove("loading"); showToast("模型列表已刷新"); }, 850);
+    });
+
+    document.getElementById("thinking-enabled").addEventListener("change", event => {
+      const fields = document.getElementById("manual-fields");
+      fields.style.opacity = event.target.checked ? "1" : ".42";
+      fields.style.pointerEvents = event.target.checked ? "auto" : "none";
+    });
+
+    document.getElementById("add-level").addEventListener("click", () => {
+      const row = document.createElement("div");
+      row.className = "level-row";
+      row.innerHTML = '<input type="checkbox" checked aria-label="启用自定义档位"><input class="mini-input" value="自定义" aria-label="档位名称"><input class="mini-input" value="custom" aria-label="参数值"><button class="delete-level" type="button" title="删除档位"><i data-lucide="trash-2"></i></button>';
+      document.getElementById("level-table").appendChild(row);
+      bindDelete(row.querySelector(".delete-level"));
+      iconRefresh();
+      row.querySelector(".mini-input").focus();
+    });
+
+    function bindDelete(button) { button.addEventListener("click", () => button.closest(".level-row").remove()); }
+    document.querySelectorAll(".delete-level").forEach(bindDelete);
+
+    document.getElementById("format-json").addEventListener("click", () => {
+      const editor = document.getElementById("json-editor");
+      try { editor.value = JSON.stringify(JSON.parse(editor.value), null, 2); showToast("JSON 格式正确"); }
+      catch (_) { showToast("JSON 格式有误，请检查括号和逗号"); }
+    });
+
+    document.getElementById("test-button").addEventListener("click", event => {
+      const button = event.currentTarget;
+      const label = button.querySelector("span");
+      button.classList.add("testing");
+      label.textContent = "验证中";
+      setTimeout(() => { button.classList.remove("testing"); label.textContent = "测试配置"; showToast("验证通过，档位参数可用"); }, 1300);
+    });
+
+    document.getElementById("save-button").addEventListener("click", () => showToast("模型能力配置已保存"));
+
+    let toastTimer;
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.querySelector("span").textContent = message;
+      toast.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    document.querySelectorAll(".level-pills").forEach(container => container.addEventListener("click", event => {
+      const button = event.target.closest(".level-pill");
+      if (!button) return;
+      container.querySelectorAll(".level-pill").forEach(item => item.classList.toggle("selected", item === button));
+    }));
+
+    window.addEventListener("resize", () => { if (window.innerWidth > 760) dialog.classList.remove("mobile-config"); });
+    iconRefresh();
+  </script>
+</body>
+</html>

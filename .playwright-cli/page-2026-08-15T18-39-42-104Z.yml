@@ -1,0 +1,9 @@
+- generic [active] [ref=f3e5]:
+  - generic:
+    - generic:
+      - generic:
+        - button "纱罩" [ref=f3e107]
+        - dialog:
+          - group "子代理任务":
+            - group:
+              - generic [ref=f3e108]: 当前任务还没有子代理

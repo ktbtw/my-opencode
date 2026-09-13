@@ -41,5 +41,10 @@ my-opencode/bun.lock
 
 # Misc
 *.log
+.chatcodex-artifacts/
+codex-sessionprocessor-*.bundle
+codex-sessionprocessor-*.patch
 /后端开发/
 /start.sh
+.relay.pid
+.relay.log

@@ -1,0 +1,17 @@
+- main [ref=e40]:
+  - generic [ref=e41]:
+    - generic [ref=e42]: C
+    - generic [ref=e45]: 码控
+    - generic [ref=e46]: Cannot read properties of undefined (reading 'main')
+    - generic [ref=e47]:
+      - generic [ref=e48]: 账号
+      - textbox [ref=e49]: demo
+      - generic [ref=e50]: 密码
+      - textbox [ref=e51]: demo
+      - generic [ref=e52]:
+        - checkbox "记住并自动登录" [checked] [ref=e53]
+        - generic [ref=e54]: 记住并自动登录
+      - generic [ref=e55]:
+        - checkbox "登录成功后开启后台服务自启动" [checked] [ref=e56]
+        - generic [ref=e57]: 登录成功后开启后台服务自启动
+      - button "登录" [ref=e58] [cursor=pointer]
