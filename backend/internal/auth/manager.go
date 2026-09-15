@@ -21,14 +21,15 @@ type Manager struct {
 }
 
 type tokenClaims struct {
-	Version     int    `json:"v"`
-	OperatorID  int64  `json:"operator_id"`
-	OperatorUID string `json:"operator_uid,omitempty"`
-	Username    string `json:"username"`
-	Name        string `json:"name,omitempty"`
-	Email       string `json:"email,omitempty"`
-	OperatorKey string `json:"operator_key,omitempty"`
-	ExpiresAt   int64  `json:"exp"`
+	Version        int    `json:"v"`
+	OperatorID     int64  `json:"operator_id"`
+	OperatorUID    string `json:"operator_uid,omitempty"`
+	Username       string `json:"username"`
+	Name           string `json:"name,omitempty"`
+	Email          string `json:"email,omitempty"`
+	OperatorKey    string `json:"operator_key,omitempty"`
+	MembershipTier string `json:"membership_tier,omitempty"`
+	ExpiresAt      int64  `json:"exp"`
 }
 
 func NewManager(ttl time.Duration) *Manager {
@@ -54,7 +55,8 @@ func (m *Manager) Issue(operator model.Operator) (string, error) {
 	claims := tokenClaims{
 		Version: 1, OperatorID: operator.ID, OperatorUID: operator.OperatorUID,
 		Username: operator.Username, Name: operator.Name, Email: operator.Email,
-		OperatorKey: operator.OperatorKey, ExpiresAt: time.Now().Add(m.ttl).Unix(),
+		OperatorKey: operator.OperatorKey, MembershipTier: operator.MembershipTier,
+		ExpiresAt: time.Now().Add(m.ttl).Unix(),
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
@@ -90,7 +92,8 @@ func (m *Manager) Verify(rawToken string) (model.Operator, bool) {
 	if time.Now().Unix() >= claims.ExpiresAt {
 		return model.Operator{}, false
 	}
-	return model.Operator{ID: claims.OperatorID, OperatorUID: claims.OperatorUID, Username: claims.Username, Name: claims.Name, Email: claims.Email, OperatorKey: claims.OperatorKey}, true
+	// MembershipTier 保持签发时的原值：等级归一化与权威值由数据库和策略层决定。
+	return model.Operator{ID: claims.OperatorID, OperatorUID: claims.OperatorUID, Username: claims.Username, Name: claims.Name, Email: claims.Email, OperatorKey: claims.OperatorKey, MembershipTier: claims.MembershipTier}, true
 }
 
 // ExtractBearer accepts the conventional scheme case-insensitively.

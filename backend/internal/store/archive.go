@@ -17,7 +17,10 @@ type TaskArchive interface {
 	ListSessions(filter model.SessionFilter) ([]*model.Session, error)
 	AuthenticateOperator(username, password string) (*model.Operator, error)
 	GetOperatorByKey(operatorKey string) (*model.Operator, error)
+	ListOperators() ([]model.Operator, error)
 	GetOperatorEmail(operatorID int64) (string, error)
+	GetOperatorMembershipTier(operatorID int64) (string, error)
+	SetOperatorMembershipTier(operatorID int64, tier string) error
 	UsernameExists(username string) (bool, error)
 	EmailExists(email string) (bool, error)
 	CreateOperator(username, password, email, name string) (*model.Operator, error)
@@ -147,7 +150,12 @@ func (noopArchive) AuthenticateOperator(string, string) (*model.Operator, error)
 	return nil, nil
 }
 func (noopArchive) GetOperatorByKey(string) (*model.Operator, error) { return nil, nil }
+func (noopArchive) ListOperators() ([]model.Operator, error)         { return nil, nil }
 func (noopArchive) GetOperatorEmail(int64) (string, error)           { return "", nil }
+func (noopArchive) GetOperatorMembershipTier(int64) (string, error) {
+	return model.MembershipTierFree, nil
+}
+func (noopArchive) SetOperatorMembershipTier(int64, string) error { return nil }
 func (noopArchive) UsernameExists(string) (bool, error)              { return false, nil }
 func (noopArchive) EmailExists(string) (bool, error)                 { return false, nil }
 func (noopArchive) CreateOperator(string, string, string, string) (*model.Operator, error) {

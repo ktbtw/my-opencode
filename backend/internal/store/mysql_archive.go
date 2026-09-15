@@ -975,7 +975,7 @@ FROM sessions
 
 func (m *MySQLArchive) AuthenticateOperator(username, password string) (*model.Operator, error) {
 	row := m.db.QueryRow(`
-SELECT id, operator_uid, username, name, operator_key, password_hash
+SELECT id, operator_uid, username, name, operator_key, password_hash, membership_tier
 FROM operators
 WHERE username = ?
 `, username)
@@ -991,6 +991,7 @@ WHERE username = ?
 		&operator.Name,
 		&operator.OperatorKey,
 		&passwordHash,
+		&operator.MembershipTier,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -1001,12 +1002,13 @@ WHERE username = ?
 		return nil, nil
 	}
 	operator.Email = strings.TrimSpace(operator.Email)
+	operator.MembershipTier = model.NormalizeMembershipTier(operator.MembershipTier)
 	return &operator, nil
 }
 
 func (m *MySQLArchive) GetOperatorByKey(operatorKey string) (*model.Operator, error) {
 	row := m.db.QueryRow(`
-SELECT id, operator_uid, username, name, operator_key
+SELECT id, operator_uid, username, name, operator_key, membership_tier
 FROM operators
 WHERE operator_key = ?
 `, operatorKey)
@@ -1018,13 +1020,72 @@ WHERE operator_key = ?
 		&operator.Username,
 		&operator.Name,
 		&operator.OperatorKey,
+		&operator.MembershipTier,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
+	operator.MembershipTier = model.NormalizeMembershipTier(operator.MembershipTier)
 	return &operator, nil
+}
+
+// ListOperators 返回全部用户及其会员等级，供管理后台使用。
+func (m *MySQLArchive) ListOperators() ([]model.Operator, error) {
+	rows, err := m.db.Query(`
+SELECT id, operator_uid, username, name, email, membership_tier
+FROM operators
+ORDER BY id ASC
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]model.Operator, 0, 16)
+	for rows.Next() {
+		var operator model.Operator
+		if err := rows.Scan(
+			&operator.ID,
+			&operator.OperatorUID,
+			&operator.Username,
+			&operator.Name,
+			&operator.Email,
+			&operator.MembershipTier,
+		); err != nil {
+			return nil, err
+		}
+		operator.Email = strings.TrimSpace(operator.Email)
+		operator.MembershipTier = model.NormalizeMembershipTier(operator.MembershipTier)
+		result = append(result, operator)
+	}
+	return result, rows.Err()
+}
+
+// GetOperatorMembershipTier 单独读取会员等级，供上传策略判定使用。
+func (m *MySQLArchive) GetOperatorMembershipTier(operatorID int64) (string, error) {
+	row := m.db.QueryRow(`
+SELECT membership_tier
+FROM operators
+WHERE id = ?
+`, operatorID)
+
+	var tier string
+	if err := row.Scan(&tier); err != nil {
+		if err == sql.ErrNoRows {
+			return model.MembershipTierFree, nil
+		}
+		return model.MembershipTierFree, err
+	}
+	return model.NormalizeMembershipTier(tier), nil
+}
+
+// SetOperatorMembershipTier 更新指定用户的会员等级，仅接受已知等级。
+func (m *MySQLArchive) SetOperatorMembershipTier(operatorID int64, tier string) error {
+	normalized := model.NormalizeMembershipTier(tier)
+	_, err := m.db.Exec("UPDATE operators SET membership_tier = ? WHERE id = ?", normalized, operatorID)
+	return err
 }
 
 func (m *MySQLArchive) GetOperatorEmail(operatorID int64) (string, error) {
@@ -1167,6 +1228,10 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if err := ensureColumn(ctx, db, "operators", "email", "ALTER TABLE operators ADD COLUMN email VARCHAR(128) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// 会员等级：free / plus / pro，空值按 free 处理。
+	if err := ensureColumn(ctx, db, "operators", "membership_tier", "ALTER TABLE operators ADD COLUMN membership_tier VARCHAR(32) NOT NULL DEFAULT 'free' AFTER email"); err != nil {
 		return err
 	}
 	// 用户隔离：tasks 和 sessions 加 operator_id
@@ -1655,6 +1720,8 @@ var schemaStatements = []string{
   username VARCHAR(64) NOT NULL DEFAULT '',
   password_hash VARCHAR(255) NOT NULL DEFAULT '',
   operator_key VARCHAR(128) NOT NULL DEFAULT '',
+  email VARCHAR(128) NOT NULL DEFAULT '',
+  membership_tier VARCHAR(32) NOT NULL DEFAULT 'free',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_operator_uid (operator_uid)

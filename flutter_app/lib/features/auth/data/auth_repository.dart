@@ -30,11 +30,17 @@ class AuthRepository {
           operator['display_name'] as String? ??
           operator['username'] as String? ??
           username;
+      final membershipTier = operator['membership_tier'] as String?;
       if (operatorKey != null) {
         await AppStorage.setOperatorKey(operatorKey);
       }
       await AppStorage.setDisplayName(displayName);
+      if (membershipTier != null && membershipTier.trim().isNotEmpty) {
+        await AppStorage.setMembershipTier(membershipTier);
+      }
     }
+
+    await refreshMembershipTier();
 
     await AppLogService.log(
       'auth_login_succeeded',
@@ -43,6 +49,19 @@ class AuthRepository {
     await PushService.requestNotificationPermissionIfNeeded();
     await PushService.initialize();
     await PushService.syncRegistrationIfPossible();
+  }
+
+  /// 刷新会员等级：以 /api/auth/me 为准，失败时保留本地缓存，不影响登录流程。
+  Future<void> refreshMembershipTier() async {
+    try {
+      final me = await ApiClient.get('/api/auth/me');
+      final tier = (me['membership_tier'] as String?)?.trim();
+      if (tier != null && tier.isNotEmpty) {
+        await AppStorage.setMembershipTier(tier);
+      }
+    } catch (_) {
+      // 网络异常时沿用已有缓存，避免因会员信息拉取失败阻断登录。
+    }
   }
 
   Future<void> logout() async {

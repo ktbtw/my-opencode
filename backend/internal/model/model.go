@@ -237,6 +237,8 @@ type Operator struct {
 	Name        string `json:"name"`
 	Email       string `json:"email,omitempty"`
 	OperatorKey string `json:"operator_key,omitempty"`
+	// MembershipTier 会员等级：free（普通） / plus / pro。空值按 free 处理。
+	MembershipTier string `json:"membership_tier"`
 }
 
 type PushDevice struct {
@@ -1478,8 +1480,21 @@ type DeviceDirectoriesResultPayload struct {
 	ParentPath  string            `json:"parent_path,omitempty"`
 	Entries     []DeviceDirectory `json:"entries,omitempty"`
 	File        *DeviceFile       `json:"file,omitempty"`
+	Status      *UploadStatus     `json:"status,omitempty"`
 	Success     bool              `json:"success"`
 	Error       string            `json:"error,omitempty"`
+}
+
+// UploadStatus 描述一次分块上传在设备侧的当前进度，用于断点续传。
+type UploadStatus struct {
+	Path           string `json:"path,omitempty"`
+	UploadID       string `json:"upload_id,omitempty"`
+	Size           int64  `json:"size,omitempty"`
+	TotalChunks    int    `json:"total_chunks,omitempty"`
+	ReceivedChunks []int  `json:"received_chunks,omitempty"`
+	ReceivedBytes  int64  `json:"received_bytes,omitempty"`
+	Completed      bool   `json:"completed,omitempty"`
+	Resumable      bool   `json:"resumable,omitempty"`
 }
 
 type DeviceDirectoriesGetPayload struct {
@@ -1501,6 +1516,7 @@ type DeviceDirectoryFilesPayload struct {
 	ChunkIndex  int    `json:"chunk_index,omitempty"`
 	Offset      int64  `json:"offset,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
+	Resume      bool   `json:"resume,omitempty"`
 }
 
 type DeviceProjectFilesPayload struct {
@@ -1518,6 +1534,7 @@ type DeviceProjectFilesPayload struct {
 	Offset      int64  `json:"offset,omitempty"`
 	Length      int64  `json:"length,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
+	Resume      bool   `json:"resume,omitempty"`
 }
 
 type DeviceDirectory struct {

@@ -569,6 +569,10 @@ func (relayTestService) CompleteDirectoryUpload(model.DirectoryFileRequest) (mod
 	return model.ProjectFile{}, nil
 }
 
+func (relayTestService) DirectoryUploadStatus(model.DirectoryFileRequest) (model.UploadStatus, error) {
+	return model.UploadStatus{}, nil
+}
+
 func (relayTestService) CreateDirectoryFile(model.DirectoryFileRequest) (model.ProjectFile, error) {
 	return model.ProjectFile{}, nil
 }
@@ -623,6 +627,10 @@ func (relayTestService) WriteProjectUploadChunk(model.ProjectFilesRequest) (mode
 
 func (relayTestService) CompleteProjectUpload(model.ProjectFilesRequest) (model.ProjectFile, error) {
 	return model.ProjectFile{}, nil
+}
+
+func (relayTestService) ProjectUploadStatus(model.ProjectFilesRequest) (model.UploadStatus, error) {
+	return model.UploadStatus{}, nil
 }
 
 func (relayTestService) CreateProjectFile(model.ProjectFilesRequest) (model.ProjectFile, error) {

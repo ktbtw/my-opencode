@@ -460,7 +460,36 @@ func (a *API) Me(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
+	// 会员等级以数据库为准，避免旧 token 携带过期等级。
+	if tier, err := a.store.GetOperatorMembershipTier(operator.ID); err == nil {
+		operator.MembershipTier = tier
+	} else {
+		operator.MembershipTier = model.NormalizeMembershipTier(operator.MembershipTier)
+	}
 	write(w, http.StatusOK, operator)
+}
+
+// GetUploadPolicy 下发当前用户的上传策略（分块大小、并发数、目标速率）。
+// 客户端据此决定分块与并发，服务端仍会在每个 chunk 请求上做二次校验。
+func (a *API) GetUploadPolicy(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	write(w, http.StatusOK, map[string]any{
+		"policy": a.uploadPolicyForOperator(operator),
+	})
+}
+
+// uploadPolicyForOperator 解析会员等级并返回上传策略。
+// 等级优先取数据库当前值；读取失败时回退到 token 中的等级，再回退到 free。
+func (a *API) uploadPolicyForOperator(operator model.Operator) model.UploadPolicy {
+	tier := model.NormalizeMembershipTier(operator.MembershipTier)
+	if resolved, err := a.store.GetOperatorMembershipTier(operator.ID); err == nil {
+		tier = resolved
+	}
+	return model.UploadPolicyForTier(tier)
 }
 
 func (a *API) RegisterPushDevice(w http.ResponseWriter, r *http.Request) {
@@ -3736,6 +3765,11 @@ func (a *API) CompleteDeviceDirectoryFileUpload(w http.ResponseWriter, r *http.R
 	a.forwardDeviceDirectoryFile(w, r, "device.directory_files.upload_complete", "req_directory_upload_complete", true)
 }
 
+// DeviceDirectoryFileUploadStatus 查询设备目录分块上传进度，供断点续传使用。
+func (a *API) DeviceDirectoryFileUploadStatus(w http.ResponseWriter, r *http.Request) {
+	a.forwardDeviceDirectoryFile(w, r, "device.directory_files.upload_status", "req_directory_upload_status", true)
+}
+
 func (a *API) CreateDeviceDirectoryEmptyFile(w http.ResponseWriter, r *http.Request) {
 	a.forwardDeviceDirectoryFile(w, r, "device.directory_files.create_file", "req_directory_create_file", false)
 }
@@ -3772,6 +3806,7 @@ func (a *API) forwardDeviceDirectoryFile(
 		ChunkIndex  int    `json:"chunk_index"`
 		Offset      int64  `json:"offset"`
 		SHA256      string `json:"sha256"`
+		Resume      bool   `json:"resume"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		write(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -3788,6 +3823,13 @@ func (a *API) forwardDeviceDirectoryFile(
 	}
 	if strings.TrimSpace(req.Encoding) == "" {
 		req.Encoding = "base64"
+	}
+	// 分块上传按会员等级限制单块大小，普通用户不允许超过 512KB。
+	if isChunkStep(envType) {
+		if err := a.validateUploadChunkSize(operator, req.Content); err != nil {
+			write(w, http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	launcherID, err := a.deviceLauncherAgent(operator.ID, machineID)
 	if err != nil {
@@ -3819,6 +3861,7 @@ func (a *API) forwardDeviceDirectoryFile(
 			ChunkIndex:  req.ChunkIndex,
 			Offset:      req.Offset,
 			SHA256:      req.SHA256,
+			Resume:      req.Resume,
 		},
 	)
 	if err != nil {
@@ -3926,6 +3969,11 @@ func (a *API) CompleteDeviceAgentFileUpload(w http.ResponseWriter, r *http.Reque
 	a.forwardDeviceAgentFileTransferStep(w, r, "device.project_files.upload_complete", "req_project_files_upload_complete", true)
 }
 
+// DeviceAgentFileUploadStatus 查询项目文件分块上传进度，供断点续传使用。
+func (a *API) DeviceAgentFileUploadStatus(w http.ResponseWriter, r *http.Request) {
+	a.forwardDeviceAgentFileTransferStep(w, r, "device.project_files.upload_status", "req_project_files_upload_status", true)
+}
+
 func (a *API) CreateDeviceAgentFileDownload(w http.ResponseWriter, r *http.Request) {
 	a.forwardDeviceAgentFileTransferStep(w, r, "device.project_files.download_create", "req_project_files_download_create", false)
 }
@@ -4002,6 +4050,25 @@ func (a *API) forwardDeviceAgentFileMutation(w http.ResponseWriter, r *http.Requ
 	write(w, http.StatusOK, result)
 }
 
+func isChunkStep(envType string) bool {
+	return envType == "device.project_files.upload_chunk" ||
+		envType == "device.directory_files.upload_chunk"
+}
+
+// validateUploadChunkSize 校验 base64 内容对应的原始分块是否超过该等级的允许上限。
+// 校验在解码之前完成，避免为超限请求分配内存。
+func (a *API) validateUploadChunkSize(operator model.Operator, content string) error {
+	policy := a.uploadPolicyForOperator(operator)
+	maxContentLen := model.MaxBase64ContentLen(policy.MaxChunkSize)
+	if int64(len(content)) > maxContentLen {
+		if policy.IsMember {
+			return fmt.Errorf("分块超过会员上限 %d MB", policy.MaxChunkSize/1024/1024)
+		}
+		return fmt.Errorf("普通用户单个分块不能超过 %d KB，升级会员可使用更大分块", policy.MaxChunkSize/1024)
+	}
+	return nil
+}
+
 func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.Request, envType string, requestPrefix string, requireUploadID bool) {
 	operator, ok := a.currentOperator(r)
 	if !ok {
@@ -4025,6 +4092,7 @@ func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.
 		Offset      int64  `json:"offset"`
 		Length      int64  `json:"length"`
 		SHA256      string `json:"sha256"`
+		Resume      bool   `json:"resume"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		write(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
@@ -4040,6 +4108,13 @@ func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.
 	}
 	if strings.TrimSpace(req.Encoding) == "" {
 		req.Encoding = "base64"
+	}
+	// 分块上传按会员等级限制单块大小，普通用户不允许超过 512KB。
+	if isChunkStep(envType) {
+		if err := a.validateUploadChunkSize(operator, req.Content); err != nil {
+			write(w, http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	launcherID, err := a.deviceLauncherAgent(operator.ID, machineID)
 	if err != nil {
@@ -4060,6 +4135,7 @@ func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.
 		Offset:      req.Offset,
 		Length:      req.Length,
 		SHA256:      req.SHA256,
+		Resume:      req.Resume,
 	})
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})

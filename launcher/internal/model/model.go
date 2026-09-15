@@ -664,6 +664,20 @@ type DirectoryFileRequest struct {
 	ChunkIndex  int    `json:"chunk_index,omitempty"`
 	Offset      int64  `json:"offset,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
+	// Resume 为 true 时保留同一 upload_id 已写入的分块，仅补齐缺失分块。
+	Resume bool `json:"resume,omitempty"`
+}
+
+// UploadStatus 描述一次分块上传的当前进度，供客户端断点续传使用。
+type UploadStatus struct {
+	Path          string  `json:"path"`
+	UploadID      string  `json:"upload_id"`
+	Size          int64   `json:"size"`
+	TotalChunks   int     `json:"total_chunks"`
+	ReceivedChunks []int  `json:"received_chunks"`
+	ReceivedBytes int64   `json:"received_bytes"`
+	Completed     bool    `json:"completed"`
+	Resumable     bool    `json:"resumable"`
 }
 
 type ProjectFile struct {
@@ -691,6 +705,8 @@ type ProjectFilesRequest struct {
 	Offset      int64  `json:"offset,omitempty"`
 	Length      int64  `json:"length,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
+	// Resume 为 true 时保留同一 upload_id 已写入的分块，仅补齐缺失分块。
+	Resume bool `json:"resume,omitempty"`
 }
 
 type WelcomePayload struct {

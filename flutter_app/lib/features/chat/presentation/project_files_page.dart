@@ -146,12 +146,17 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
     try {
       final path = _joinPath(_currentPath, name);
       final repo = ref.read(deviceRepositoryProvider);
+      // 分块大小与并发数由服务端按会员等级下发：普通 512KB 单并发，会员 5MB 多并发。
+      final policy = await repo.fetchUploadPolicy();
       await repo.uploadDeviceAgentFileChunkedStreamed(
         machineId: widget.machineId,
         agentId: widget.agentId,
         path: path,
         totalBytes: totalBytes,
         openRead: () => readStream,
+        chunkSize: policy.chunkSize,
+        concurrency: policy.concurrency,
+        resume: policy.resumeEnabled,
         onProgress: (value) {
           if (dialogOpen) progress.value = _TransferProgressView.upload(value);
           notifications.update(

@@ -46,6 +46,20 @@ func (a relayTestArchive) GetOperatorByKey(operatorKey string) (*model.Operator,
 	return &operator, nil
 }
 func (a relayTestArchive) GetOperatorEmail(int64) (string, error) { return "", nil }
+
+func (a relayTestArchive) ListOperators() ([]model.Operator, error) {
+	result := make([]model.Operator, 0, len(a.operators))
+	for _, operator := range a.operators {
+		result = append(result, operator)
+	}
+	return result, nil
+}
+
+func (a relayTestArchive) GetOperatorMembershipTier(int64) (string, error) {
+	return model.MembershipTierFree, nil
+}
+
+func (a relayTestArchive) SetOperatorMembershipTier(int64, string) error { return nil }
 func (a relayTestArchive) UsernameExists(string) (bool, error)    { return false, nil }
 func (a relayTestArchive) EmailExists(string) (bool, error)       { return false, nil }
 func (a relayTestArchive) CreateOperator(string, string, string, string) (*model.Operator, error) {

@@ -75,11 +75,16 @@ class ApiClient {
     }
   }
 
-  static Future<Map<String, dynamic>> get(String path) async {
+  static Future<Map<String, dynamic>> get(
+    String path, {
+    Duration? timeout,
+  }) async {
     final uri = Uri.parse('$baseUrl$path');
-    var resp = await http.get(uri, headers: _headers());
+    final request = http.get(uri, headers: _headers());
+    var resp = await (timeout == null ? request : request.timeout(timeout));
     if (resp.statusCode == 401 && await _tryRefreshToken()) {
-      resp = await http.get(uri, headers: _headers());
+      final retry = http.get(uri, headers: _headers());
+      resp = await (timeout == null ? retry : retry.timeout(timeout));
     }
     return _handle(resp);
   }
@@ -115,19 +120,22 @@ class ApiClient {
     String path,
     Map<String, dynamic> body, {
     bool withAuth = true,
+    Duration? timeout,
   }) async {
     final uri = Uri.parse('$baseUrl$path');
-    var resp = await http.post(
+    final request = http.post(
       uri,
       headers: _headers(withAuth: withAuth),
       body: jsonEncode(body),
     );
+    var resp = await (timeout == null ? request : request.timeout(timeout));
     if (resp.statusCode == 401 && withAuth && await _tryRefreshToken()) {
-      resp = await http.post(
+      final retry = http.post(
         uri,
         headers: _headers(withAuth: true),
         body: jsonEncode(body),
       );
+      resp = await (timeout == null ? retry : retry.timeout(timeout));
     }
     return _handle(resp);
   }

@@ -411,13 +411,17 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
     );
     setState(() => _uploading = true);
     try {
-      await ref
-          .read(deviceRepositoryProvider)
-          .uploadDeviceDirectoryFileChunkedStreamed(
+      final repo = ref.read(deviceRepositoryProvider);
+      // 分块大小与并发数由服务端按会员等级下发：普通 512KB 单并发，会员 5MB 多并发。
+      final policy = await repo.fetchUploadPolicy();
+      await repo.uploadDeviceDirectoryFileChunkedStreamed(
             machineId: widget.machineId,
             path: _joinPath(_currentPath, name),
             totalBytes: totalBytes,
             openRead: () => readStream,
+            chunkSize: policy.chunkSize,
+            concurrency: policy.concurrency,
+            resume: policy.resumeEnabled,
             onProgress: (value) {
               notifications.update(
                 operationId: operationId,

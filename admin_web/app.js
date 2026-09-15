@@ -16,6 +16,8 @@ const state = {
   environmentPresets: [],
   runtimeCatalog: [],
   toolCatalog: [],
+  operators: [],
+  membershipOptions: [],
   editing: null,
   confirmResolver: null,
   agentSkillSelection: [],
@@ -331,8 +333,27 @@ function loadCurrentView() {
       return loadEnvironmentPresets();
     case "tools":
       return loadToolCatalog();
+    case "operators":
+      return loadOperators();
     default:
       return loadMCPCatalog();
+  }
+}
+
+async function loadOperators() {
+  setBusy(el.refreshButton, true, "刷新中");
+  try {
+    const data = await apiGet("/api/admin/operators");
+    state.operators = Array.isArray(data.items) ? data.items : [];
+    state.membershipOptions = Array.isArray(data.options) ? data.options : [];
+    render();
+  } catch (error) {
+    if (error.statusCode === 401 || error.statusCode === 403) {
+      logout();
+    }
+    showToast(error.message || "加载会员列表失败");
+  } finally {
+    setBusy(el.refreshButton, false, "刷新");
   }
 }
 
@@ -461,13 +482,22 @@ function renderStats() {
   const categories = statCategorySet(items);
   const chrome = viewChrome(state.view);
   el.statTotalLabel.textContent = chrome.totalLabel;
-  el.statEnabledLabel.textContent = "已启用";
-  el.statDisabledLabel.textContent = "已停用";
   el.statCategoriesLabel.textContent = chrome.categoryLabel;
   el.statTotal.textContent = items.length;
+  el.statCategories.textContent = categories.size;
+  if (state.view === "operators") {
+    // 用户没有启用/停用概念，改为展示会员与非会员数量。
+    const members = items.filter((item) => (item.membership_tier || "free") !== "free").length;
+    el.statEnabledLabel.textContent = "会员";
+    el.statDisabledLabel.textContent = "普通用户";
+    el.statEnabled.textContent = members;
+    el.statDisabled.textContent = items.length - members;
+    return;
+  }
+  el.statEnabledLabel.textContent = "已启用";
+  el.statDisabledLabel.textContent = "已停用";
   el.statEnabled.textContent = enabled;
   el.statDisabled.textContent = items.length - enabled;
-  el.statCategories.textContent = categories.size;
 }
 
 function renderCategoryFilter() {
@@ -508,6 +538,13 @@ function renderCategoryFilter() {
       `<option value="all">全部分类</option>`,
       ...categories.map((category) => `<option value="${escapeAttr(category)}">${escapeHtml(category)}</option>`),
     ].join("");
+  } else if (state.view === "operators") {
+    options = [
+      `<option value="all">全部等级</option>`,
+      `<option value="free">普通用户</option>`,
+      `<option value="plus">Plus 会员</option>`,
+      `<option value="pro">Pro 会员</option>`,
+    ].join("");
   } else {
     options = `<option value="all">全部</option>`;
   }
@@ -538,6 +575,13 @@ function filteredItems() {
         if (category !== "all" && !(item.tags || []).includes(category)) return false;
       } else if (state.view === "environment" || state.view === "tools") {
         if (category !== "all" && (item.category || "通用") !== category) return false;
+      } else if (state.view === "operators") {
+        if (category !== "all" && (item.membership_tier || "free") !== category) return false;
+      }
+      // 会员视图不按启用状态过滤：用户本身没有启用/停用概念。
+      if (state.view === "operators") {
+        if (!query) return true;
+        return searchableTextForCurrentView(item).includes(query);
       }
       if (status === "enabled" && !item.enabled) return false;
       if (status === "disabled" && item.enabled) return false;
@@ -569,6 +613,8 @@ function currentItems() {
       return state.environmentPresets;
     case "tools":
       return state.toolCatalog;
+    case "operators":
+      return state.operators;
     default:
       return state.mcpCatalog;
   }
@@ -588,9 +634,61 @@ function cardForCurrentView(item) {
       return environmentPresetCardTemplate(item);
     case "tools":
       return toolCatalogCardTemplate(item);
+    case "operators":
+      return operatorCardTemplate(item);
     default:
       return mcpCatalogCardTemplate(item);
   }
+}
+
+// 会员卡片：展示当前等级与对应上传权益，并提供等级切换。
+function operatorCardTemplate(item) {
+  const tier = item.membership_tier || "free";
+  const policy = item.upload_policy || {};
+  const label = tier === "pro" ? "Pro 会员" : tier === "plus" ? "Plus 会员" : "普通用户";
+  const chunkMB = policy.chunk_size ? (policy.chunk_size / 1024 / 1024).toFixed(0) : "0";
+  const chunkLabel = policy.chunk_size >= 1024 * 1024
+    ? `${chunkMB} MB`
+    : `${Math.round((policy.chunk_size || 0) / 1024)} KB`;
+  const concurrency = policy.concurrency || 1;
+  const speed = policy.target_bytes_per_second
+    ? `${(policy.target_bytes_per_second / 1024 / 1024).toFixed(0)} MB/s`
+    : "-";
+  const options = (state.membershipOptions.length
+    ? state.membershipOptions
+    : [
+        { tier: "free", label: "普通用户" },
+        { tier: "plus", label: "Plus 会员" },
+        { tier: "pro", label: "Pro 会员" },
+      ])
+    .map(
+      (option) =>
+        `<option value="${escapeAttr(option.tier)}" ${option.tier === tier ? "selected" : ""}>${escapeHtml(option.label || option.tier)}</option>`
+    )
+    .join("");
+  return `
+    <article class="recommendation-card">
+      <div class="card-head">
+        <div>
+          <h2 title="${escapeAttr(item.name || item.username || "")}">${escapeHtml(item.name || item.username || "未命名用户")}</h2>
+          <p class="muted" title="${escapeAttr(item.username || "")}">${escapeHtml(item.username || "")}</p>
+        </div>
+        <span class="pill ${tier === "free" ? "disabled" : "enabled"}">${escapeHtml(label)}</span>
+      </div>
+      <div class="pill-row">
+        <span class="pill">分块 ${escapeHtml(chunkLabel)}</span>
+        <span class="pill">并发 ${concurrency}</span>
+        <span class="pill">目标 ${escapeHtml(speed)}</span>
+      </div>
+      <p class="card-description">${escapeHtml(item.email || "未绑定邮箱")}</p>
+      <div class="card-actions">
+        <select data-membership-select="${escapeAttr(String(item.id))}">
+          ${options}
+        </select>
+        <button class="secondary-button" type="button" data-action="set-membership" data-id="${escapeAttr(String(item.id))}">保存等级</button>
+      </div>
+    </article>
+  `;
 }
 
 function semanticCardTemplate(item) {
@@ -858,6 +956,34 @@ async function handleCardAction(event) {
   }
   if (action === "delete") {
     await deleteItem(item, false, button);
+    return;
+  }
+  if (action === "set-membership") {
+    await setMembershipTier(item, button);
+  }
+}
+
+// 保存会员等级：等级决定上传分块大小与并发数。
+async function setMembershipTier(item, button) {
+  const select = el.grid.querySelector(`[data-membership-select="${item.id}"]`);
+  const tier = select ? select.value : "";
+  if (!tier) return;
+  setBusy(button, true, "保存中");
+  try {
+    const data = await apiPost(`/api/admin/operators/${encodeURIComponent(item.id)}/membership`, {
+      membership_tier: tier,
+    });
+    item.membership_tier = data.membership_tier || tier;
+    if (data.upload_policy) item.upload_policy = data.upload_policy;
+    render();
+    showToast(`已更新为 ${item.membership_tier}`);
+  } catch (error) {
+    if (error.statusCode === 401 || error.statusCode === 403) {
+      logout();
+    }
+    showToast(error.message || "保存会员等级失败");
+  } finally {
+    setBusy(button, false, "保存等级");
   }
 }
 
@@ -2122,6 +2248,7 @@ function initialView() {
   if (hash === "runtime-catalog") return "runtime";
   if (hash === "environment-presets") return "environment";
   if (hash === "tool-catalog") return "tools";
+  if (hash === "operators") return "operators";
   return "mcpCatalog";
 }
 
@@ -2132,7 +2259,7 @@ function normalizeLegacyHash() {
 }
 
 function normalizeView(view) {
-  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "tools") {
+  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "tools" || view === "operators") {
     return view;
   }
   return "mcpCatalog";
@@ -2152,6 +2279,8 @@ function hashForView(view) {
       return "environment-presets";
     case "tools":
       return "tool-catalog";
+    case "operators":
+      return "operators";
     default:
       return "mcp-catalog";
   }
@@ -2194,6 +2323,18 @@ function viewChrome(view) {
       totalLabel: "Agent 总数",
       categoryLabel: "Skill 数量",
       deleteTitle: "删除语义 Agent",
+    },
+    operators: {
+      eyebrow: "Membership",
+      title: "会员管理",
+      description: "调整用户会员等级。会员上传使用 5 MB 分块与多并发（约 5 MB/s），普通用户保持 512 KB 单并发。",
+      newText: "",
+      canCreate: false,
+      emptyTitle: "没有匹配的用户",
+      emptyDescription: "调整筛选条件，或刷新用户列表。",
+      totalLabel: "用户总数",
+      categoryLabel: "等级数量",
+      deleteTitle: "删除用户",
     },
     environment: {
       eyebrow: "Environment Presets",
@@ -2241,11 +2382,13 @@ function statCategorySet(items) {
   if (state.view === "skills") return new Set(items.map((item) => item.category || "通用"));
   if (state.view === "runtime") return new Set(items.flatMap((item) => item.tags || []));
   if (state.view === "environment" || state.view === "tools") return new Set(items.map((item) => item.category || "通用"));
+  if (state.view === "operators") return new Set(items.map((item) => item.membership_tier || "free"));
   return new Set();
 }
 
 function findItemByID(id) {
-  return currentItems().find((entry) => entry.id === id);
+  // 会员列表的 id 是数字，data 属性取回后是字符串，这里做一次宽松比较。
+  return currentItems().find((entry) => String(entry.id) === String(id));
 }
 
 function showEditorSections(mode) {
@@ -2965,6 +3108,11 @@ function searchableTextForCurrentView(item) {
       return runtimeCatalogSearchableText(item);
     case "tools":
       return toolCatalogSearchableText(item);
+    case "operators":
+      return [item.username, item.name, item.email, item.membership_tier]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
     default:
       return searchableText(item);
   }

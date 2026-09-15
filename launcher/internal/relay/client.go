@@ -209,6 +209,7 @@ func buildHandlers() map[string]handlerFunc {
 		"device.directory_files.upload_create":     handleDirectoryFiles,
 		"device.directory_files.upload_chunk":      handleDirectoryFiles,
 		"device.directory_files.upload_complete":   handleDirectoryFiles,
+		"device.directory_files.upload_status":     handleDirectoryFiles,
 		"device.directory_files.create_file":       handleDirectoryFiles,
 		"device.directory_files.mkdir":             handleDirectoryFiles,
 		"device.directory_files.delete":            handleDirectoryFiles,
@@ -220,6 +221,7 @@ func buildHandlers() map[string]handlerFunc {
 		"device.project_files.upload_create":       handleProjectFiles,
 		"device.project_files.upload_chunk":        handleProjectFiles,
 		"device.project_files.upload_complete":     handleProjectFiles,
+		"device.project_files.upload_status":       handleProjectFiles,
 		"device.project_files.create_file":         handleProjectFiles,
 		"device.project_files.mkdir":               handleProjectFiles,
 		"device.project_files.delete":              handleProjectFiles,
@@ -1024,6 +1026,22 @@ func handleDirectoryFiles(env envelope, cfg config.Config, svc Service) envelope
 		err  error
 	)
 	switch action {
+	case "upload_status":
+		status, statusErr := svc.DirectoryUploadStatus(payload)
+		if statusErr != nil {
+			return fail(statusErr)
+		}
+		return envelope{
+			Type:      base.Type,
+			RequestID: base.RequestID,
+			SentAt:    base.SentAt,
+			Payload: map[string]any{
+				"machine_id": cfg.Relay.MachineID,
+				"action":     action,
+				"success":    true,
+				"status":     status,
+			},
+		}
 	case "upload_create":
 		file, err = svc.CreateDirectoryUpload(payload)
 	case "upload_chunk":
@@ -1159,6 +1177,22 @@ func handleProjectFiles(env envelope, cfg config.Config, svc Service) envelope {
 				"action":     action,
 				"success":    true,
 				"file":       file,
+			},
+		}
+	case "upload_status":
+		status, statusErr := svc.ProjectUploadStatus(payload)
+		if statusErr != nil {
+			return fail(statusErr)
+		}
+		return envelope{
+			Type:      base.Type,
+			RequestID: base.RequestID,
+			SentAt:    base.SentAt,
+			Payload: map[string]any{
+				"machine_id": cfg.Relay.MachineID,
+				"action":     action,
+				"success":    true,
+				"status":     status,
 			},
 		}
 	case "upload_create":

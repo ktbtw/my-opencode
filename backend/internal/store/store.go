@@ -1327,6 +1327,25 @@ func (m *Memory) GetOperatorEmail(operatorID int64) (string, error) {
 	return m.archive.GetOperatorEmail(operatorID)
 }
 
+// ListOperators 返回全部用户，供管理后台展示与调整会员等级。
+func (m *Memory) ListOperators() ([]model.Operator, error) {
+	return m.archive.ListOperators()
+}
+
+// GetOperatorMembershipTier 读取会员等级，未知值按 free 处理。
+func (m *Memory) GetOperatorMembershipTier(operatorID int64) (string, error) {
+	tier, err := m.archive.GetOperatorMembershipTier(operatorID)
+	if err != nil {
+		return model.MembershipTierFree, err
+	}
+	return model.NormalizeMembershipTier(tier), nil
+}
+
+// SetOperatorMembershipTier 更新会员等级。
+func (m *Memory) SetOperatorMembershipTier(operatorID int64, tier string) error {
+	return m.archive.SetOperatorMembershipTier(operatorID, model.NormalizeMembershipTier(tier))
+}
+
 func (m *Memory) UsernameExists(username string) (bool, error) {
 	return m.archive.UsernameExists(username)
 }

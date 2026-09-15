@@ -33,6 +33,7 @@ class AppStorage {
   static const _keyDisplayName = 'display_name';
   static const _keyBaseUrl = 'base_url';
   static const _keyPassword = 'password';
+  static const _keyMembershipTier = 'membership_tier';
   static const _keyMobileOnboardingCompleted = 'mobile_onboarding_completed_v1';
   static const _opencodeSkippedVersionPrefix = 'opencode_skipped_version:';
 
@@ -84,6 +85,21 @@ class AppStorage {
   static String? getDisplayName() => _p.getString(_keyDisplayName);
   static Future<void> setDisplayName(String name) =>
       _p.setString(_keyDisplayName, name);
+
+  // 会员等级：free / plus / pro，空值按 free 处理
+  static String getMembershipTier() {
+    final raw = _p.getString(_keyMembershipTier)?.trim().toLowerCase() ?? '';
+    if (raw == 'plus' || raw == 'pro') return raw;
+    return 'free';
+  }
+
+  static Future<void> setMembershipTier(String tier) =>
+      _p.setString(_keyMembershipTier, tier.trim().toLowerCase());
+
+  static bool get isMember {
+    final tier = getMembershipTier();
+    return tier == 'plus' || tier == 'pro';
+  }
 
   // 后端地址
   static String getBaseUrl() => _p.getString(_keyBaseUrl) ?? defaultBaseUrl;
@@ -169,6 +185,7 @@ class AppStorage {
     await _p.remove(_keyUsername);
     await _p.remove(_keyDisplayName);
     await _p.remove(_keyPassword);
+    await _p.remove(_keyMembershipTier);
     if (previous.isNotEmpty) _authIdentityChanges.add('');
   }
 }

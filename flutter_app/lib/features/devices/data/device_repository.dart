@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -17,6 +18,7 @@ import 'device_model.dart';
 import 'device_project_memory_settings_model.dart';
 import 'device_semantic_agent_model.dart';
 import 'device_skill_model.dart';
+import 'upload_policy.dart';
 
 typedef DeviceUploadProgressCallback =
     void Function(DeviceUploadProgress progress);
@@ -41,6 +43,19 @@ class DeviceRepository {
   static const int defaultDownloadChunkSize = 512 * 1024;
   static const int defaultDownloadConcurrency = 3;
   static const Duration defaultDownloadCreateTimeout = Duration(seconds: 8);
+
+  /// 单个分块的请求超时基准：在传输耗时之外额外留出的等待时间。
+  static const Duration _chunkBaseTimeout = Duration(seconds: 45);
+  /// 单个分块的最大重试次数。
+  static const int _chunkMaxAttempts = 4;
+
+  /// 缓存服务端下发的上传策略，避免每次上传都重复请求。
+  static UploadPolicy? _cachedUploadPolicy;
+
+  /// 清空缓存的上传策略（登录或会员变更后调用）。
+  static void invalidateUploadPolicyCache() {
+    _cachedUploadPolicy = null;
+  }
 
   Future<List<DeviceModel>> getDevices() async {
     await AppLogService.log('device_list_load_started');
@@ -961,7 +976,9 @@ class DeviceRepository {
     required int totalBytes,
     required Stream<List<int>> Function() openRead,
     String? uploadId,
-    int chunkSize = defaultUploadChunkSize,
+    int? chunkSize,
+    int? concurrency,
+    bool resume = false,
     DeviceUploadProgressCallback? onProgress,
   }) {
     return _uploadFileChunkedStreamed(
@@ -971,6 +988,8 @@ class DeviceRepository {
       openRead: openRead,
       uploadId: uploadId,
       chunkSize: chunkSize,
+      concurrency: concurrency,
+      resume: resume,
       onProgress: onProgress,
     );
   }
@@ -981,7 +1000,9 @@ class DeviceRepository {
     required int totalBytes,
     required Stream<List<int>> Function() openRead,
     String? uploadId,
-    int chunkSize = defaultUploadChunkSize,
+    int? chunkSize,
+    int? concurrency,
+    bool resume = false,
     DeviceUploadProgressCallback? onProgress,
   }) {
     return _uploadFileChunkedStreamed(
@@ -991,7 +1012,100 @@ class DeviceRepository {
       openRead: openRead,
       uploadId: uploadId,
       chunkSize: chunkSize,
+      concurrency: concurrency,
+      resume: resume,
       onProgress: onProgress,
+    );
+  }
+
+  /// 拉取服务端下发的上传策略（分块大小与并发数按会员等级决定）。
+  /// 网络异常时回退到本地缓存的会员等级，保证上传功能可用。
+  Future<UploadPolicy> fetchUploadPolicy({bool force = false}) async {
+    if (!force && _cachedUploadPolicy != null) {
+      return _cachedUploadPolicy!;
+    }
+    UploadPolicy policy;
+    try {
+      final data = await ApiClient.get('/api/upload-policy');
+      final raw = data['policy'] as Map<String, dynamic>?;
+      policy = raw != null
+          ? UploadPolicy.fromJson(raw)
+          : UploadPolicy.fromLocalMembership();
+    } catch (_) {
+      policy = UploadPolicy.fromLocalMembership();
+    }
+    _cachedUploadPolicy = policy;
+    return policy;
+  }
+
+  /// 查询设备侧某次上传已收到的分块，用于断点续传。
+  /// 查询失败返回空集合，调用方按全新上传处理。
+  Future<Set<int>> _queryReceivedChunks({
+    required String basePath,
+    required String path,
+    required String uploadId,
+    required int size,
+    required int totalChunks,
+  }) async {
+    try {
+      final data = await ApiClient.post(
+        '$basePath/status',
+        {
+          'path': path,
+          'upload_id': uploadId,
+          'size': size,
+          'total_chunks': totalChunks,
+        },
+        timeout: const Duration(seconds: 30),
+      );
+      final raw = data['status'];
+      final status = raw is Map<String, dynamic>
+          ? raw
+          : (data['file'] is Map<String, dynamic>
+                ? (data['file'] as Map<String, dynamic>)['status']
+                : null);
+      if (status is! Map<String, dynamic>) return <int>{};
+      // 会话必须与本次文件一致，否则不能复用已有分块。
+      final statusSize = status['size'];
+      final statusTotal = status['total_chunks'];
+      if (statusSize is num && statusSize.toInt() != size) return <int>{};
+      if (statusTotal is num && statusTotal.toInt() != totalChunks) {
+        return <int>{};
+      }
+      final received = status['received_chunks'];
+      if (received is! List) return <int>{};
+      final result = <int>{};
+      for (final item in received) {
+        if (item is num) result.add(item.toInt());
+      }
+      return result;
+    } catch (_) {
+      return <int>{};
+    }
+  }
+
+  /// 上传单个分块，失败时按指数退避重试。
+  /// 分块写入使用固定 offset，重试同一分块是幂等的。
+  Future<void> _postChunkWithRetry({
+    required String url,
+    required Map<String, dynamic> body,
+    required Duration timeout,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < _chunkMaxAttempts; attempt++) {
+      try {
+        await ApiClient.post(url, body, timeout: timeout);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt == _chunkMaxAttempts - 1) break;
+        // 退避 1s、2s、4s，避免在链路抖动时持续打满上行。
+        await Future<void>.delayed(Duration(seconds: 1 << attempt));
+      }
+    }
+    throw ApiException(
+      '分块上传失败（已重试 $_chunkMaxAttempts 次）：$lastError',
+      statusCode: 0,
     );
   }
 
@@ -1001,24 +1115,33 @@ class DeviceRepository {
     required int totalBytes,
     required Stream<List<int>> Function() openRead,
     String? uploadId,
-    int chunkSize = defaultUploadChunkSize,
+    int? chunkSize,
+    int? concurrency,
+    bool resume = false,
     DeviceUploadProgressCallback? onProgress,
   }) async {
-    if (chunkSize <= 0) {
-      throw ArgumentError.value(chunkSize, 'chunkSize', '必须大于 0');
-    }
     if (totalBytes < 0) {
       throw ArgumentError.value(totalBytes, 'totalBytes', '不能小于 0');
     }
 
+    // 未显式指定分块大小时按会员等级取策略：普通 512KB/单并发，会员 5MB/多并发。
+    // 显式指定分块时不做策略请求，并发缺省为 1，保持既有串行语义。
+    UploadPolicy? policy;
+    if (chunkSize == null) {
+      policy = await fetchUploadPolicy();
+    }
+    final effectiveChunkSize = chunkSize ?? policy!.chunkSize;
+    final effectiveConcurrency = max(1, concurrency ?? policy?.concurrency ?? 1);
+    if (effectiveChunkSize <= 0) {
+      throw ArgumentError.value(effectiveChunkSize, 'chunkSize', '必须大于 0');
+    }
+
     final actualUploadId = uploadId ?? _newUploadId();
-    final totalChunks = max(1, (totalBytes / chunkSize).ceil());
-    final uploaded = List<int>.filled(totalChunks, 0);
+    final totalChunks = max(1, (totalBytes / effectiveChunkSize).ceil());
     final digestSink = _DigestSink();
     final digestInput = sha256.startChunkedConversion(digestSink);
     var uploadedBytes = 0;
     var completedChunks = 0;
-    var nextChunkIndex = 0;
 
     void progress({
       required int uploadedBytes,
@@ -1037,29 +1160,66 @@ class DeviceRepository {
       );
     }
 
-    Future<void> uploadChunk(List<int> bytes) async {
-      if (nextChunkIndex >= totalChunks) {
-        throw StateError('文件读取大小超过声明大小');
-      }
-      final chunk = Uint8List.fromList(bytes);
-      final chunkIndex = nextChunkIndex;
-      final offset = uploadedBytes;
-      digestInput.add(chunk);
-      final chunkHash = sha256.convert(chunk).toString();
-      await ApiClient.post('$basePath/chunk', {
+    // 续传：查询设备侧已收到的分块，跳过这些分块的上传。
+    final received = resume
+        ? await _queryReceivedChunks(
+            basePath: basePath,
+            path: path,
+            uploadId: actualUploadId,
+            size: totalBytes,
+            totalChunks: totalChunks,
+          )
+        : <int>{};
+
+    progress(uploadedBytes: 0, completedChunks: 0, stage: '准备上传');
+    await ApiClient.post(
+      '$basePath/create',
+      {
         'path': path,
         'upload_id': actualUploadId,
-        'chunk_index': chunkIndex,
+        'size': totalBytes,
         'total_chunks': totalChunks,
-        'offset': offset,
-        'content': base64Encode(chunk),
-        'encoding': 'base64',
-        'sha256': chunkHash,
-      });
-      uploaded[chunkIndex] = chunk.length;
+        if (resume && received.isNotEmpty) 'resume': true,
+      },
+      timeout: const Duration(seconds: 60),
+    );
+
+    final chunkUrl = '$basePath/chunk';
+    // 单块超时：按块大小估算传输时间，再叠加固定等待，避免误杀慢链路。
+    final chunkTimeout =
+        _chunkBaseTimeout +
+        Duration(
+          milliseconds:
+              (effectiveChunkSize / 1024 / 1024 * 2000).round(),
+        );
+
+    Future<void> uploadChunk(int chunkIndex, Uint8List chunk) async {
+      if (received.contains(chunkIndex)) {
+        uploadedBytes += chunk.length;
+        completedChunks += 1;
+        progress(
+          uploadedBytes: uploadedBytes,
+          completedChunks: completedChunks,
+          stage: '上传分块',
+        );
+        return;
+      }
+      await _postChunkWithRetry(
+        url: chunkUrl,
+        body: {
+          'path': path,
+          'upload_id': actualUploadId,
+          'chunk_index': chunkIndex,
+          'total_chunks': totalChunks,
+          'offset': chunkIndex * effectiveChunkSize,
+          'content': base64Encode(chunk),
+          'encoding': 'base64',
+          'sha256': sha256.convert(chunk).toString(),
+        },
+        timeout: chunkTimeout,
+      );
       uploadedBytes += chunk.length;
       completedChunks += 1;
-      nextChunkIndex += 1;
       progress(
         uploadedBytes: uploadedBytes,
         completedChunks: completedChunks,
@@ -1067,30 +1227,50 @@ class DeviceRepository {
       );
     }
 
-    progress(uploadedBytes: 0, completedChunks: 0, stage: '准备上传');
-    await ApiClient.post('$basePath/create', {
-      'path': path,
-      'upload_id': actualUploadId,
-      'size': totalBytes,
-      'total_chunks': totalChunks,
-    });
-
     progress(uploadedBytes: 0, completedChunks: 0, stage: '上传分块');
     var pending = <int>[];
+    // 窗口内并发上传，内存占用上限约为 concurrency * chunkSize。
+    var window = <(int, Uint8List)>[];
+    var nextIndex = 0;
+
+    Future<void> flushWindow() async {
+      if (window.isEmpty) return;
+      final batch = window;
+      window = [];
+      await Future.wait(
+        batch.map((item) => uploadChunk(item.$1, item.$2)),
+      );
+    }
+
     await for (final data in openRead()) {
       if (data.isEmpty) continue;
       pending.addAll(data);
-      while (pending.length >= chunkSize) {
-        final chunk = pending.sublist(0, chunkSize);
-        pending = pending.sublist(chunkSize);
-        await uploadChunk(chunk);
+      while (pending.length >= effectiveChunkSize) {
+        final chunk = Uint8List.fromList(
+          pending.sublist(0, effectiveChunkSize),
+        );
+        pending = pending.sublist(effectiveChunkSize);
+        // 摘要按读取顺序计算，与上传并发无关。
+        digestInput.add(chunk);
+        window.add((nextIndex, chunk));
+        nextIndex += 1;
+        if (window.length >= effectiveConcurrency) {
+          await flushWindow();
+        }
       }
     }
     if (pending.isNotEmpty) {
-      await uploadChunk(pending);
-    } else if (totalBytes == 0 && completedChunks == 0) {
-      await uploadChunk(const []);
+      final chunk = Uint8List.fromList(pending);
+      digestInput.add(chunk);
+      window.add((nextIndex, chunk));
+      nextIndex += 1;
+    } else if (totalBytes == 0 && nextIndex == 0) {
+      final chunk = Uint8List(0);
+      digestInput.add(chunk);
+      window.add((0, chunk));
+      nextIndex += 1;
     }
+    await flushWindow();
     digestInput.close();
 
     if (uploadedBytes != totalBytes) {
@@ -1106,13 +1286,17 @@ class DeviceRepository {
       completedChunks: completedChunks,
       stage: '等待设备合并',
     );
-    final data = await ApiClient.post('$basePath/complete', {
-      'path': path,
-      'upload_id': actualUploadId,
-      'size': totalBytes,
-      'total_chunks': totalChunks,
-      'sha256': fileHash,
-    });
+    final data = await ApiClient.post(
+      '$basePath/complete',
+      {
+        'path': path,
+        'upload_id': actualUploadId,
+        'size': totalBytes,
+        'total_chunks': totalChunks,
+        'sha256': fileHash,
+      },
+      timeout: const Duration(minutes: 3),
+    );
     progress(
       uploadedBytes: totalBytes,
       completedChunks: totalChunks,

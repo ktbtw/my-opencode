@@ -376,25 +376,8 @@ func (s *service) CreateDirectoryUpload(req model.DirectoryFileRequest) (model.P
 	if err != nil {
 		return model.ProjectFile{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(tempPath), 0o700); err != nil {
+	if err := prepareUploadSession(tempPath, req.Size, req.TotalChunks, req.Resume); err != nil {
 		return model.ProjectFile{}, err
-	}
-	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
-			return model.ProjectFile{}, errors.New("上传会话已存在")
-		}
-		return model.ProjectFile{}, err
-	}
-	if req.Size > 0 {
-		err = file.Truncate(req.Size)
-	}
-	closeErr := file.Close()
-	if err != nil {
-		return model.ProjectFile{}, err
-	}
-	if closeErr != nil {
-		return model.ProjectFile{}, closeErr
 	}
 	return model.ProjectFile{Path: full, Name: filepath.Base(full), Kind: "文件", Size: req.Size}, nil
 }
@@ -445,6 +428,9 @@ func (s *service) WriteDirectoryUploadChunk(req model.DirectoryFileRequest) (mod
 	if err := file.Close(); err != nil {
 		return model.ProjectFile{}, err
 	}
+	if err := recordUploadChunk(tempPath, info.Size(), req.TotalChunks, req.ChunkIndex); err != nil {
+		return model.ProjectFile{}, err
+	}
 	return model.ProjectFile{Path: full, Name: filepath.Base(full), Kind: "文件", Size: int64(len(data))}, nil
 }
 
@@ -485,6 +471,7 @@ func (s *service) CompleteDirectoryUpload(req model.DirectoryFileRequest) (model
 	if err := publishDirectoryUpload(tempPath, full); err != nil {
 		return model.ProjectFile{}, err
 	}
+	removeUploadManifest(tempPath)
 	_ = os.Remove(filepath.Dir(tempPath))
 	_ = os.Remove(filepath.Dir(filepath.Dir(tempPath)))
 	finalInfo, err := os.Stat(full)
@@ -863,22 +850,8 @@ func (s *service) CreateProjectUpload(req model.ProjectFilesRequest) (model.Proj
 	if err != nil {
 		return model.ProjectFile{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(tempPath), 0o755); err != nil {
+	if err := prepareUploadSession(tempPath, req.Size, req.TotalChunks, req.Resume); err != nil {
 		return model.ProjectFile{}, err
-	}
-	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return model.ProjectFile{}, err
-	}
-	if req.Size > 0 {
-		err = file.Truncate(req.Size)
-	}
-	closeErr := file.Close()
-	if err != nil {
-		return model.ProjectFile{}, err
-	}
-	if closeErr != nil {
-		return model.ProjectFile{}, closeErr
 	}
 	return model.ProjectFile{
 		Path:  relative,
@@ -931,6 +904,9 @@ func (s *service) WriteProjectUploadChunk(req model.ProjectFilesRequest) (model.
 		return model.ProjectFile{}, err
 	}
 	if err := file.Close(); err != nil {
+		return model.ProjectFile{}, err
+	}
+	if err := recordUploadChunk(tempPath, int64(req.Size), req.TotalChunks, req.ChunkIndex); err != nil {
 		return model.ProjectFile{}, err
 	}
 	return model.ProjectFile{
@@ -988,6 +964,7 @@ func (s *service) CompleteProjectUpload(req model.ProjectFilesRequest) (model.Pr
 	if backupPath != "" {
 		_ = os.Remove(backupPath)
 	}
+	removeUploadManifest(tempPath)
 	_ = os.RemoveAll(filepath.Dir(tempPath))
 	finalInfo, err := os.Stat(full)
 	if err != nil {
@@ -1000,6 +977,36 @@ func (s *service) CompleteProjectUpload(req model.ProjectFilesRequest) (model.Pr
 		IsDir: false,
 		Size:  finalInfo.Size(),
 	}, nil
+}
+
+// ProjectUploadStatus 返回项目文件分块上传的当前进度，供断点续传使用。
+func (s *service) ProjectUploadStatus(req model.ProjectFilesRequest) (model.UploadStatus, error) {
+	root, err := s.projectRoot(req.AgentID)
+	if err != nil {
+		return model.UploadStatus{}, err
+	}
+	_, relative, err := projectFilePath(root, req.Path)
+	if err != nil {
+		return model.UploadStatus{}, err
+	}
+	tempPath, err := projectUploadTempPath(root, req.UploadID)
+	if err != nil {
+		return model.UploadStatus{}, err
+	}
+	return uploadStatusFor(tempPath, relative, req.UploadID, req.Size, req.TotalChunks), nil
+}
+
+// DirectoryUploadStatus 返回设备目录分块上传的当前进度，供断点续传使用。
+func (s *service) DirectoryUploadStatus(req model.DirectoryFileRequest) (model.UploadStatus, error) {
+	full, err := directoryMutationPath(s.cfg, req.Path, req.AllowAll, false)
+	if err != nil {
+		return model.UploadStatus{}, err
+	}
+	tempPath, err := directoryUploadTempPath(full, req.UploadID)
+	if err != nil {
+		return model.UploadStatus{}, err
+	}
+	return uploadStatusFor(tempPath, full, req.UploadID, req.Size, req.TotalChunks), nil
 }
 
 func (s *service) CreateProjectFile(req model.ProjectFilesRequest) (model.ProjectFile, error) {
