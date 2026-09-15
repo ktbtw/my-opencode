@@ -661,6 +661,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
   static const int _sessionHistoryPageSize = 5;
   static const int _queueInitialSyncFailureLimit = 2;
 
+  /// 应用进入后台时挂起长连接属于预期行为，期间产生的队列断开不应提示用户。
+  bool _appInBackground = false;
+
+  /// 标记应用进入后台：后续队列连接断开按预期行为处理，不产生用户可见错误。
+  void markAppBackgrounded() {
+    _appInBackground = true;
+  }
+
   final ChatRepository _repo;
   final LocalChatStore _localStore;
   final String agentId;
@@ -1911,7 +1919,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
           }
         }
         _queueInitialSyncPending = false;
-        state = state.copyWith(queueLoading: false, queueError: '同步发送队列失败: $e');
+        // 队列为空时不向用户暴露同步失败：没有待发送消息时，
+        // 显示「队列状态异常」只会造成误解。
+        if (state.queue.queuedItems.isEmpty) {
+          state = state.copyWith(queueLoading: false, clearQueueError: true);
+        } else {
+          state = state.copyWith(
+            queueLoading: false,
+            queueError: '同步发送队列失败: $e',
+          );
+        }
       }
     }
   }
@@ -1953,11 +1970,24 @@ class ChatNotifier extends StateNotifier<ChatState> {
               reconnectAfterInitialSync = true;
               return;
             }
-            state = state.copyWith(
-              queueLoading: false,
-              queueError: '发送队列连接已断开，正在重连',
-            );
-            if (state.queue.sessionId == normalized) {
+            // 进入后台导致的长连接断开属于预期行为：保持静默并安排重连，
+            // 不写入用户可见的错误，避免空队列被渲染成「队列状态异常」。
+            if (_appInBackground) {
+              if (state.queue.sessionId == normalized) {
+                _scheduleQueueReconnect(normalized);
+              }
+              return;
+            }
+            // 只有确实存在待发送消息时，才把断连暴露给用户。
+            if (state.queue.queuedItems.isEmpty) {
+              state = state.copyWith(queueLoading: false, clearQueueError: true);
+            } else {
+              state = state.copyWith(
+                queueLoading: false,
+                queueError: '发送队列连接已断开，正在重连',
+              );
+            }
+            if (_queueSessionId == normalized) {
               _scheduleQueueReconnect(normalized);
             }
           },
@@ -1966,8 +1996,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
               reconnectAfterInitialSync = true;
               return;
             }
+            // 以订阅目标会话为准判断是否需要重连，避免队列快照尚未建立时
+            // 因 sessionId 不匹配而永久放弃重连。
             if (_queueSessionId == normalized &&
-                state.queue.sessionId == normalized &&
                 syncVersion == _queueSyncVersion &&
                 !_disposed) {
               _scheduleQueueReconnect(normalized);
@@ -4911,7 +4942,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
   Future<void> reconcileAfterResume() async {
     if (_resumeReconciliationInFlight) return;
     _resumeReconciliationInFlight = true;
+    // 回到前台：先解除后台标记并重同步发送队列。
+    // 后台期间的长连接断开属于预期行为，这里主动重建订阅并清除残留状态，
+    // 避免空队列被渲染成「队列状态异常」。
+    _appInBackground = false;
     try {
+      await _resyncQueueAfterResume();
       for (var attempt = 0; attempt < 3; attempt++) {
         if (!state.messages.any(_messageNeedsCatchUp)) {
           return;
@@ -4935,6 +4971,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } finally {
       _resumeReconciliationInFlight = false;
     }
+  }
+
+  /// 回到前台后重建发送队列订阅并清除后台残留的错误状态。
+  /// 队列为空时只做静默同步，不产生用户可见提示。
+  Future<void> _resyncQueueAfterResume() async {
+    final sessionId = state.currentSessionId?.trim() ?? '';
+    if (sessionId.isEmpty) return;
+    // 先清掉后台期间可能残留的加载态与错误，避免界面停留在「同步中」或异常提示。
+    if (state.queueLoading || state.queueError != null) {
+      state = state.copyWith(queueLoading: false, clearQueueError: true);
+    }
+    await _startQueueSync(sessionId, force: true);
   }
 
   void _startTerminalReconcileTimer(String taskId) {

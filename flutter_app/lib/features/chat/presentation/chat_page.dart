@@ -800,10 +800,17 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final notifier = ref.read(chatProvider(_chatKey).notifier);
     if (state == AppLifecycleState.resumed) {
-      unawaited(
-        ref.read(chatProvider(_chatKey).notifier).reconcileAfterResume(),
-      );
+      unawaited(notifier.reconcileAfterResume());
+      return;
+    }
+    // 进入后台：长连接会被系统挂起，期间的断开按预期行为处理，
+    // 不产生用户可见的队列错误提示。
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden) {
+      notifier.markAppBackgrounded();
     }
   }
 
@@ -6622,7 +6629,9 @@ class _InputAreaState extends ConsumerState<_InputArea> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (widget.queueItems.isNotEmpty || widget.queueError != null)
+          // 只有在确实存在待发送消息时才展示队列条；
+          // 连接层面的错误不应把空队列渲染成「队列状态异常」。
+          if (widget.queueItems.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: _QueueTray(
@@ -9977,16 +9986,11 @@ class _QueueTray extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty && error == null) return const SizedBox.shrink();
+    // 队列为空时不展示队列条：连接层面的错误不应渲染成「队列状态异常」。
+    if (items.isEmpty) return const SizedBox.shrink();
 
     if (AppBreakpoints.isMobile(context)) {
-      final preview = items.isNotEmpty
-          ? items.first.text.replaceAll('\n', ' ')
-          : loading
-          ? '同步中'
-          : error != null
-          ? '队列状态异常'
-          : '暂无待发送消息';
+      final preview = items.first.text.replaceAll('\n', ' ');
       return Material(
         color: Colors.transparent,
         child: InkWell(
