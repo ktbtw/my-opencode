@@ -272,7 +272,9 @@ func enrichDeviceAIModel(item *model.DeviceAIModelInfo, providerID string, model
 			item.Modalities = modalities
 		}
 	}
-	if meta.Limit.Context > 0 {
+	// 手填的窗口值必须优先，runtime 上报只用于补空值：否则会把用户设置覆盖成
+	// 上报值，再以 context_limit 回传给客户端，被当成「供应商返回值」压住手填值。
+	if item.ManualContext <= 0 && meta.Limit.Context > 0 {
 		item.Context = meta.Limit.Context
 	}
 	if item.Context <= 0 {

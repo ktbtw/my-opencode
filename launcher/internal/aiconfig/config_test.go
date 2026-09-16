@@ -585,6 +585,34 @@ func TestRefreshModelsPreservesManualThinkingOverride(t *testing.T) {
 	}
 }
 
+func TestEnrichDeviceAIModelKeepsManualContextLimit(t *testing.T) {
+	// 手填过窗口值的模型，刷新模型时不能被 runtime 上报值覆盖：覆盖后它会被
+	// 以 context_limit 回传给客户端，又被当成「供应商返回值」永久压住手填值。
+	item := &model.DeviceAIModelInfo{
+		ID:            "Kun",
+		Name:          "Kun",
+		OwnedBy:       "订阅grok",
+		ManualContext: 1000000,
+		Context:       1000000,
+	}
+	enrichDeviceAIModel(item, "订阅grok", "Kun", RuntimeModelMetadata{
+		Limit: RuntimeModelLimit{Context: 500000},
+	})
+	if item.Context != 1000000 {
+		t.Fatalf("手填窗口值不应被 runtime 上报覆盖，实际 %d", item.Context)
+	}
+}
+
+func TestEnrichDeviceAIModelFillsContextWithoutManual(t *testing.T) {
+	item := &model.DeviceAIModelInfo{ID: "Kun", Name: "Kun"}
+	enrichDeviceAIModel(item, "订阅grok", "Kun", RuntimeModelMetadata{
+		Limit: RuntimeModelLimit{Context: 500000},
+	})
+	if item.Context != 500000 {
+		t.Fatalf("没有手填值时应当采用 runtime 上报值，实际 %d", item.Context)
+	}
+}
+
 func TestSaveManualThinkingDisableReplacesGeneratedVariants(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	info, err := Save(model.DeviceAIConfigInfo{

@@ -8,10 +8,10 @@ class DeviceAIModelInfo {
   final String name;
   final String ownedBy;
 
-  /// 供应商接口返回的窗口值，只读，优先级最高。
+  /// 供应商接口返回的窗口值，只有设备端带来源标记时才有值，优先级最高。
   final int? upstreamContextLimit;
 
-  /// 供应商接口返回的输出上限，只读，优先级最高。
+  /// 供应商接口返回的输出上限，只有设备端带来源标记时才有值，优先级最高。
   final int? upstreamOutputLimit;
 
   /// 用户在界面上手填的窗口值。
@@ -20,8 +20,17 @@ class DeviceAIModelInfo {
   /// 用户在界面上手填的输出上限。
   final int? manualOutputLimit;
 
-  /// 按模型名推断出来的窗口值，优先级最低。
+  /// 按模型名推断出来的窗口值，优先级低于手填值。
   final int? inferredContextLimit;
+
+  /// 设备端上报的当前生效窗口值。
+  ///
+  /// 它是设备按「供应商 / 手填 / 预设推断」算出来的结果，并不是供应商返回值，
+  /// 因此优先级必须低于手填值，否则用户手填的窗口会被它永久压住。
+  final int? reportedContextLimit;
+
+  /// 设备端上报的当前生效输出上限。
+  final int? reportedOutputLimit;
 
   final Map<String, dynamic> variants;
   final DeviceAIThinkingInfo? thinking;
@@ -37,18 +46,29 @@ class DeviceAIModelInfo {
     this.manualContextLimit,
     this.manualOutputLimit,
     this.inferredContextLimit,
+    this.reportedContextLimit,
+    this.reportedOutputLimit,
     this.variants = const {},
     this.thinking,
     this.inputModalities = const [],
     this.outputModalities = const [],
   });
 
-  /// 生效的窗口值：供应商返回 > 手填 > 预设推断。
-  int? get contextLimit =>
-      _firstPositive([upstreamContextLimit, manualContextLimit, inferredContextLimit]);
+  /// 生效的窗口值：供应商返回 > 手填 > 预设推断 > 设备上报的生效值。
+  int? get contextLimit => _firstPositive([
+    upstreamContextLimit,
+    manualContextLimit,
+    inferredContextLimit,
+    reportedContextLimit,
+  ]);
 
-  /// 生效的输出上限：供应商返回 > 手填，留空交由 runtime 处理。
-  int? get outputLimit => _firstPositive([upstreamOutputLimit, manualOutputLimit]);
+  /// 生效的输出上限：供应商返回 > 手填 > 设备上报的生效值。
+  /// 全部为空时留空交由 runtime 处理。
+  int? get outputLimit => _firstPositive([
+    upstreamOutputLimit,
+    manualOutputLimit,
+    reportedOutputLimit,
+  ]);
 
   factory DeviceAIModelInfo.fromJson(Map<String, dynamic> json) {
     final modalities = json['modalities'] as Map<String, dynamic>? ?? {};
@@ -60,15 +80,15 @@ class DeviceAIModelInfo {
     final name = json['name'] as String? ?? id;
     final ownedBy = json['owned_by'] as String? ?? '';
     final limit = json['limit'] as Map<String, dynamic>?;
-    // 供应商返回值优先；没有来源标记时把 limit 当作供应商值。
-    final upstreamContext =
-        _positiveInt(json['upstream_context_limit']) ??
-        _positiveInt(json['context_limit']) ??
-        _positiveInt(limit?['context']);
-    final upstreamOutput =
-        _positiveInt(json['upstream_output_limit']) ??
-        _positiveInt(json['output_limit']) ??
-        _positiveInt(limit?['output']);
+    // upstream_* 只认显式的来源标记：没有标记时 context_limit / limit.context 是
+    // 设备端算出来的生效值（可能来自预设推断），把它当成供应商返回值会让手填值
+    // 永远无法生效，界面也会一直显示旧值。
+    final upstreamContext = _positiveInt(json['upstream_context_limit']);
+    final upstreamOutput = _positiveInt(json['upstream_output_limit']);
+    final reportedContext =
+        _positiveInt(json['context_limit']) ?? _positiveInt(limit?['context']);
+    final reportedOutput =
+        _positiveInt(json['output_limit']) ?? _positiveInt(limit?['output']);
     final manualContext = _positiveInt(json['manual_context_limit']);
     final manualOutput = _positiveInt(json['manual_output_limit']);
     return DeviceAIModelInfo(
@@ -84,6 +104,8 @@ class DeviceAIModelInfo {
         modelID: id,
         modelName: name,
       ),
+      reportedContextLimit: reportedContext,
+      reportedOutputLimit: reportedOutput,
       variants: variants,
       thinking: thinkingJson is Map
           ? DeviceAIThinkingInfo.fromJson(
@@ -165,6 +187,8 @@ class DeviceAIModelInfo {
     int? manualContextLimit,
     int? manualOutputLimit,
     int? inferredContextLimit,
+    int? reportedContextLimit,
+    int? reportedOutputLimit,
     bool clearManualContextLimit = false,
     bool clearManualOutputLimit = false,
     Map<String, dynamic>? variants,
@@ -185,6 +209,8 @@ class DeviceAIModelInfo {
           ? null
           : manualOutputLimit ?? this.manualOutputLimit,
       inferredContextLimit: inferredContextLimit ?? this.inferredContextLimit,
+      reportedContextLimit: reportedContextLimit ?? this.reportedContextLimit,
+      reportedOutputLimit: reportedOutputLimit ?? this.reportedOutputLimit,
       variants: variants ?? this.variants,
       thinking: thinking ?? this.thinking,
       inputModalities: inputModalities ?? this.inputModalities,

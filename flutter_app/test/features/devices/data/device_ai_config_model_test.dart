@@ -65,6 +65,51 @@ void main() {
     });
   });
 
+  group('DeviceAIModelInfo 上下文窗口优先级', () {
+    test('手填窗口值优先于设备上报的生效值', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+        'context_limit': 500000,
+        'manual_context_limit': 1000000,
+      });
+
+      expect(model.contextLimit, 1000000);
+      final encoded = model.toJson();
+      expect(encoded['manual_context_limit'], 1000000);
+      expect(encoded['context_limit'], 1000000);
+      // 生效值不能再被回写成「供应商返回值」，否则下次读取会把 500k
+      // 重新抬到最高优先级，手填值就永远生效不了。
+      expect(encoded.containsKey('upstream_context_limit'), isFalse);
+    });
+
+    test('供应商返回值仍然优先于手填值', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'owned_by': '订阅grok',
+        'upstream_context_limit': 2000000,
+        'manual_context_limit': 1000000,
+      });
+
+      expect(model.contextLimit, 2000000);
+      expect(model.toJson()['upstream_context_limit'], 2000000);
+    });
+
+    test('没有手填值时用预设推断与设备上报值兜底', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+        'context_limit': 500000,
+      });
+
+      expect(model.reportedContextLimit, 500000);
+      expect(model.contextLimit, 500000);
+      expect(model.toJson().containsKey('upstream_context_limit'), isFalse);
+    });
+  });
+
   group('DeviceAIConfigInfo', () {
     test('parses provider api mode from device config payload', () {
       final config = DeviceAIConfigInfo.fromJson({
