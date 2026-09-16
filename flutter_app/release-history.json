@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.6.80",
+    "version_code": 227,
+    "released_at": "",
+    "items": [
+      "个人信息页新增会员标识，展示当前会员等级",
+      "会员资料改为登录与进入个人页时自动刷新，等级变化即时生效"
+    ]
+  },
+  {
     "version": "1.6.79",
     "version_code": 226,
     "released_at": "",

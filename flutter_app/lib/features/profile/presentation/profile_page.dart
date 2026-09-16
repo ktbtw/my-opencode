@@ -27,10 +27,12 @@ class ProfilePage extends ConsumerStatefulWidget {
 class _ProfilePageState extends ConsumerState<ProfilePage> {
   String _version = '';
   bool _checkingUpdate = false;
+  String _membershipTier = 'free';
 
   @override
   void initState() {
     super.initState();
+    _membershipTier = AppStorage.getMembershipTier();
     AppVersionService.load().then((info) {
       if (mounted) {
         setState(() => _version = info.versionLabel);
@@ -48,15 +50,32 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
           data['name'] as String? ??
           data['username'] as String? ??
           '';
+      final membershipTier = (data['membership_tier'] as String?)?.trim();
       if (operatorKey.isNotEmpty) {
         await AppStorage.setOperatorKey(operatorKey);
       }
       if (displayName.isNotEmpty) {
         await AppStorage.setDisplayName(displayName);
       }
+      if (membershipTier != null && membershipTier.isNotEmpty) {
+        await AppStorage.setMembershipTier(membershipTier);
+      }
       if (!mounted) return;
-      setState(() {});
+      setState(() {
+        _membershipTier = AppStorage.getMembershipTier();
+      });
     } catch (_) {}
+  }
+
+  String get _membershipLabel {
+    switch (_membershipTier) {
+      case 'plus':
+        return 'Plus 会员';
+      case 'pro':
+        return 'Pro 会员';
+      default:
+        return '普通用户';
+    }
   }
 
   Future<void> _checkForUpdate() async {
@@ -212,6 +231,11 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                                   fontSize: 14,
                                   color: AppColors.textSecondary,
                                 ),
+                              ),
+                              const SizedBox(height: 12),
+                              _MembershipBadge(
+                                tier: _membershipTier,
+                                label: _membershipLabel,
                               ),
                             ],
                           ),
@@ -548,6 +572,56 @@ class _DiagnosticLogDialog extends StatelessWidget {
 }
 
 // 菜单项
+class _MembershipBadge extends StatelessWidget {
+  final String tier;
+  final String label;
+
+  const _MembershipBadge({
+    required this.tier,
+    required this.label,
+  });
+
+  bool get _isMember => tier == 'plus' || tier == 'pro';
+
+  @override
+  Widget build(BuildContext context) {
+    final Color foreground = _isMember
+        ? AppColors.statusWarning
+        : AppColors.textSecondary;
+    final Color background = _isMember
+        ? AppColors.statusWarningLight
+        : AppColors.statusOfflineLight;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: foreground.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _isMember ? Icons.workspace_premium : Icons.person_outline,
+            size: 15,
+            color: foreground,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: foreground,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MenuItem extends StatelessWidget {
   final IconData icon;
   final String label;
