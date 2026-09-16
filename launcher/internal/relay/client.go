@@ -77,7 +77,7 @@ func connect(ctx context.Context, cfg config.Config, svc Service) error {
 			"hostname":     cfg.Relay.Hostname,
 			"operator_key": cfg.Relay.OperatorKey,
 			"version":      "launcher-" + launcherVersion.Value,
-			"capabilities": []string{"device_compaction_config_v1"},
+			"capabilities": []string{"device_compaction_config_v1", "device_storage_v1"},
 			"projects":     []map[string]any{},
 		},
 	}
@@ -231,6 +231,8 @@ func buildHandlers() map[string]handlerFunc {
 		"device.launcher.self_update":              handleLauncher,
 		"device.launcher.directory_permission":     handleLauncher,
 		"device.launcher.diagnostics":              handleLauncher,
+		"device.launcher.storage":                  handleLauncher,
+		"device.launcher.storage_clear":            handleLauncher,
 		"device.launcher.ssh_status":               handleLauncher,
 		"device.launcher.ssh_setup":                handleLauncher,
 		"device.launcher.ssh_authorized_key":       handleLauncher,
@@ -463,6 +465,15 @@ func handleLauncher(env envelope, cfg config.Config, svc Service) envelope {
 			},
 		}
 	}
+	storagePayload := func(action string, result any, success bool, errText string) envelope {
+		return envelope{
+			Type: base.Type, RequestID: base.RequestID, SentAt: base.SentAt,
+			Payload: map[string]any{
+				"machine_id": cfg.Relay.MachineID, "action": action,
+				"success": success, "error": errText, "storage": result,
+			},
+		}
+	}
 	sshPayload := func(status model.SSHStatus) envelope {
 		return envelope{
 			Type: base.Type, RequestID: base.RequestID, SentAt: base.SentAt,
@@ -682,6 +693,23 @@ func handleLauncher(env envelope, cfg config.Config, svc Service) envelope {
 			return diagnosticsPayload(nil, false, err.Error())
 		}
 		return diagnosticsPayload(&result, true, "")
+	case "device.launcher.storage":
+		usage, err := svc.StorageUsage()
+		if err != nil {
+			return storagePayload("storage", nil, false, err.Error())
+		}
+		return storagePayload("storage", usage, true, "")
+	case "device.launcher.storage_clear":
+		var payload struct {
+			Keys []string `json:"keys"`
+		}
+		blob, _ := json.Marshal(env.Payload)
+		_ = json.Unmarshal(blob, &payload)
+		result, err := svc.ClearStorage(payload.Keys)
+		if err != nil {
+			return storagePayload("storage_clear", nil, false, err.Error())
+		}
+		return storagePayload("storage_clear", result, true, "")
 	case "device.launcher.ssh_status":
 		provider, ok := svc.(interface{ SSHStatus() model.SSHStatus })
 		if !ok {

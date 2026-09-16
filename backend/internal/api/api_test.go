@@ -766,6 +766,209 @@ func TestGetDeviceLauncherDiagnosticsDispatchesReadOnlyRequest(t *testing.T) {
 	}
 }
 
+func TestGetDeviceLauncherStorageDispatchesRequest(t *testing.T) {
+	mem := store.NewMemory(nil)
+	authManager := auth.NewManager(time.Hour)
+	b := broker.New()
+	operator := model.Operator{ID: 1, Username: "tester"}
+	token, err := authManager.Issue(operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Add(nil, model.HelloPayload{
+		MachineID:    "m_storage",
+		DeviceID:     "launcher:m_storage",
+		Kind:         "launcher",
+		Capabilities: []string{launcherStorageCapability},
+	}, operator.ID)
+
+	var seenType, seenMachine string
+	api := newTestAPI(mem, b, authManager, testAPIOptions{
+		launcherRequest: func(_ context.Context, operatorID int64, launcherID, _, envType string, payload any) (model.DeviceLauncherResultPayload, error) {
+			if operatorID != operator.ID || launcherID != "launcher:m_storage" {
+				t.Fatalf("unexpected storage target: operator=%d launcher=%s", operatorID, launcherID)
+			}
+			seenType = envType
+			blob, _ := json.Marshal(payload)
+			var decoded map[string]any
+			_ = json.Unmarshal(blob, &decoded)
+			seenMachine, _ = decoded["machine_id"].(string)
+			return model.DeviceLauncherResultPayload{
+				Success: true,
+				Storage: map[string]any{
+					"total_bytes": 12503856527,
+					"categories": []map[string]any{
+						{"key": "caches", "label": "依赖缓存", "bytes": 4195806303, "clearable": true},
+						{"key": "runtimes", "label": "运行时组件", "bytes": 2543324789, "clearable": false},
+					},
+				},
+			}, nil
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/devices/m_storage/launcher/storage", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("machineID", "m_storage")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rr := httptest.NewRecorder()
+	api.GetDeviceLauncherStorage(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if seenType != "device.launcher.storage" {
+		t.Fatalf("unexpected dispatch type: %s", seenType)
+	}
+	if seenMachine != "m_storage" {
+		t.Fatalf("unexpected machine_id in payload: %q", seenMachine)
+	}
+	if !strings.Contains(rr.Body.String(), "12503856527") {
+		t.Fatalf("storage result was not returned: %s", rr.Body.String())
+	}
+}
+
+func TestClearDeviceLauncherStorageSendsNormalizedKeys(t *testing.T) {
+	mem := store.NewMemory(nil)
+	authManager := auth.NewManager(time.Hour)
+	b := broker.New()
+	operator := model.Operator{ID: 1, Username: "tester"}
+	token, err := authManager.Issue(operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Add(nil, model.HelloPayload{
+		MachineID:    "m_storage_clear",
+		DeviceID:     "launcher:m_storage_clear",
+		Kind:         "launcher",
+		Capabilities: []string{launcherStorageCapability},
+	}, operator.ID)
+
+	var seenType string
+	var seenKeys []string
+	api := newTestAPI(mem, b, authManager, testAPIOptions{
+		launcherRequest: func(_ context.Context, _ int64, _ string, _ string, envType string, payload any) (model.DeviceLauncherResultPayload, error) {
+			seenType = envType
+			blob, _ := json.Marshal(payload)
+			var decoded struct {
+				Keys []string `json:"keys"`
+			}
+			_ = json.Unmarshal(blob, &decoded)
+			seenKeys = decoded.Keys
+			return model.DeviceLauncherResultPayload{
+				Success: true,
+				Storage: map[string]any{"freed_bytes": 4195806303},
+			}, nil
+		},
+	})
+
+	// 重复键与空白键应在下发前被清理。
+	body := strings.NewReader(`{"keys":["caches"," caches ","logs","  ","versions"]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/m_storage_clear/launcher/storage/clear", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("machineID", "m_storage_clear")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rr := httptest.NewRecorder()
+	api.ClearDeviceLauncherStorage(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if seenType != "device.launcher.storage_clear" {
+		t.Fatalf("unexpected dispatch type: %s", seenType)
+	}
+	want := []string{"caches", "logs", "versions"}
+	if len(seenKeys) != len(want) {
+		t.Fatalf("期望 %d 个键，实际 %v", len(want), seenKeys)
+	}
+	for i, key := range want {
+		if seenKeys[i] != key {
+			t.Fatalf("键顺序或内容不符，期望 %v，实际 %v", want, seenKeys)
+		}
+	}
+	if !strings.Contains(rr.Body.String(), "4195806303") {
+		t.Fatalf("清理结果未返回: %s", rr.Body.String())
+	}
+}
+
+func TestClearDeviceLauncherStorageRejectsOfflineDevice(t *testing.T) {
+	mem := store.NewMemory(nil)
+	authManager := auth.NewManager(time.Hour)
+	b := broker.New()
+	operator := model.Operator{ID: 1, Username: "tester"}
+	token, err := authManager.Issue(operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := newTestAPI(mem, b, authManager, testAPIOptions{})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/m_offline/launcher/storage/clear", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("machineID", "m_offline")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rr := httptest.NewRecorder()
+	api.ClearDeviceLauncherStorage(rr, req)
+
+	// 设备不在线时不能下发清理，避免请求悬空。
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetDeviceLauncherStorageRejectsLauncherWithoutCapability(t *testing.T) {
+	mem := store.NewMemory(nil)
+	authManager := auth.NewManager(time.Hour)
+	b := broker.New()
+	operator := model.Operator{ID: 1, Username: "tester"}
+	token, err := authManager.Issue(operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 老版本 launcher 不带 device_storage_v1 能力。
+	b.Add(nil, model.HelloPayload{
+		MachineID: "m_old", DeviceID: "launcher:m_old", Kind: "launcher",
+	}, operator.ID)
+
+	dispatched := false
+	api := newTestAPI(mem, b, authManager, testAPIOptions{
+		launcherRequest: func(_ context.Context, _ int64, _ string, _ string, _ string, _ any) (model.DeviceLauncherResultPayload, error) {
+			dispatched = true
+			return model.DeviceLauncherResultPayload{Success: true}, nil
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/devices/m_old/launcher/storage", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("machineID", "m_old")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rr := httptest.NewRecorder()
+	api.GetDeviceLauncherStorage(rr, req)
+
+	// 必须快速失败，而不是把请求下发出去等 90 秒超时。
+	if dispatched {
+		t.Fatal("不支持该能力的 launcher 不应收到存储查询指令")
+	}
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "版本过低") {
+		t.Fatalf("错误文案应提示更新 launcher: %s", rr.Body.String())
+	}
+}
+
+func TestNormalizeStorageKeys(t *testing.T) {
+	if got := normalizeStorageKeys(nil); len(got) != 0 {
+		t.Fatalf("nil 应返回空切片，实际 %v", got)
+	}
+	got := normalizeStorageKeys([]string{"caches", "", "caches", " logs "})
+	if len(got) != 2 || got[0] != "caches" || got[1] != "logs" {
+		t.Fatalf("去重与裁剪结果不符: %v", got)
+	}
+}
+
 func TestLauncherDownloadsDoNotExposeLinuxArtifact(t *testing.T) {
 	if _, _, _, ok := resolveLauncherDownloadFile("launcher-linux-x64.tar.gz"); ok {
 		t.Fatal("expected linux launcher artifact to be rejected")

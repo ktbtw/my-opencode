@@ -1498,6 +1498,7 @@ type DeviceLauncherResultPayload struct {
 	Permission        *DeviceDirectoryPermissionResult `json:"permission,omitempty"`
 	Identity          *ProjectIdentityCorrectionResult `json:"identity,omitempty"`
 	Diagnostics       any                              `json:"diagnostics,omitempty"`
+	Storage           any                              `json:"storage,omitempty"`
 	SSH               *SSHStatus                       `json:"ssh,omitempty"`
 	SSHSetup          any                              `json:"setup,omitempty"`
 	SSHAuthorizedKey  any                              `json:"authorized_key,omitempty"`

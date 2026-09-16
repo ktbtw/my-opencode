@@ -1456,6 +1456,8 @@ func (a *App) Router() http.Handler {
 	r.Post("/api/devices/{machineID}/launcher/autostart/enable", h.EnableDeviceLauncherAutostart)
 	r.Post("/api/devices/{machineID}/launcher/autostart/disable", h.DisableDeviceLauncherAutostart)
 	r.Post("/api/devices/{machineID}/launcher/self-update", h.SelfUpdateDeviceLauncher)
+	r.Get("/api/devices/{machineID}/launcher/storage", h.GetDeviceLauncherStorage)
+	r.Post("/api/devices/{machineID}/launcher/storage/clear", h.ClearDeviceLauncherStorage)
 	r.Post("/api/devices/{machineID}/launcher/directory-permission", h.RequestDeviceLauncherDirectoryPermission)
 	r.Get("/api/tasks", h.ListTasks)
 	r.Get("/api/tasks/delta", h.ListTaskDelta)

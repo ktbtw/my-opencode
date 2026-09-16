@@ -49,6 +49,10 @@ const (
 
 const launcherCompactionConfigCapability = "device_compaction_config_v1"
 
+// launcherStorageCapability 标记 launcher 支持磁盘占用查询与缓存清理。
+// 老版本 launcher 不会响应这两条指令，后端据此提前拒绝，避免请求悬空等超时。
+const launcherStorageCapability = "device_storage_v1"
+
 func (a *API) enrichOrchestrationTaskMetadata(operatorID int64, metadata map[string]string) map[string]string {
 	settings, err := a.store.GetDeviceSettings(operatorID, userSettingsAgentID)
 	if err != nil || settings == nil {
@@ -3700,6 +3704,99 @@ func (a *API) SelfUpdateDeviceLauncher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, result)
+}
+
+// GetDeviceLauncherStorage 按需查询设备 launcher 运行目录的磁盘占用。
+// 目录遍历开销较大，因此单独走接口而不是随心跳上报。
+func (a *API) GetDeviceLauncherStorage(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	machineID := chi.URLParam(r, "machineID")
+	launcherID, err := a.deviceLauncherAgentWithCapability(operator.ID, machineID, launcherStorageCapability)
+	if err != nil {
+		write(w, http.StatusConflict, map[string]string{"error": launcherCapabilityMessage(err, "设备")})
+		return
+	}
+	// 运行目录可达数 GB、数万个文件，遍历耗时可能超过默认的 30 秒。
+	requestCtx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	result, err := a.requestDeviceLauncher(requestCtx, operator.ID, launcherID,
+		fmt.Sprintf("req_launcher_storage_%d", time.Now().UnixNano()),
+		"device.launcher.storage", map[string]string{"machine_id": machineID})
+	if err != nil {
+		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+
+// ClearDeviceLauncherStorage 清理设备上可再生成的缓存目录。
+// 运行时组件、Agent 数据与程序文件不在可清理范围内。
+func (a *API) ClearDeviceLauncherStorage(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	machineID := chi.URLParam(r, "machineID")
+	launcherID, err := a.deviceLauncherAgentWithCapability(operator.ID, machineID, launcherStorageCapability)
+	if err != nil {
+		write(w, http.StatusConflict, map[string]string{"error": launcherCapabilityMessage(err, "设备")})
+		return
+	}
+	var req launcherStorageClearReq
+	if r.Body != nil {
+		// 允许空 body：表示清理全部可清理类别。
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	requestCtx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	result, err := a.requestDeviceLauncher(requestCtx, operator.ID, launcherID,
+		fmt.Sprintf("req_launcher_storage_clear_%d", time.Now().UnixNano()),
+		"device.launcher.storage_clear", map[string]any{
+			"machine_id": machineID,
+			"keys":       normalizeStorageKeys(req.Keys),
+		})
+	if err != nil {
+		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	write(w, http.StatusOK, result)
+}
+
+// launcherCapabilityMessage 把能力校验失败转换成面向用户的提示。
+// launcher 版本过低时直接说明原因，避免用户误以为设备离线。
+func launcherCapabilityMessage(err error, subject string) string {
+	if err != nil && strings.Contains(err.Error(), "不支持") {
+		return "设备端 launcher 版本过低，请先在设备上更新 launcher"
+	}
+	return subject + "不在线或无权限"
+}
+
+// launcherStorageClearReq 是清理请求体；keys 为空表示清理全部可清理类别。
+type launcherStorageClearReq struct {
+	Keys []string `json:"keys"`
+}
+
+// normalizeStorageKeys 去掉空白项并去重，避免把空字符串当成类别下发。
+func normalizeStorageKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]bool, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func (a *API) RequestDeviceLauncherDirectoryPermission(w http.ResponseWriter, r *http.Request) {

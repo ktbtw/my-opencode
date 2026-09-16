@@ -15,6 +15,7 @@ import (
 
 	"launcher/internal/config"
 	"launcher/internal/model"
+	"launcher/internal/storage"
 )
 
 func TestBuildHandlersIncludesKnownEnvelopeTypes(t *testing.T) {
@@ -98,6 +99,92 @@ func TestLauncherManagedAuthorizedKeyEnvelopeIsHandled(t *testing.T) {
 	if result.Type != "device.launcher.result" || result.RequestID != "req-ssh-key" || payload.MachineID != "m_test" || payload.Action != "ssh_authorized_key" || !payload.Success || !payload.AuthorizedKey.Installed {
 		t.Fatalf("unexpected managed key response: envelope=%+v payload=%+v", result, payload)
 	}
+}
+
+func TestLauncherStorageEnvelopesAreHandled(t *testing.T) {
+	handlers := buildHandlers()
+	cfg := config.Config{Relay: config.RelayConfig{MachineID: "m_storage"}}
+
+	// 两条指令都必须已注册，否则设备页会拿到“不支持”的静默丢弃。
+	for _, key := range []string{"device.launcher.storage", "device.launcher.storage_clear"} {
+		if _, ok := handlers[key]; !ok {
+			t.Fatalf("handler 未注册: %s", key)
+		}
+	}
+
+	svc := &relayStorageService{}
+
+	// 查询：回传 storage 字段。
+	query := handleLauncher(envelope{
+		Type: "device.launcher.storage", RequestID: "req-storage",
+		Payload: map[string]any{"machine_id": "m_storage"},
+	}, cfg, svc)
+	if query.Type != "device.launcher.result" || query.RequestID != "req-storage" {
+		t.Fatalf("查询响应信封不符: %+v", query)
+	}
+	var queryPayload struct {
+		MachineID string `json:"machine_id"`
+		Action    string `json:"action"`
+		Success   bool   `json:"success"`
+		Storage   struct {
+			TotalBytes uint64 `json:"total_bytes"`
+			Categories []struct {
+				Key       string `json:"key"`
+				Bytes     uint64 `json:"bytes"`
+				Clearable bool   `json:"clearable"`
+			} `json:"categories"`
+		} `json:"storage"`
+	}
+	blob, _ := json.Marshal(query.Payload)
+	if err := json.Unmarshal(blob, &queryPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !queryPayload.Success || queryPayload.Action != "storage" || queryPayload.MachineID != "m_storage" {
+		t.Fatalf("查询负载不符: %+v", queryPayload)
+	}
+	if queryPayload.Storage.TotalBytes != 2048 || len(queryPayload.Storage.Categories) != 1 {
+		t.Fatalf("查询未回传占用数据: %+v", queryPayload.Storage)
+	}
+	if queryPayload.Storage.Categories[0].Key != "caches" || !queryPayload.Storage.Categories[0].Clearable {
+		t.Fatalf("类别信息不符: %+v", queryPayload.Storage.Categories[0])
+	}
+
+	// 清理：keys 需要正确解码并透传给 service。
+	clear := handleLauncher(envelope{
+		Type: "device.launcher.storage_clear", RequestID: "req-storage-clear",
+		Payload: map[string]any{"machine_id": "m_storage", "keys": []string{"caches", "logs"}},
+	}, cfg, svc)
+	if clear.RequestID != "req-storage-clear" {
+		t.Fatalf("清理响应未回填 request_id: %+v", clear)
+	}
+	if len(svc.clearedKeys) != 2 || svc.clearedKeys[0] != "caches" || svc.clearedKeys[1] != "logs" {
+		t.Fatalf("清理 keys 未正确透传: %v", svc.clearedKeys)
+	}
+	var clearPayload struct {
+		Action  string `json:"action"`
+		Success bool   `json:"success"`
+		Storage struct {
+			FreedBytes uint64 `json:"freed_bytes"`
+		} `json:"storage"`
+	}
+	blob, _ = json.Marshal(clear.Payload)
+	if err := json.Unmarshal(blob, &clearPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !clearPayload.Success || clearPayload.Action != "storage_clear" || clearPayload.Storage.FreedBytes != 512 {
+		t.Fatalf("清理负载不符: %+v", clearPayload)
+	}
+}
+
+// relayStorageService 只覆盖存储相关的桩实现，其余方法由 relayTestService 提供。
+type relayStorageService struct {
+	relayTestService
+	clearedKeys []string
+}
+
+func (s *relayStorageService) ClearStorage(keys []string) (storage.ClearResult, error) {
+	s.clearedKeys = keys
+	return storage.ClearResult{FreedBytes: 512}, nil
 }
 
 func TestMCPConfigAgentSelectionEnvelopeIsHandled(t *testing.T) {
@@ -595,6 +682,20 @@ func (relayTestService) DirectoryPermission(input model.DirectoryPermissionInput
 
 func (relayTestService) Diagnostics(model.LauncherDiagnosticsInput) (model.LauncherDiagnostics, error) {
 	return model.LauncherDiagnostics{Platform: "test"}, nil
+}
+
+func (relayTestService) StorageUsage() (storage.Usage, error) {
+	return storage.Usage{
+		Root:       "/tmp/launcher",
+		TotalBytes: 2048,
+		Categories: []storage.Category{
+			{Key: "caches", Label: "依赖缓存", Bytes: 2048, Clearable: true},
+		},
+	}, nil
+}
+
+func (relayTestService) ClearStorage([]string) (storage.ClearResult, error) {
+	return storage.ClearResult{FreedBytes: 512}, nil
 }
 
 func (relayTestService) ProjectFiles(model.ProjectFilesRequest) (model.DirectoryListResult, error) {

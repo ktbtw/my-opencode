@@ -35,6 +35,7 @@ import 'device_metrics_provider.dart';
 import 'device_provider.dart';
 import 'device_skill_detail_dialog.dart';
 import 'widgets/device_runtime_panel.dart';
+import 'widgets/device_storage_panel.dart';
 import '../../project_memory/presentation/project_memory_model_picker.dart';
 
 @visibleForTesting
@@ -6888,26 +6889,37 @@ class _PagedDeviceTab extends ConsumerWidget {
               LayoutBuilder(
                 builder: (context, constraints) {
                   final wide = constraints.maxWidth >= AppBreakpoints.md;
-                  final runtimePanel = DeviceRuntimePanel(
-                    metrics: metrics,
-                    deviceOnline: device.online,
+                  // 运行状态与磁盘占用都属于“设备自身资源”，放在同一列。
+                  final resourceColumn = Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      DeviceRuntimePanel(
+                        metrics: metrics,
+                        deviceOnline: device.online,
+                      ),
+                      const SizedBox(height: 16),
+                      DeviceStoragePanel(
+                        machineId: device.machineId,
+                        deviceOnline: device.online,
+                      ),
+                    ],
                   );
                   final entriesCard = _DeviceEntriesCard(device: device);
                   if (!wide) {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        runtimePanel,
+                        resourceColumn,
                         const SizedBox(height: 16),
                         entriesCard,
                       ],
                     );
                   }
-                  // 宽屏并排：运行状态略宽，配置入口固定较窄，视觉重心偏向状态。
+                  // 宽屏并排：资源列略宽，配置入口固定较窄，视觉重心偏向状态。
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(flex: 6, child: runtimePanel),
+                      Expanded(flex: 6, child: resourceColumn),
                       const SizedBox(width: 16),
                       Expanded(flex: 5, child: entriesCard),
                     ],

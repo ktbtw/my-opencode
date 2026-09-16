@@ -1,6 +1,9 @@
 package relay
 
-import "launcher/internal/model"
+import (
+	"launcher/internal/model"
+	"launcher/internal/storage"
+)
 
 type Service interface {
 	State() model.DeviceView
@@ -62,4 +65,6 @@ type Service interface {
 	SelfUpdate(model.LauncherSelfUpdateInput) (model.LauncherSelfUpdateResult, error)
 	DirectoryPermission(model.DirectoryPermissionInput) (model.DirectoryPermissionResult, error)
 	Diagnostics(model.LauncherDiagnosticsInput) (model.LauncherDiagnostics, error)
+	StorageUsage() (storage.Usage, error)
+	ClearStorage(keys []string) (storage.ClearResult, error)
 }
