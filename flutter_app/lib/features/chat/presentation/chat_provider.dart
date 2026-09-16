@@ -2509,91 +2509,105 @@ class ChatNotifier extends StateNotifier<ChatState> {
                     }
                   }
                 }
-                final currentIndex = messages.indexWhere(
-                  (message) => message.id == activeAgentMessageId(),
-                );
-                if (currentIndex >= 0) {
-                  final current = messages[currentIndex];
-                  final isEmptyPlaceholder =
-                      current.content.isEmpty &&
-                      current.thinkingContent.isEmpty &&
-                      current.toolCalls.isEmpty &&
-                      current.goalProgress.isEmpty &&
-                      current.blocks.isEmpty;
-                  if (isEmptyPlaceholder) {
-                    messages.removeAt(currentIndex);
-                  }
-                }
-                for (var i = 0; i < messages.length; i++) {
-                  final message = messages[i];
-                  if (message.role != MessageRole.agent) continue;
-                  if (message.id == nextAgentMessageId) continue;
-                  if (message.taskId != null && message.taskId != taskId) {
-                    continue;
-                  }
-                  final mutable = message.copyForUpdate();
-                  _finalizeRunningTools(mutable);
-                  if (mutable.state == MessageState.streaming) {
-                    mutable.statusHint = '';
-                    mutable.imageGeneration = null;
-                    mutable.finalDeliveryPhase = FinalDeliveryPhase.idle;
-                    mutable.state = MessageState.done;
-                  }
-                  messages[i] = mutable;
-                }
-                DateTime? taskCreatedAt;
-                for (final message in messages) {
-                  if (message.taskId == taskId &&
-                      message.taskCreatedAt != null) {
-                    taskCreatedAt = message.taskCreatedAt;
-                    break;
-                  }
-                }
-                taskCreatedAt ??= sentAt;
-                final taskMessageIndex = _nextTaskMessageIndex(taskId);
-                if (!isSubagent &&
-                    !messages.any((message) => message.id == inputMessageId)) {
-                  messages.add(
-                    ChatMessage(
-                      id: inputMessageId,
-                      role: MessageRole.user,
-                      state: MessageState.done,
-                      content: content,
-                      createdAt: eventTime(event),
-                      taskId: taskId,
-                      taskCreatedAt: taskCreatedAt,
-                      taskMessageIndex: taskMessageIndex,
-                      isInsertedContext: true,
-                      insertedContextSource: contextSource,
-                      insertedContextType: contextType,
-                      insertedContextMetadata: metadata,
-                    ),
+                // A subagent result injected into a still-running parent round
+                // must not close that round: doing so finalizes sibling
+                // subagents that are still running and drops the live stream
+                // hint, which reads as a finished turn. Only the relay's wake
+                // signal actually opens a new round.
+                final startsNewRound =
+                    !isSubagent ||
+                    (metadata['wake_reason']?.toString().trim().isNotEmpty ??
+                        false);
+                if (startsNewRound) {
+                  final currentIndex = messages.indexWhere(
+                    (message) => message.id == activeAgentMessageId(),
                   );
+                  if (currentIndex >= 0) {
+                    final current = messages[currentIndex];
+                    final isEmptyPlaceholder =
+                        current.content.isEmpty &&
+                        current.thinkingContent.isEmpty &&
+                        current.toolCalls.isEmpty &&
+                        current.goalProgress.isEmpty &&
+                        current.blocks.isEmpty;
+                    if (isEmptyPlaceholder) {
+                      messages.removeAt(currentIndex);
+                    }
+                  }
+                  for (var i = 0; i < messages.length; i++) {
+                    final message = messages[i];
+                    if (message.role != MessageRole.agent) continue;
+                    if (message.id == nextAgentMessageId) continue;
+                    if (message.taskId != null && message.taskId != taskId) {
+                      continue;
+                    }
+                    final mutable = message.copyForUpdate();
+                    _finalizeRunningTools(mutable);
+                    if (mutable.state == MessageState.streaming) {
+                      mutable.statusHint = '';
+                      mutable.imageGeneration = null;
+                      mutable.finalDeliveryPhase = FinalDeliveryPhase.idle;
+                      mutable.state = MessageState.done;
+                    }
+                    messages[i] = mutable;
+                  }
+                  DateTime? taskCreatedAt;
+                  for (final message in messages) {
+                    if (message.taskId == taskId &&
+                        message.taskCreatedAt != null) {
+                      taskCreatedAt = message.taskCreatedAt;
+                      break;
+                    }
+                  }
+                  taskCreatedAt ??= sentAt;
+                  final taskMessageIndex = _nextTaskMessageIndex(taskId);
+                  if (!isSubagent &&
+                      !messages.any((message) => message.id == inputMessageId)) {
+                    messages.add(
+                      ChatMessage(
+                        id: inputMessageId,
+                        role: MessageRole.user,
+                        state: MessageState.done,
+                        content: content,
+                        createdAt: eventTime(event),
+                        taskId: taskId,
+                        taskCreatedAt: taskCreatedAt,
+                        taskMessageIndex: taskMessageIndex,
+                        isInsertedContext: true,
+                        insertedContextSource: contextSource,
+                        insertedContextType: contextType,
+                        insertedContextMetadata: metadata,
+                      ),
+                    );
+                  }
+                  if (!messages.any(
+                    (message) => message.id == nextAgentMessageId,
+                  )) {
+                    messages.add(
+                      ChatMessage(
+                        id: nextAgentMessageId,
+                        role: MessageRole.agent,
+                        state: MessageState.streaming,
+                        content: '',
+                        createdAt: eventTime(event),
+                        taskId: taskId,
+                        taskCreatedAt: taskCreatedAt,
+                        taskMessageIndex:
+                            taskMessageIndex + (isSubagent ? 0 : 1),
+                      ),
+                    );
+                  }
+                  setActiveAgentMessageId(nextAgentMessageId);
+                  activeRoundStartedAt = eventTime(event);
+                  firstDelta = true;
                 }
-                if (!messages.any(
-                  (message) => message.id == nextAgentMessageId,
-                )) {
-                  messages.add(
-                    ChatMessage(
-                      id: nextAgentMessageId,
-                      role: MessageRole.agent,
-                      state: MessageState.streaming,
-                      content: '',
-                      createdAt: eventTime(event),
-                      taskId: taskId,
-                      taskCreatedAt: taskCreatedAt,
-                      taskMessageIndex: taskMessageIndex + (isSubagent ? 0 : 1),
-                    ),
-                  );
-                }
-                setActiveAgentMessageId(nextAgentMessageId);
-                activeRoundStartedAt = eventTime(event);
-                firstDelta = true;
-                state = state.copyWith(
-                  messages: messages,
-                  sending: true,
-                  taskActive: true,
-                );
+                state = startsNewRound
+                    ? state.copyWith(
+                        messages: messages,
+                        sending: true,
+                        taskActive: true,
+                      )
+                    : state.copyWith(messages: messages);
                 break;
 
               case 'delta':

@@ -1398,6 +1398,87 @@ void main() {
   );
 
   test(
+    'subagent result injection keeps sibling running subagents alive',
+    () async {
+      final repository = _FakeChatRepository();
+      repository.history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+
+      await notifier.loadSession('session-1');
+      final events = repository.taskEvents('task-1');
+      events.add(_subagentStarted('node-a', sentAt: '2026-07-28T08:00:01Z'));
+      events.add(_subagentStarted('node-b', sentAt: '2026-07-28T08:00:02Z'));
+      await _eventually(
+        () => _subagentStatuses(notifier, 'task-1').length == 2,
+      );
+      final roundsBefore = _agentMessages(notifier, 'task-1').length;
+
+      events.add(
+        _subagentResultApplied('node-a', sentAt: '2026-07-28T08:00:03Z'),
+      );
+      await _eventually(
+        () => _subagentStatuses(
+          notifier,
+          'task-1',
+        ).contains('node-a:completed'),
+      );
+
+      expect(_subagentStatuses(notifier, 'task-1'), contains('node-b:running'));
+      final agent = _agentMessage(notifier, 'task-1');
+      expect(agent.state, MessageState.streaming);
+      expect(_agentMessages(notifier, 'task-1'), hasLength(roundsBefore));
+    },
+  );
+
+  test(
+    'subagent result that wakes the main agent still opens a new round',
+    () async {
+      final repository = _FakeChatRepository();
+      repository.history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+
+      await notifier.loadSession('session-1');
+      final events = repository.taskEvents('task-1');
+      events.add(_subagentStarted('node-a', sentAt: '2026-07-28T08:00:01Z'));
+      await _eventually(
+        () => _subagentStatuses(notifier, 'task-1').contains('node-a:running'),
+      );
+      final roundsBefore = _agentMessages(notifier, 'task-1').length;
+
+      events.add(
+        _subagentResultApplied(
+          'node-a',
+          sentAt: '2026-07-28T08:00:02Z',
+          wakeReason: 'batch_complete',
+        ),
+      );
+      await _eventually(
+        () => _agentMessages(notifier, 'task-1').length == roundsBefore + 1,
+      );
+
+      final messages = _agentMessages(notifier, 'task-1');
+      expect(messages.first.state, MessageState.done);
+      expect(messages.last.state, MessageState.streaming);
+    },
+  );
+
+  test(
     'text after a tool group does not mark still-running tools completed',
     () async {
       final repository = _FakeChatRepository();
@@ -1893,6 +1974,58 @@ ChatMessage _agentMessage(ChatNotifier notifier, String taskId) {
   return notifier.state.messages.firstWhere(
     (message) => message.role == MessageRole.agent && message.taskId == taskId,
   );
+}
+
+Map<String, dynamic> _subagentStarted(String nodeId, {required String sentAt}) {
+  return {
+    'type': 'subagent_started',
+    'metadata': {
+      'node_id': nodeId,
+      'subagent_type': 'explore',
+      'title': '子代理 $nodeId',
+      'started_at': 1,
+    },
+    'sent_at': sentAt,
+  };
+}
+
+/// The relay injects a delegated result through `input_applied`; the parent
+/// round only advances when it also reports a wake reason.
+Map<String, dynamic> _subagentResultApplied(
+  String nodeId, {
+  required String sentAt,
+  String wakeReason = '',
+}) {
+  return {
+    'type': 'input_applied',
+    'content': '子代理 $nodeId 已完成',
+    'metadata': {
+      'source': 'subagent',
+      'context_type': 'subagentResult',
+      'node_id': nodeId,
+      'queue_item_id': nodeId,
+      'status': 'completed',
+      if (wakeReason.isNotEmpty) 'wake_reason': wakeReason,
+    },
+    'sent_at': sentAt,
+  };
+}
+
+List<ChatMessage> _agentMessages(ChatNotifier notifier, String taskId) {
+  return notifier.state.messages
+      .where(
+        (message) =>
+            message.role == MessageRole.agent && message.taskId == taskId,
+      )
+      .toList();
+}
+
+List<String> _subagentStatuses(ChatNotifier notifier, String taskId) {
+  return _agentMessages(notifier, taskId)
+      .expand((message) => message.toolCalls)
+      .where(isSubagentToolCall)
+      .map((tool) => '${tool.metadata['node_id']}:${tool.status}')
+      .toList();
 }
 
 Map<String, dynamic> _toolUpdated({

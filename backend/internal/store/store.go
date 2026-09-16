@@ -28,6 +28,25 @@ const taskEventHistoryLimit = 500
 const taskEventWriteShardCount = 64
 const taskEventCatchUpLimit = 2000
 
+// Subagent lifecycle events are low frequency, but they share the
+// taskEventHistoryLimit window with `delta` traffic. A single streaming turn
+// emits far more deltas than that window holds, which used to evict the
+// subagent_started record of a subagent that was still running. Keeping a
+// dedicated per-task window keeps the running node visible.
+const subagentEventHistoryLimit = 200
+
+var subagentEventTypes = []string{
+	"subagent_state",
+	"subagent_started",
+	"subagent_result",
+	"subagent_control_requested",
+	"subagent_control_applied",
+}
+
+func isSubagentEventType(eventType string) bool {
+	return slices.Contains(subagentEventTypes, eventType)
+}
+
 // Per-subscriber mailbox cap. A stuck SSE client is disconnected instead of
 // dropping events from the middle of a live stream.
 const taskEventSubscriberQueueLimit = 16384
@@ -52,6 +71,7 @@ type Memory struct {
 	mu                        sync.RWMutex
 	tasks                     map[string]*model.Task
 	events                    map[string][]model.Event
+	subagentEvents            map[string][]model.Event
 	eventSequences            map[string]int64
 	sessions                  map[string]*model.Session
 	chatQueue                 map[string]model.ChatQueueItem
@@ -135,6 +155,7 @@ func NewMemory(archive TaskArchive) *Memory {
 	return &Memory{
 		tasks:                   map[string]*model.Task{},
 		events:                  map[string][]model.Event{},
+		subagentEvents:          map[string][]model.Event{},
 		eventSequences:          map[string]int64{},
 		sessions:                map[string]*model.Session{},
 		chatQueue:               map[string]model.ChatQueueItem{},
@@ -559,6 +580,13 @@ func (m *Memory) AddEvent(id string, evt model.Event) {
 			}
 		}
 	}
+	if isSubagentEventType(evt.Type) {
+		window := append(m.subagentEvents[id], evt)
+		if len(window) > subagentEventHistoryLimit {
+			window = window[len(window)-subagentEventHistoryLimit:]
+		}
+		m.subagentEvents[id] = window
+	}
 	m.mu.Unlock()
 	m.subMu.Lock()
 	subscribers := append([]*taskEventSubscriber(nil), m.subscribers[id]...)
@@ -573,6 +601,7 @@ func (m *Memory) AddEvent(id string, evt model.Event) {
 		if durable || ephemeral {
 			m.mu.Lock()
 			delete(m.events, id)
+			delete(m.subagentEvents, id)
 			if durable {
 				delete(m.tasks, id)
 				delete(m.eventSequences, id)
@@ -1120,25 +1149,22 @@ func (m *Memory) LatestTerminalEvent(id string) (model.Event, bool) {
 	return model.Event{}, false
 }
 
+// SubagentEvents returns the most recent subagent lifecycle events of a task in
+// chronological order, reading the dedicated in-process window first and
+// falling back to the durable archive once that window is gone (the task
+// reached a terminal state, or the relay restarted mid-task).
 func (m *Memory) SubagentEvents(id string, limit int) []model.Event {
 	if limit <= 0 || limit > 200 {
 		limit = 200
 	}
 	m.mu.RLock()
-	live := append([]model.Event(nil), m.events[id]...)
+	live := append([]model.Event(nil), m.subagentEvents[id]...)
 	m.mu.RUnlock()
 	if len(live) > 0 {
-		filtered := make([]model.Event, 0, limit)
-		for index := len(live) - 1; index >= 0 && len(filtered) < limit; index-- {
-			switch live[index].Type {
-			case "subagent_state", "subagent_started", "subagent_result", "subagent_control_requested", "subagent_control_applied":
-				filtered = append(filtered, live[index])
-			}
+		if len(live) > limit {
+			live = live[len(live)-limit:]
 		}
-		for left, right := 0, len(filtered)-1; left < right; left, right = left+1, right-1 {
-			filtered[left], filtered[right] = filtered[right], filtered[left]
-		}
-		return filtered
+		return live
 	}
 	if reader, ok := m.archive.(TaskSubagentStateReader); ok {
 		events, err := reader.ListLatestSubagentEvents(id, limit)
@@ -1148,8 +1174,7 @@ func (m *Memory) SubagentEvents(id string, limit int) []model.Event {
 		log.Printf("latest subagent event query failed: %v", err)
 		return nil
 	}
-	types := []string{"subagent_state", "subagent_started", "subagent_result", "subagent_control_requested", "subagent_control_applied"}
-	page, err := m.ListEventPage(id, nil, limit, types, "")
+	page, err := m.ListEventPage(id, nil, limit, subagentEventTypes, "")
 	if err != nil {
 		log.Printf("subagent event query failed: %v", err)
 		return nil

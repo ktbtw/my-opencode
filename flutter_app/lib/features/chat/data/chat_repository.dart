@@ -784,6 +784,13 @@ class ChatRepository {
         _upsertToolBlock(blocks, tool);
         currentRound(event).upsertToolCall(tool);
       }
+      // A subagent result only opens a new round when the relay woke the main
+      // agent. Otherwise it is injected into the round that is still running,
+      // so no round boundary and no standalone applied input are recorded.
+      if (isSubagent &&
+          (metadata['wake_reason']?.toString().trim().isEmpty ?? true)) {
+        return;
+      }
       appliedInputs.add(
         TaskInputAppliedInfo(
           queueItemId: metadata['queue_item_id']?.toString() ?? '',

@@ -443,6 +443,24 @@ func TestSubagentEventsUsesBoundedWindowNotFullLog(t *testing.T) {
 	}
 }
 
+func TestSubagentEventsSurviveDeltaFlood(t *testing.T) {
+	memory := NewMemory(noopArchive{})
+	now := time.Now().UTC()
+	memory.AddEvent("task-flood", model.Event{
+		TaskID: "task-flood", Type: "subagent_started", SentAt: now,
+		Metadata: map[string]any{"node_id": "node-live", "subagent_type": "explore"},
+	})
+	for index := 0; index < taskEventHistoryLimit*2; index++ {
+		memory.AddEvent("task-flood", model.Event{
+			TaskID: "task-flood", Type: "delta", Content: "token", SentAt: now,
+		})
+	}
+	events := memory.SubagentEvents("task-flood", 200)
+	if len(events) != 1 || events[0].Type != "subagent_started" {
+		t.Fatalf("delta flood evicted the subagent window: %+v", events)
+	}
+}
+
 func TestHistoricalEventPageDoesNotPopulateLiveCache(t *testing.T) {
 	now := time.Now().UTC()
 	archive := &archivedEventArchive{
