@@ -41,6 +41,13 @@ class AppNotificationRemotePage {
   const AppNotificationRemotePage({required this.items, required this.cursor});
 }
 
+/// 同步请求的超时时间。
+///
+/// [AppNotificationSyncService] 把所有同步串在一条链上，任何一个请求挂住
+/// 都会让后续同步（包括上传成功/失败这类终态）永远排不到，所以这里必须
+/// 保证每次调用都会结束。
+const Duration _syncRequestTimeout = Duration(seconds: 20);
+
 abstract class AppNotificationRemoteGateway {
   Future<AppNotificationRemoteChange> upsert(AppNotificationRecord record);
   Future<AppNotificationRemotePage> list({required int after, int limit = 200});
@@ -53,9 +60,11 @@ class ApiAppNotificationRemoteGateway implements AppNotificationRemoteGateway {
   Future<AppNotificationRemoteChange> upsert(
     AppNotificationRecord record,
   ) async {
-    final json = await ApiClient.post('/api/notifications/sync', {
-      'record': record.toJson(),
-    });
+    final json = await ApiClient.post(
+      '/api/notifications/sync',
+      {'record': record.toJson()},
+      timeout: _syncRequestTimeout,
+    );
     return AppNotificationRemoteChange.fromJson(
       (json['change'] as Map).cast<String, dynamic>(),
     );
@@ -70,7 +79,10 @@ class ApiAppNotificationRemoteGateway implements AppNotificationRemoteGateway {
       path: '/api/notifications',
       queryParameters: {'after': '$after', 'limit': '$limit'},
     );
-    final json = await ApiClient.get(uri.toString());
+    final json = await ApiClient.get(
+      uri.toString(),
+      timeout: _syncRequestTimeout,
+    );
     final items = (json['items'] as List<dynamic>? ?? const [])
         .whereType<Map>()
         .map(
@@ -88,16 +100,20 @@ class ApiAppNotificationRemoteGateway implements AppNotificationRemoteGateway {
 
   @override
   Future<void> markRead(List<String> operationIds) async {
-    await ApiClient.post('/api/notifications/read', {
-      'operation_ids': operationIds,
-    });
+    await ApiClient.post(
+      '/api/notifications/read',
+      {'operation_ids': operationIds},
+      timeout: _syncRequestTimeout,
+    );
   }
 
   @override
   Future<void> dismiss(List<String> operationIds) async {
-    await ApiClient.post('/api/notifications/dismiss', {
-      'operation_ids': operationIds,
-    });
+    await ApiClient.post(
+      '/api/notifications/dismiss',
+      {'operation_ids': operationIds},
+      timeout: _syncRequestTimeout,
+    );
   }
 }
 

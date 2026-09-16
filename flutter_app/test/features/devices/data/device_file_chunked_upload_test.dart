@@ -360,6 +360,105 @@ void main() {
     },
   );
 
+  test('chunked upload reuses the stored upload id so retries resume', () async {
+    final previousOverride = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = previousOverride);
+
+    SharedPreferences.setMockInitialValues({'access_token': 'test-token'});
+    await AppStorage.init();
+
+    final requests = <_CapturedRequest>[];
+    // 第一次上传在 complete 阶段失败，续传记录才会留下；重试必须复用同一个
+    // upload_id，并跳过设备侧已经收到的分块。
+    var failComplete = true;
+    String? seenUploadId;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final sub = server.listen((request) async {
+      final bodyText = await utf8.decoder.bind(request).join();
+      final body = jsonDecode(bodyText) as Map<String, dynamic>;
+      requests.add(
+        _CapturedRequest(
+          path: request.uri.path,
+          authorization: request.headers.value(HttpHeaders.authorizationHeader),
+          body: body,
+        ),
+      );
+      request.response.headers.contentType = ContentType.json;
+      final path = request.uri.path;
+      if (path.endsWith('/upload/status')) {
+        final received = body['upload_id'] == seenUploadId ? [0] : <int>[];
+        request.response.write(
+          jsonEncode({
+            'status': {
+              'received_chunks': received,
+              'total_chunks': 3,
+              'size': 5,
+            },
+          }),
+        );
+      } else if (path.endsWith('/upload/create')) {
+        seenUploadId ??= body['upload_id'] as String;
+        request.response.write(
+          jsonEncode({
+            'file': {'path': body['path'], 'name': 'hello.txt', 'size': 5},
+          }),
+        );
+      } else if (path.endsWith('/upload/complete') && failComplete) {
+        request.response.statusCode = HttpStatus.conflict;
+        request.response.write(jsonEncode({'error': '文件整体校验失败'}));
+      } else {
+        request.response.write(
+          jsonEncode({
+            'file': {'path': body['path'], 'name': 'hello.txt', 'size': 5},
+          }),
+        );
+      }
+      await request.response.close();
+    });
+    addTearDown(() async {
+      await sub.cancel();
+      await server.close(force: true);
+    });
+    await AppStorage.setBaseUrl('http://${server.address.host}:${server.port}');
+
+    final repo = DeviceRepository();
+    final source = utf8.encode('hello');
+
+    Future<void> upload() => repo.uploadDeviceAgentFileChunkedStreamed(
+      machineId: 'machine_a',
+      agentId: 'agent_a',
+      path: 'tmp/hello.txt',
+      totalBytes: source.length,
+      openRead: () => Stream<List<int>>.value(source),
+      chunkSize: 2,
+      resume: true,
+    );
+
+    await expectLater(upload(), throwsA(isA<Exception>()));
+    final firstId =
+        requests.firstWhere((e) => e.path.endsWith('/create')).body['upload_id'];
+
+    failComplete = false;
+    requests.clear();
+    await upload();
+
+    final create = requests.firstWhere((e) => e.path.endsWith('/create'));
+    expect(create.body['upload_id'], firstId);
+    expect(create.body['resume'], isTrue);
+    final chunks = requests.where((e) => e.path.endsWith('/chunk')).toList();
+    expect(chunks.map((e) => e.body['chunk_index']), [1, 2]);
+    // 分块请求必须带上会话大小，否则设备侧清单里的 size 会变成 0。
+    expect(chunks.every((e) => e.body['size'] == source.length), isTrue);
+
+    // 上传成功后要清掉续传记录，下一次是全新会话。
+    requests.clear();
+    await upload();
+    final nextId =
+        requests.firstWhere((e) => e.path.endsWith('/create')).body['upload_id'];
+    expect(nextId, isNot(firstId));
+  });
+
   test(
     'downloadDeviceAgentFileChunked falls back to legacy download',
     () async {

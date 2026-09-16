@@ -16,9 +16,11 @@ import 'device_launcher_model.dart';
 import 'device_mcp_config_model.dart';
 import 'device_model.dart';
 import 'device_project_memory_settings_model.dart';
+import 'device_storage_model.dart';
 import 'device_semantic_agent_model.dart';
 import 'device_skill_model.dart';
 import 'upload_policy.dart';
+import 'upload_resume_store.dart';
 
 typedef DeviceUploadProgressCallback =
     void Function(DeviceUploadProgress progress);
@@ -45,7 +47,9 @@ class DeviceRepository {
   static const Duration defaultDownloadCreateTimeout = Duration(seconds: 8);
 
   /// 单个分块的请求超时基准：在传输耗时之外额外留出的等待时间。
-  static const Duration _chunkBaseTimeout = Duration(seconds: 45);
+  /// 必须大于后端等待设备回执的超时（[app] 里 upload_chunk 为 2 分钟），
+  /// 否则客户端会先放弃并重试，而重试又排在设备端同一把锁后面，越试越糟。
+  static const Duration _chunkBaseTimeout = Duration(seconds: 130);
   /// 单个分块的最大重试次数。
   static const int _chunkMaxAttempts = 4;
 
@@ -578,6 +582,42 @@ class DeviceRepository {
     );
     final state = (data['state'] as Map<String, dynamic>?) ?? data;
     return DeviceLauncherState.fromJson(state);
+  }
+
+  /// 查询设备 launcher 运行目录的磁盘占用。
+  /// 需要遍历整个运行目录，耗时较长，因此放宽超时。
+  Future<DeviceStorageUsage> getDeviceStorage({
+    required String machineId,
+  }) async {
+    final data = await ApiClient.get(
+      '/api/devices/$machineId/launcher/storage',
+      timeout: const Duration(seconds: 120),
+    );
+    final storage = data['storage'];
+    if (storage is Map) {
+      return DeviceStorageUsage.fromJson(Map<String, dynamic>.from(storage));
+    }
+    return const DeviceStorageUsage();
+  }
+
+  /// 清理设备上可再生成的缓存。
+  /// keys 为空时清理全部可清理类别。
+  Future<DeviceStorageClearResult> clearDeviceStorage({
+    required String machineId,
+    List<String> keys = const [],
+  }) async {
+    final data = await ApiClient.post(
+      '/api/devices/$machineId/launcher/storage/clear',
+      {'keys': keys},
+      timeout: const Duration(seconds: 120),
+    );
+    final storage = data['storage'];
+    if (storage is Map) {
+      return DeviceStorageClearResult.fromJson(
+        Map<String, dynamic>.from(storage),
+      );
+    }
+    return const DeviceStorageClearResult();
   }
 
   Future<DeviceDirectoryResult> getDeviceDirectories({
@@ -1136,7 +1176,18 @@ class DeviceRepository {
       throw ArgumentError.value(effectiveChunkSize, 'chunkSize', '必须大于 0');
     }
 
-    final actualUploadId = uploadId ?? _newUploadId();
+    // 设备端按 upload_id 保存续传会话，复用同一个 id 才能让重试命中上次
+    // 已写入的分块；每次新生成 id 会让 `upload/status` 永远查到空会话。
+    final resumeKey = UploadResumeStore.key(
+      basePath: basePath,
+      path: path,
+      size: totalBytes,
+    );
+    final storedUploadId = resume ? UploadResumeStore.read(resumeKey) : null;
+    final actualUploadId = uploadId ?? storedUploadId ?? _newUploadId();
+    if (uploadId == null) {
+      await UploadResumeStore.save(resumeKey, actualUploadId);
+    }
     final totalChunks = max(1, (totalBytes / effectiveChunkSize).ceil());
     final digestSink = _DigestSink();
     final digestInput = sha256.startChunkedConversion(digestSink);
@@ -1209,6 +1260,9 @@ class DeviceRepository {
         body: {
           'path': path,
           'upload_id': actualUploadId,
+          // 设备侧把它写进续传清单，缺失会让清单里的 size 变成 0，
+          // 而续传校验要求清单 size 与本次一致，续传就会被判为过期重建。
+          'size': totalBytes,
           'chunk_index': chunkIndex,
           'total_chunks': totalChunks,
           'offset': chunkIndex * effectiveChunkSize,
@@ -1302,6 +1356,9 @@ class DeviceRepository {
       completedChunks: totalChunks,
       stage: '上传完成',
     );
+    // 会话已经发布到目标目录，设备侧临时目录会被删掉，清掉续传记录，
+    // 避免下次上传同一个文件时去查询一个已经不存在的会话。
+    await UploadResumeStore.clear(resumeKey);
     final file = (data['file'] as Map<String, dynamic>?) ?? data;
     return DeviceProjectFile.fromJson(file);
   }

@@ -317,7 +317,7 @@ func directoryUploadTempPath(target string, uploadID string) (string, error) {
 	}
 	targetHash := sha256Hex([]byte(filepath.Clean(target)))[:16]
 	sessionName := uploadID + "-" + targetHash
-	return filepath.Join(filepath.Dir(target), ".chat-codex-uploads", sessionName, "payload.bin"), nil
+	return filepath.Join(filepath.Dir(target), ".chat-codex-uploads", sessionName, uploadPayloadName), nil
 }
 
 func requireSHA256(value string) (string, error) {
@@ -379,6 +379,7 @@ func (s *service) CreateDirectoryUpload(req model.DirectoryFileRequest) (model.P
 	if err := prepareUploadSession(tempPath, req.Size, req.TotalChunks, req.Resume); err != nil {
 		return model.ProjectFile{}, err
 	}
+	cleanupStaleUploadSessions(tempPath)
 	return model.ProjectFile{Path: full, Name: filepath.Base(full), Kind: "文件", Size: req.Size}, nil
 }
 
@@ -853,6 +854,7 @@ func (s *service) CreateProjectUpload(req model.ProjectFilesRequest) (model.Proj
 	if err := prepareUploadSession(tempPath, req.Size, req.TotalChunks, req.Resume); err != nil {
 		return model.ProjectFile{}, err
 	}
+	cleanupStaleUploadSessions(tempPath)
 	return model.ProjectFile{
 		Path:  relative,
 		Name:  filepath.Base(full),
@@ -1230,7 +1232,7 @@ func projectUploadTempPath(root string, uploadID string) (string, error) {
 		}
 		return "", errors.New("upload_id 不合法")
 	}
-	return filepath.Join(root, ".chat-codex-uploads", uploadID, "payload.bin"), nil
+	return filepath.Join(root, ".chat-codex-uploads", uploadID, uploadPayloadName), nil
 }
 
 func sha256Hex(data []byte) string {

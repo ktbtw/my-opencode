@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestUploadSessionResumeKeepsExistingData(t *testing.T) {
@@ -189,6 +190,62 @@ func TestRecordUploadChunkIsIdempotent(t *testing.T) {
 	status := uploadStatusFor(tempPath, "a.txt", "up_3", 6, 3)
 	if len(status.ReceivedChunks) != 1 {
 		t.Fatalf("重复记录同一分块应只保留一条，实际 %v", status.ReceivedChunks)
+	}
+}
+
+func TestRecordUploadChunkKeepsSessionSize(t *testing.T) {
+	dir := t.TempDir()
+	tempPath := filepath.Join(dir, "payload.bin")
+	if err := prepareUploadSession(tempPath, 23, 3, false); err != nil {
+		t.Fatal(err)
+	}
+	// 分块请求并不总是带上会话大小；写入分块不能把清单里的 size 覆盖成 0，
+	// 否则续传校验（manifest.Size == size）永远不成立，只能整份重传。
+	if err := recordUploadChunk(tempPath, 0, 3, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareUploadSession(tempPath, 23, 3, true); err != nil {
+		t.Fatalf("大小一致的会话应可续传: %v", err)
+	}
+	status := uploadStatusFor(tempPath, "a.zip", "up_keep", 23, 3)
+	if len(status.ReceivedChunks) != 1 || status.ReceivedChunks[0] != 1 {
+		t.Fatalf("续传应保留已收分块，实际 %v", status.ReceivedChunks)
+	}
+}
+
+func TestCleanupStaleUploadSessionsSkipsFreshAndCurrent(t *testing.T) {
+	root := t.TempDir()
+	uploads := filepath.Join(root, ".chat-codex-uploads")
+	past := time.Now().Add(-2 * uploadSessionRetention)
+	for _, name := range []string{"up_stale", "up_fresh", "up_current"} {
+		session := filepath.Join(uploads, name)
+		if err := os.MkdirAll(session, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(session, uploadPayloadName), []byte("payload"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if name == "up_stale" || name == "up_current" {
+			// 目录与临时文件都回到两天前，模拟中断后不再重试的会话。
+			if err := os.Chtimes(filepath.Join(session, uploadPayloadName), past, past); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(session, past, past); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	cleanupStaleUploadSessions(filepath.Join(uploads, "up_current", uploadPayloadName))
+
+	if _, err := os.Stat(filepath.Join(uploads, "up_stale")); !os.IsNotExist(err) {
+		t.Fatalf("过期会话应被清理，实际 err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(uploads, "up_fresh")); err != nil {
+		t.Fatalf("未过期会话不应被清理: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(uploads, "up_current")); err != nil {
+		t.Fatalf("当前会话不应被清理: %v", err)
 	}
 }
 
