@@ -13,6 +13,11 @@ class DeviceRuntimePanel extends StatelessWidget {
   final bool deviceOnline;
   final bool compact;
 
+  /// 由外层统一面板承载时置为 true：不再自绘卡片，只输出内容。
+  /// 设备页把身份、运行状态、磁盘、配置入口放在同一个面板里，靠留白与标题
+  /// 分组；此时每个区块再套一层边框就会读成"几张卡片拼起来"。
+  final bool embedded;
+
   /// 数据过期阈值：超过该秒数视为陈旧，界面降级展示。
   static const int staleThresholdSeconds = 45;
 
@@ -21,16 +26,20 @@ class DeviceRuntimePanel extends StatelessWidget {
     required this.metrics,
     this.deviceOnline = true,
     this.compact = false,
+    this.embedded = false,
   });
+
+  Widget _shell(Widget child) => embedded
+      ? child
+      : PanelCard(padding: const EdgeInsets.all(20), child: child);
 
   @override
   Widget build(BuildContext context) {
     final data = metrics;
     // 完全没有数据时不展示一张空卡片，只给一行说明，避免视觉噪音。
     if (data == null || !data.hasAnyData) {
-      return PanelCard(
-        padding: const EdgeInsets.all(20),
-        child: Column(
+      return _shell(
+        Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const _PanelHeader(title: '运行状态'),
@@ -56,9 +65,8 @@ class DeviceRuntimePanel extends StatelessWidget {
         ? data.isStale(thresholdSeconds: staleThresholdSeconds)
         : true;
 
-    return PanelCard(
-      padding: const EdgeInsets.all(20),
-      child: Column(
+    return _shell(
+      Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _PanelHeader(

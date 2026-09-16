@@ -15,10 +15,14 @@ class DeviceStoragePanel extends ConsumerStatefulWidget {
   final String machineId;
   final bool deviceOnline;
 
+  /// 由外层统一面板承载时置为 true：不再自绘卡片，只输出内容。
+  final bool embedded;
+
   const DeviceStoragePanel({
     super.key,
     required this.machineId,
     this.deviceOnline = true,
+    this.embedded = false,
   });
 
   @override
@@ -133,12 +137,15 @@ class _DeviceStoragePanelState extends ConsumerState<DeviceStoragePanel> {
     return text.isEmpty ? '操作失败' : text;
   }
 
+  Widget _shell(Widget child) => widget.embedded
+      ? child
+      : PanelCard(padding: const EdgeInsets.all(20), child: child);
+
   @override
   Widget build(BuildContext context) {
     final usage = _usage;
-    return PanelCard(
-      padding: const EdgeInsets.all(20),
-      child: Column(
+    return _shell(
+      Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(

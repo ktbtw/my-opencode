@@ -6853,12 +6853,16 @@ class _PagedSegmentTab extends StatelessWidget {
   }
 }
 
-/// 分页模式下的「设备」页签：把设备呈现为一个完整界面而非单张卡片。
+/// 分页模式下的「设备」页签：整台设备放在同一个面板里。
 ///
-/// 布局随宽度变化：
-/// - 移动端（<600）：单列，概览 → 运行状态 → 配置入口。
-/// - 桌面端（>=900）：概览横跨全宽，运行状态与配置入口并排。
-/// - 超宽（>=1200）：配置入口扩为三列，避免右侧留白。
+/// 身份、运行状态、磁盘占用、配置入口是同一台设备的四个断面，靠留白和分区
+/// 标题分组，而不是各套一层边框：叠四张卡片会把"同一台设备"读成四个互不相干
+/// 的面板，边框本身还会和内容抢注意力。
+///
+/// 顺序即优先级，且在所有宽度下保持一致：先回答"这台设备现在怎么样"
+/// （身份、运行状态），再回答"占用了什么"（磁盘占用），最后才是"能做什么"
+/// （配置入口）。配置入口收尾横排，不做右侧窄栏：入口数量少、状态区很长，
+/// 并列会在窄栏下方空出一大块，反而把同一个面板读成两半。
 class _PagedDeviceTab extends ConsumerWidget {
   final DeviceModel device;
 
@@ -6866,6 +6870,10 @@ class _PagedDeviceTab extends ConsumerWidget {
 
   /// 内容最大宽度：超宽屏不无限拉伸，保证阅读节奏。
   static const double _maxContentWidth = 1120;
+
+  /// 分区之间的呼吸。取 9 单位节奏里的宏间距，明显大于分区内部间距
+  /// （14~18），让分组由留白完成，不靠分隔线补。
+  static const double _bandGap = 32;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -6881,52 +6889,29 @@ class _PagedDeviceTab extends ConsumerWidget {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: _maxContentWidth),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _DeviceOverviewCard(device: device),
-              const SizedBox(height: 16),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final wide = constraints.maxWidth >= AppBreakpoints.md;
-                  // 运行状态与磁盘占用都属于“设备自身资源”，放在同一列。
-                  final resourceColumn = Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DeviceRuntimePanel(
-                        metrics: metrics,
-                        deviceOnline: device.online,
-                      ),
-                      const SizedBox(height: 16),
-                      DeviceStoragePanel(
-                        machineId: device.machineId,
-                        deviceOnline: device.online,
-                      ),
-                    ],
-                  );
-                  final entriesCard = _DeviceEntriesCard(device: device);
-                  if (!wide) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        resourceColumn,
-                        const SizedBox(height: 16),
-                        entriesCard,
-                      ],
-                    );
-                  }
-                  // 宽屏并排：资源列略宽，配置入口固定较窄，视觉重心偏向状态。
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 6, child: resourceColumn),
-                      const SizedBox(width: 16),
-                      Expanded(flex: 5, child: entriesCard),
-                    ],
-                  );
-                },
-              ),
-            ],
+          child: PanelCard(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _DeviceIdentitySection(device: device),
+                // 运行状态紧贴身份区：两者共同回答"这台设备现在怎么样"。
+                const SizedBox(height: 20),
+                DeviceRuntimePanel(
+                  metrics: metrics,
+                  deviceOnline: device.online,
+                  embedded: true,
+                ),
+                const SizedBox(height: _bandGap),
+                DeviceStoragePanel(
+                  machineId: device.machineId,
+                  deviceOnline: device.online,
+                  embedded: true,
+                ),
+                const SizedBox(height: _bandGap),
+                _DeviceEntriesRail(device: device),
+              ],
+            ),
           ),
         ),
       ),
@@ -6934,82 +6919,81 @@ class _PagedDeviceTab extends ConsumerWidget {
   }
 }
 
-/// 设备概览卡：身份信息横排，宽屏下信息排成一行充分利用横向空间。
-class _DeviceOverviewCard extends StatelessWidget {
+/// 身份区：设备名、在线状态与关键事实。
+///
+/// 它是统一面板的第一区，不再自带边框：与下方运行状态靠字号层级和间距区分，
+/// 中间那条分隔线也去掉了——身份与状态同属"这台设备现在怎么样"，
+/// 留白已经足够分组，线只是把同一句话重复一遍。
+class _DeviceIdentitySection extends StatelessWidget {
   final DeviceModel device;
 
-  const _DeviceOverviewCard({required this.device});
+  const _DeviceIdentitySection({required this.device});
 
   @override
   Widget build(BuildContext context) {
-    return PanelCard(
-      padding: const EdgeInsets.all(20),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 520;
-          final identity = Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: AppColors.primaryLight,
-                  borderRadius: AppRadius.mdRadius,
-                ),
-                child: const Icon(
-                  Icons.computer_rounded,
-                  color: AppColors.primary,
-                  size: 22,
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 520;
+        final identity = Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight,
+                borderRadius: AppRadius.mdRadius,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      device.effectiveName,
-                      style: Theme.of(context).textTheme.titleLarge,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    StatusPill(
-                      label: device.online ? '在线' : '离线',
-                      type: device.online
-                          ? StatusType.online
-                          : StatusType.offline,
-                    ),
-                  ],
-                ),
+              child: const Icon(
+                Icons.computer_rounded,
+                color: AppColors.primary,
+                size: 22,
               ),
-            ],
-          );
-
-          final facts = _OverviewFacts(device: device, compact: compact);
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: identity),
-                  IconButton(
-                    onPressed: () => _showRenameDeviceDialog(context, device),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    tooltip: '修改设备名称',
+                  Text(
+                    device.effectiveName,
+                    style: Theme.of(context).textTheme.titleLarge,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  StatusPill(
+                    label: device.online ? '在线' : '离线',
+                    type: device.online
+                        ? StatusType.online
+                        : StatusType.offline,
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
-              const Divider(),
-              const SizedBox(height: 16),
-              facts,
-            ],
-          );
-        },
-      ),
+            ),
+          ],
+        );
+
+        final facts = _OverviewFacts(device: device, compact: compact);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: identity),
+                IconButton(
+                  onPressed: () => _showRenameDeviceDialog(context, device),
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  tooltip: '修改设备名称',
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            facts,
+          ],
+        );
+      },
     );
   }
 }
@@ -7055,34 +7039,34 @@ class _OverviewFacts extends StatelessWidget {
   }
 }
 
-/// 配置入口卡：把入口收进独立面板，与运行状态并列。
-class _DeviceEntriesCard extends StatelessWidget {
+/// 配置入口区：统一面板的收尾分区，桌面端收成右侧窄栏。
+///
+/// 操作项排在状态之后，视觉上比状态区安静：进入设备页的人先看设备怎么样，
+/// 再决定要不要动配置。
+class _DeviceEntriesRail extends StatelessWidget {
   final DeviceModel device;
 
-  const _DeviceEntriesCard({required this.device});
+  const _DeviceEntriesRail({required this.device});
 
   @override
   Widget build(BuildContext context) {
-    return PanelCard(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '配置入口',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '配置入口',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
           ),
-          const SizedBox(height: 16),
-          _DeviceEntries(
-            device: device,
-            style: _DeviceEntriesStyle.grid,
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 16),
+        _DeviceEntries(
+          device: device,
+          style: _DeviceEntriesStyle.grid,
+        ),
+      ],
     );
   }
 }
