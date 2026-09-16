@@ -733,6 +733,36 @@ type WelcomePayload struct {
 type HeartbeatPayload struct {
 	AgentID       string `json:"agent_id,omitempty"`
 	RunningTaskID string `json:"running_task_id,omitempty"`
+	// Metrics 是设备运行状态快照（内存/磁盘/CPU 等）。
+	// 老版本 launcher 不上报该字段，服务端按"无指标"处理。
+	Metrics *DeviceMetrics `json:"metrics,omitempty"`
+}
+
+// DeviceMetrics 是设备运行状态的一次采集快照，由 launcher 随心跳上报。
+type DeviceMetrics struct {
+	CollectedAt   time.Time    `json:"collected_at"`
+	Platform      string       `json:"platform,omitempty"`
+	Arch          string       `json:"architecture,omitempty"`
+	UptimeSeconds uint64       `json:"uptime_seconds,omitempty"`
+	MemoryTotal   uint64       `json:"memory_total_bytes,omitempty"`
+	MemoryUsed    uint64       `json:"memory_used_bytes,omitempty"`
+	MemoryPercent float64      `json:"memory_used_percent,omitempty"`
+	CPUPercent    float64      `json:"cpu_used_percent,omitempty"`
+	CPUCores      int          `json:"cpu_cores,omitempty"`
+	Load1         float64      `json:"load_1,omitempty"`
+	Load5         float64      `json:"load_5,omitempty"`
+	Load15        float64      `json:"load_15,omitempty"`
+	LoadAvailable bool         `json:"load_available,omitempty"`
+	Disks         []DiskMetric `json:"disks,omitempty"`
+}
+
+// DiskMetric 是单个磁盘分区的占用情况。
+type DiskMetric struct {
+	Mount       string  `json:"mount"`
+	TotalBytes  uint64  `json:"total_bytes"`
+	UsedBytes   uint64  `json:"used_bytes"`
+	FreeBytes   uint64  `json:"free_bytes"`
+	UsedPercent float64 `json:"used_percent"`
 }
 
 type ProjectIdentityCorrectionInput struct {

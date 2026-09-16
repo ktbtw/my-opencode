@@ -5,7 +5,12 @@ import 'dart:html' as html;
 import 'sse_parser.dart';
 
 Stream<String> sseStream(Uri uri, Map<String, String> headers) {
-  final controller = StreamController<String>();
+  return sseEventStream(uri, headers).map((event) => event.data);
+}
+
+/// 保留 `event:` 类型的事件流。需要区分事件类型的调用方使用这个。
+Stream<SseEvent> sseEventStream(Uri uri, Map<String, String> headers) {
+  final controller = StreamController<SseEvent>();
   final xhr = html.HttpRequest();
   xhr.open('GET', uri.toString(), async: true);
   headers.forEach((k, v) => xhr.setRequestHeader(k, v));
@@ -13,7 +18,7 @@ Stream<String> sseStream(Uri uri, Map<String, String> headers) {
   int processedLength = 0;
   final parser = SseDataParser();
 
-  void emitPayloads(List<String> payloads) {
+  void emitPayloads(List<SseEvent> payloads) {
     for (final payload in payloads) {
       if (!controller.isClosed) controller.add(payload);
     }
@@ -24,9 +29,9 @@ Stream<String> sseStream(Uri uri, Map<String, String> headers) {
     if (text != null && text.length > processedLength) {
       final newData = text.substring(processedLength);
       processedLength = text.length;
-      emitPayloads(parser.addChunk(newData));
+      emitPayloads(parser.addChunkEvents(newData));
     }
-    if (flush) emitPayloads(parser.close());
+    if (flush) emitPayloads(parser.closeEvents());
   }
 
   xhr.onProgress.listen((_) {

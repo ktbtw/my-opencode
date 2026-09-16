@@ -132,13 +132,13 @@ func TestTouchDeviceIgnoresStaleConnection(t *testing.T) {
 	stale := b.Add(nil, hello, 6)
 	current := b.Add(nil, hello, 6)
 
-	if b.TouchDevice(stale, "task_stale") {
+	if b.TouchDevice(stale, "task_stale", nil) {
 		t.Fatalf("expected stale touch to be ignored")
 	}
 	if agent, ok := b.Get("agent_1", 6); !ok || agent.CurrentTask != "" {
 		t.Fatalf("expected current task to remain empty, got %+v", agent)
 	}
-	if !b.TouchDevice(current, "task_current") {
+	if !b.TouchDevice(current, "task_current", nil) {
 		t.Fatalf("expected current touch to succeed")
 	}
 	if agent, ok := b.Get("agent_1", 6); !ok || agent.CurrentTask != "task_current" {

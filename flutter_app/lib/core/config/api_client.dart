@@ -196,6 +196,41 @@ class ApiClient {
     return _sseWithRefresh(Uri.parse('$baseUrl$path'), extraHeaders);
   }
 
+  /// 保留 `event:` 类型的事件流，供需要区分事件类型的场景使用。
+  static Stream<SseEvent> sseEvents(
+    String path, {
+    Map<String, String>? extraHeaders,
+  }) {
+    return _sseEventsWithRefresh(Uri.parse('$baseUrl$path'), extraHeaders);
+  }
+
+  static Stream<SseEvent> _sseEventsWithRefresh(
+    Uri uri,
+    Map<String, String>? extraHeaders,
+  ) async* {
+    var refreshed = false;
+    while (true) {
+      final token = AppStorage.getToken();
+      final headers = <String, String>{
+        'Accept': 'text/event-stream',
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+        ...?extraHeaders,
+      };
+      try {
+        await for (final event in sse_impl.sseEventStream(uri, headers)) {
+          yield event;
+        }
+        return;
+      } on SseHttpException catch (error) {
+        if (error.statusCode == 401 && !refreshed && await _tryRefreshToken()) {
+          refreshed = true;
+          continue;
+        }
+        rethrow;
+      }
+    }
+  }
+
   static Stream<String> _sseWithRefresh(
     Uri uri,
     Map<String, String>? extraHeaders,

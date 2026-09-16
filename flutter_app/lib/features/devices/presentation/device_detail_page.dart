@@ -31,8 +31,10 @@ import '../data/device_semantic_agent_model.dart';
 import '../data/device_skill_model.dart';
 import '../data/device_skill_import_parser.dart';
 import 'device_directory_page.dart';
+import 'device_metrics_provider.dart';
 import 'device_provider.dart';
 import 'device_skill_detail_dialog.dart';
+import 'widgets/device_runtime_panel.dart';
 import '../../project_memory/presentation/project_memory_model_picker.dart';
 
 @visibleForTesting
@@ -827,7 +829,7 @@ class _DeviceInfoPanel extends ConsumerWidget {
                 ),
               ),
               IconButton(
-                onPressed: () => _renameDevice(context, ref),
+                onPressed: () => _showRenameDeviceDialog(context, device),
                 icon: const Icon(Icons.edit_outlined, size: 18),
                 tooltip: '修改设备名称',
               ),
@@ -851,223 +853,13 @@ class _DeviceInfoPanel extends ConsumerWidget {
             InfoBlock(label: '最近在线', value: _formatDateTime(device.lastSeen!)),
           ],
           const SizedBox(height: 18),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final singleColumn = constraints.maxWidth < 260;
-              final entries = [
-                _DeviceEntryButton(
-                  icon: Icons.tune_rounded,
-                  label: 'AI配置',
-                  onTap: () => context.push(_buildAIConfigRoute(device)),
-                ),
-                _DeviceEntryButton(
-                  icon: Icons.extension_rounded,
-                  label: 'MCP配置',
-                  onTap: () => context.push(_buildMCPConfigRoute(device)),
-                ),
-                _DeviceEntryButton(
-                  icon: Icons.auto_awesome_outlined,
-                  label: 'Skill配置',
-                  onTap: () => context.push(_buildSkillConfigRoute(device)),
-                ),
-                _DeviceEntryButton(
-                  icon: Icons.terminal_rounded,
-                  label: '环境变量',
-                  onTap: () => context.push(_buildEnvConfigRoute(device)),
-                ),
-                _DeviceEntryButton(
-                  icon: Icons.devices_rounded,
-                  label: 'Launcher',
-                  onTap: () => _showLauncherDialog(context, device),
-                ),
-                _DeviceEntryButton(
-                  icon: Icons.memory_outlined,
-                  label: '项目记忆默认',
-                  onTap: () => _showProjectMemoryDefaults(context, ref, device),
-                ),
-              ];
-              if (AppBreakpoints.isMobile(context)) {
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (var index = 0; index < entries.length; index++)
-                        Padding(
-                          padding: EdgeInsets.only(
-                            right: index == entries.length - 1 ? 0 : 12,
-                          ),
-                          child: SizedBox(width: 140, child: entries[index]),
-                        ),
-                    ],
-                  ),
-                );
-              }
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  for (final entry in entries)
-                    SizedBox(
-                      width: singleColumn
-                          ? constraints.maxWidth
-                          : (constraints.maxWidth - 12) / 2,
-                      child: entry,
-                    ),
-                ],
-              );
-            },
+          _DeviceEntries(
+            device: device,
+            style: _DeviceEntriesStyle.inline,
           ),
         ],
       ),
     );
-  }
-
-  Future<void> _showProjectMemoryDefaults(
-    BuildContext context,
-    WidgetRef ref,
-    DeviceModel device,
-  ) async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) =>
-          _DeviceProjectMemoryDefaultsDialog(machineId: device.machineId),
-    );
-  }
-
-  Future<void> _renameDevice(BuildContext context, WidgetRef ref) async {
-    final controller = TextEditingController(text: device.displayName);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('修改设备名称'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 40,
-          decoration: InputDecoration(
-            labelText: '设备名称',
-            hintText: device.hostname.isEmpty ? '输入设备名称' : device.hostname,
-          ),
-          onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (name == null) return;
-    final notifications = ref.read(appNotificationControllerProvider.notifier);
-    final operationId = 'device:rename:${device.machineId}';
-    notifications.start(
-      operationId: operationId,
-      title: '正在更新设备名称',
-      message: device.effectiveName,
-      displayStyle: AppNotificationDisplayStyle.dots,
-      kind: AppNotificationKind.system,
-      scope: AppNotificationScope.synced,
-    );
-    try {
-      await ref
-          .read(deviceRepositoryProvider)
-          .updateDeviceDisplayName(
-            machineId: device.machineId,
-            displayName: name.trim(),
-          );
-      notifications.succeed(operationId, title: '设备名称已更新');
-      ref.invalidate(deviceListProvider);
-      ref.invalidate(deviceDetailProvider(device.machineId));
-    } catch (error) {
-      notifications.fail(operationId, title: '设备名称更新失败', error: error);
-    }
-  }
-
-  Future<void> _showLauncherDialog(
-    BuildContext context,
-    DeviceModel device,
-  ) async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        final height = MediaQuery.of(dialogContext).size.height;
-        return Dialog(
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 24,
-          ),
-          backgroundColor: Colors.transparent,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: 560,
-              maxHeight: height * 0.86,
-            ),
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: AppRadius.lgRadius,
-                border: Border.all(color: AppColors.border),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x1A1A3A6A),
-                    blurRadius: 24,
-                    offset: Offset(0, 12),
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: _LauncherPanel(
-                  device: device,
-                  framed: false,
-                  headerTrailing: IconButton(
-                    tooltip: '关闭',
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  String _buildAIConfigRoute(DeviceModel device) {
-    final target = resolveModelTestTarget(agents: device.agents);
-    final buffer = StringBuffer(
-      '/devices/${Uri.encodeComponent(device.machineId)}/ai-config',
-    );
-    if (target != null) {
-      buffer.write(
-        '?agentId=${Uri.encodeComponent(target.agentId)}&projectId=${Uri.encodeComponent(target.projectId)}',
-      );
-    }
-    return buffer.toString();
-  }
-
-  String _buildMCPConfigRoute(DeviceModel device) {
-    return '/devices/${Uri.encodeComponent(device.machineId)}/mcp-config';
-  }
-
-  String _buildSkillConfigRoute(DeviceModel device) {
-    return '/devices/${Uri.encodeComponent(device.machineId)}/skill-config';
-  }
-
-  String _buildEnvConfigRoute(DeviceModel device) {
-    return '/devices/${Uri.encodeComponent(device.machineId)}/env-config';
-  }
-
-  String _formatDateTime(DateTime dt) {
-    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} '
-        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
 
@@ -1456,6 +1248,282 @@ class _DeviceEntryButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 打开修改设备名称的弹窗并提交。
+Future<void> _showRenameDeviceDialog(
+  BuildContext context,
+  DeviceModel device,
+) async {
+  final controller = TextEditingController(text: device.displayName);
+  final name = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('修改设备名称'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        maxLength: 40,
+        decoration: InputDecoration(
+          labelText: '设备名称',
+          hintText: device.hostname.isEmpty ? '输入设备名称' : device.hostname,
+        ),
+        onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+          child: const Text('保存'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  if (name == null) return;
+  if (!context.mounted) return;
+  final container = ProviderScope.containerOf(context);
+  final notifications = container.read(
+    appNotificationControllerProvider.notifier,
+  );
+  final operationId = 'device:rename:${device.machineId}';
+  notifications.start(
+    operationId: operationId,
+    title: '正在更新设备名称',
+    message: device.effectiveName,
+    displayStyle: AppNotificationDisplayStyle.dots,
+    kind: AppNotificationKind.system,
+    scope: AppNotificationScope.synced,
+  );
+  try {
+    await container
+        .read(deviceRepositoryProvider)
+        .updateDeviceDisplayName(
+          machineId: device.machineId,
+          displayName: name.trim(),
+        );
+    notifications.succeed(operationId, title: '设备名称已更新');
+    container.invalidate(deviceListProvider);
+    container.invalidate(deviceDetailProvider(device.machineId));
+  } catch (error) {
+    notifications.fail(operationId, title: '设备名称更新失败', error: error);
+  }
+}
+
+/// 统一的日期时间展示格式：yyyy-MM-dd HH:mm。
+String _formatDateTime(DateTime dt) {
+  return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} '
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+}
+
+/// 设备配置入口的展示形态。
+/// inline：跟随所在卡片宽度，移动端横向滚动、宽屏两列（整页布局沿用）。
+/// grid：占满容器，移动端两列、宽屏三列（设备总览页使用）。
+enum _DeviceEntriesStyle { inline, grid }
+
+/// 设备配置入口集合：AI / MCP / Skill / 环境变量 / Launcher / 项目记忆。
+class _DeviceEntries extends ConsumerWidget {
+  final DeviceModel device;
+  final _DeviceEntriesStyle style;
+
+  const _DeviceEntries({required this.device, this.style = _DeviceEntriesStyle.inline});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final entries = <_DeviceEntryButton>[
+      _DeviceEntryButton(
+        icon: Icons.tune_rounded,
+        label: 'AI配置',
+        onTap: () => context.push(_buildAIConfigRoute(context, device)),
+      ),
+      _DeviceEntryButton(
+        icon: Icons.extension_rounded,
+        label: 'MCP配置',
+        onTap: () => context.push(_buildMCPConfigRoute(device)),
+      ),
+      _DeviceEntryButton(
+        icon: Icons.auto_awesome_outlined,
+        label: 'Skill配置',
+        onTap: () => context.push(_buildSkillConfigRoute(device)),
+      ),
+      _DeviceEntryButton(
+        icon: Icons.terminal_rounded,
+        label: '环境变量',
+        onTap: () => context.push(_buildEnvConfigRoute(device)),
+      ),
+      _DeviceEntryButton(
+        icon: Icons.devices_rounded,
+        label: 'Launcher',
+        onTap: () => _showLauncherDialog(context, device),
+      ),
+      _DeviceEntryButton(
+        icon: Icons.memory_outlined,
+        label: '项目记忆默认',
+        onTap: () => _showProjectMemoryDefaults(context, ref, device),
+      ),
+    ];
+
+    if (style == _DeviceEntriesStyle.grid) {
+      return _buildGrid(context, entries);
+    }
+    return _buildInline(context, entries);
+  }
+
+  /// 整页布局：移动端横向滚动，宽屏按容器宽度 1~2 列。
+  Widget _buildInline(BuildContext context, List<_DeviceEntryButton> entries) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final singleColumn = constraints.maxWidth < 260;
+        if (AppBreakpoints.isMobile(context)) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var index = 0; index < entries.length; index++)
+                  Padding(
+                    padding: EdgeInsets.only(
+                      right: index == entries.length - 1 ? 0 : 12,
+                    ),
+                    child: SizedBox(width: 140, child: entries[index]),
+                  ),
+              ],
+            ),
+          );
+        }
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final entry in entries)
+              SizedBox(
+                width: singleColumn
+                    ? constraints.maxWidth
+                    : (constraints.maxWidth - 12) / 2,
+                child: entry,
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 设备总览页：占满宽度，移动端 2 列，宽屏 3 列。
+  Widget _buildGrid(BuildContext context, List<_DeviceEntryButton> entries) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = AppBreakpoints.isDesktop(context) ? 3 : 2;
+        const spacing = 12.0;
+        final itemWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final entry in entries)
+              SizedBox(
+                width: itemWidth > 0 ? itemWidth : constraints.maxWidth,
+                child: entry,
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 从设备解析出 AI 配置路由，并在存在可用 Agent 时带上定位参数。
+String _buildAIConfigRoute(BuildContext context, DeviceModel device) {
+  final target = resolveModelTestTarget(agents: device.agents);
+  final buffer = StringBuffer(
+    '/devices/${Uri.encodeComponent(device.machineId)}/ai-config',
+  );
+  if (target != null) {
+    buffer.write(
+      '?agentId=${Uri.encodeComponent(target.agentId)}&projectId=${Uri.encodeComponent(target.projectId)}',
+    );
+  }
+  return buffer.toString();
+}
+
+String _buildMCPConfigRoute(DeviceModel device) {
+  return '/devices/${Uri.encodeComponent(device.machineId)}/mcp-config';
+}
+
+String _buildSkillConfigRoute(DeviceModel device) {
+  return '/devices/${Uri.encodeComponent(device.machineId)}/skill-config';
+}
+
+String _buildEnvConfigRoute(DeviceModel device) {
+  return '/devices/${Uri.encodeComponent(device.machineId)}/env-config';
+}
+
+/// 打开 Launcher 管理弹窗。
+Future<void> _showLauncherDialog(
+  BuildContext context,
+  DeviceModel device,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      final height = MediaQuery.of(dialogContext).size.height;
+      return Dialog(
+        insetPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 24,
+        ),
+        backgroundColor: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 560,
+            maxHeight: height * 0.86,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: AppRadius.lgRadius,
+              border: Border.all(color: AppColors.border),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x1A1A3A6A),
+                  blurRadius: 24,
+                  offset: Offset(0, 12),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: _LauncherPanel(
+                device: device,
+                framed: false,
+                headerTrailing: IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// 打开项目记忆默认配置弹窗。
+Future<void> _showProjectMemoryDefaults(
+  BuildContext context,
+  WidgetRef ref,
+  DeviceModel device,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (_) => _DeviceProjectMemoryDefaultsDialog(
+      machineId: device.machineId,
+    ),
+  );
 }
 
 enum _OpencodeUpdatePromptAction { later, skip, update }
@@ -6784,21 +6852,224 @@ class _PagedSegmentTab extends StatelessWidget {
   }
 }
 
-class _PagedDeviceTab extends StatelessWidget {
+/// 分页模式下的「设备」页签：把设备呈现为一个完整界面而非单张卡片。
+///
+/// 布局随宽度变化：
+/// - 移动端（<600）：单列，概览 → 运行状态 → 配置入口。
+/// - 桌面端（>=900）：概览横跨全宽，运行状态与配置入口并排。
+/// - 超宽（>=1200）：配置入口扩为三列，避免右侧留白。
+class _PagedDeviceTab extends ConsumerWidget {
   final DeviceModel device;
 
   const _PagedDeviceTab({required this.device});
 
+  /// 内容最大宽度：超宽屏不无限拉伸，保证阅读节奏。
+  static const double _maxContentWidth = 1120;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final padding = AppBreakpoints.isMobile(context) ? 16.0 : 24.0;
+    // 实时指标推送：有推送时覆盖 REST 快照，没有则用快照里的最后一次数据。
+    final liveMetrics = ref
+        .watch(deviceMetricsLiveProvider(device.machineId))
+        .valueOrNull;
+    final metrics = liveMetrics ?? device.metrics;
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(padding),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: _DeviceInfoPanel(device: device),
+          constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _DeviceOverviewCard(device: device),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= AppBreakpoints.md;
+                  final runtimePanel = DeviceRuntimePanel(
+                    metrics: metrics,
+                    deviceOnline: device.online,
+                  );
+                  final entriesCard = _DeviceEntriesCard(device: device);
+                  if (!wide) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        runtimePanel,
+                        const SizedBox(height: 16),
+                        entriesCard,
+                      ],
+                    );
+                  }
+                  // 宽屏并排：运行状态略宽，配置入口固定较窄，视觉重心偏向状态。
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 6, child: runtimePanel),
+                      const SizedBox(width: 16),
+                      Expanded(flex: 5, child: entriesCard),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+/// 设备概览卡：身份信息横排，宽屏下信息排成一行充分利用横向空间。
+class _DeviceOverviewCard extends StatelessWidget {
+  final DeviceModel device;
+
+  const _DeviceOverviewCard({required this.device});
+
+  @override
+  Widget build(BuildContext context) {
+    return PanelCard(
+      padding: const EdgeInsets.all(20),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 520;
+          final identity = Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.primaryLight,
+                  borderRadius: AppRadius.mdRadius,
+                ),
+                child: const Icon(
+                  Icons.computer_rounded,
+                  color: AppColors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      device.effectiveName,
+                      style: Theme.of(context).textTheme.titleLarge,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    StatusPill(
+                      label: device.online ? '在线' : '离线',
+                      type: device.online
+                          ? StatusType.online
+                          : StatusType.offline,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+
+          final facts = _OverviewFacts(device: device, compact: compact);
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: identity),
+                  IconButton(
+                    onPressed: () => _showRenameDeviceDialog(context, device),
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    tooltip: '修改设备名称',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              const Divider(),
+              const SizedBox(height: 16),
+              facts,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 概览事实项：宽屏一行铺开，窄屏逐行堆叠。
+class _OverviewFacts extends StatelessWidget {
+  final DeviceModel device;
+  final bool compact;
+
+  const _OverviewFacts({required this.device, required this.compact});
+
+  @override
+  Widget build(BuildContext context) {
+    final facts = <Widget>[
+      InfoBlock(
+        label: '系统主机名',
+        value: device.hostname.isEmpty ? '未知' : device.hostname,
+      ),
+      InfoBlock(
+        label: 'Agent 数量',
+        value:
+            '${device.runningAgentCount} 启动 / ${device.totalAgentCount} 总计',
+      ),
+      if (device.lastSeen != null)
+        InfoBlock(
+          label: '最近在线',
+          value: _formatDateTime(device.lastSeen!),
+        ),
+    ];
+
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < facts.length; i++) ...[
+            if (i > 0) const SizedBox(height: 14),
+            facts[i],
+          ],
+        ],
+      );
+    }
+    return Wrap(spacing: 32, runSpacing: 14, children: facts);
+  }
+}
+
+/// 配置入口卡：把入口收进独立面板，与运行状态并列。
+class _DeviceEntriesCard extends StatelessWidget {
+  final DeviceModel device;
+
+  const _DeviceEntriesCard({required this.device});
+
+  @override
+  Widget build(BuildContext context) {
+    return PanelCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '配置入口',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _DeviceEntries(
+            device: device,
+            style: _DeviceEntriesStyle.grid,
+          ),
+        ],
       ),
     );
   }

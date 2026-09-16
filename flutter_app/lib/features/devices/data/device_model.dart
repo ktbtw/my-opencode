@@ -1,3 +1,5 @@
+import 'device_metrics_model.dart';
+
 class AgentModel {
   final String agentId;
   final String name;
@@ -106,6 +108,7 @@ class DeviceModel {
   final bool online;
   final List<AgentModel> agents;
   final DateTime? lastSeen;
+  final DeviceMetrics? metrics;
 
   const DeviceModel({
     required this.machineId,
@@ -115,6 +118,7 @@ class DeviceModel {
     required this.online,
     required this.agents,
     this.lastSeen,
+    this.metrics,
   });
 
   factory DeviceModel.fromJson(Map<String, dynamic> j) {
@@ -126,6 +130,11 @@ class DeviceModel {
     final statusRaw = j['status'];
     final bool online = statusRaw is bool ? statusRaw : statusRaw == 'online';
 
+    final rawMetrics = j['metrics'];
+    final metrics = rawMetrics is Map<String, dynamic>
+        ? DeviceMetrics.fromJson(rawMetrics)
+        : null;
+
     return DeviceModel(
       machineId: j['machine_id'] as String? ?? '',
       hostname: j['hostname'] as String? ?? j['machine_id'] as String? ?? '',
@@ -133,11 +142,26 @@ class DeviceModel {
       sortOrder: (j['sort_order'] as num?)?.toInt() ?? 0,
       online: online,
       agents: agentList,
+      metrics: metrics,
       lastSeen: j['seen_at'] != null
           ? DateTime.tryParse(j['seen_at'] as String)
           : j['last_seen'] != null
           ? DateTime.tryParse(j['last_seen'] as String)
           : null,
+    );
+  }
+
+  /// 复制并覆盖部分字段，用于把 SSE 推送的指标合并进现有设备。
+  DeviceModel copyWith({DeviceMetrics? metrics, bool? online}) {
+    return DeviceModel(
+      machineId: machineId,
+      hostname: hostname,
+      displayName: displayName,
+      sortOrder: sortOrder,
+      online: online ?? this.online,
+      agents: agents,
+      lastSeen: lastSeen,
+      metrics: metrics ?? this.metrics,
     );
   }
 

@@ -5,6 +5,13 @@ import 'dart:io';
 import 'sse_parser.dart';
 
 Stream<String> sseStream(Uri uri, Map<String, String> headers) async* {
+  await for (final event in sseEventStream(uri, headers)) {
+    yield event.data;
+  }
+}
+
+/// 保留 `event:` 类型的事件流。需要区分事件类型的调用方使用这个。
+Stream<SseEvent> sseEventStream(Uri uri, Map<String, String> headers) async* {
   final client = HttpClient();
   client.connectionTimeout = const Duration(seconds: 30);
   try {
@@ -18,12 +25,12 @@ Stream<String> sseStream(Uri uri, Map<String, String> headers) async* {
 
     final parser = SseDataParser();
     await for (final chunk in response.transform(utf8.decoder)) {
-      for (final payload in parser.addChunk(chunk)) {
-        yield payload;
+      for (final event in parser.addChunkEvents(chunk)) {
+        yield event;
       }
     }
-    for (final payload in parser.close()) {
-      yield payload;
+    for (final event in parser.closeEvents()) {
+      yield event;
     }
   } finally {
     client.close();

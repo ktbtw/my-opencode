@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"launcher/internal/config"
+	"launcher/internal/metrics"
 	"launcher/internal/model"
 	launcherVersion "launcher/internal/version"
 )
@@ -140,11 +141,16 @@ func runHeartbeat(
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	// collector 跟随本次连接存活：重连后重建基线，第二次心跳起就有 CPU 占用率。
+	collector := &metrics.Collector{}
+	// 连接建立后先采一次基线，让首个心跳间隔后的采样就能算出 CPU 占用率。
+	collector.Collect()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			snapshot := collector.Collect()
 			sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			err := write(sendCtx, envelope{
 				Type:      "device.heartbeat",
@@ -152,6 +158,7 @@ func runHeartbeat(
 				SentAt:    time.Now().UTC().Format(time.RFC3339),
 				Payload: model.HeartbeatPayload{
 					AgentID: agentID,
+					Metrics: deviceMetricsFromSnapshot(snapshot),
 				},
 			})
 			cancel()
@@ -160,6 +167,42 @@ func runHeartbeat(
 			}
 		}
 	}
+}
+
+// deviceMetricsFromSnapshot 把采集结果转换为上报模型。
+// 返回 nil 表示本次没有可用指标，此时不携带该字段。
+func deviceMetricsFromSnapshot(snapshot metrics.Snapshot) *model.DeviceMetrics {
+	if snapshot.MemoryTotal == 0 && len(snapshot.Disks) == 0 {
+		return nil
+	}
+	result := &model.DeviceMetrics{
+		CollectedAt:   snapshot.CollectedAt,
+		Platform:      snapshot.Platform,
+		Arch:          snapshot.Arch,
+		UptimeSeconds: snapshot.UptimeSeconds,
+		MemoryTotal:   snapshot.MemoryTotal,
+		MemoryUsed:    snapshot.MemoryUsed,
+		MemoryPercent: snapshot.MemoryPercent,
+		CPUPercent:    snapshot.CPUPercent,
+		CPUCores:      snapshot.CPUCores,
+		Load1:         snapshot.Load1,
+		Load5:         snapshot.Load5,
+		Load15:        snapshot.Load15,
+		LoadAvailable: snapshot.LoadAvailable,
+	}
+	if len(snapshot.Disks) > 0 {
+		result.Disks = make([]model.DiskMetric, 0, len(snapshot.Disks))
+		for _, disk := range snapshot.Disks {
+			result.Disks = append(result.Disks, model.DiskMetric{
+				Mount:       disk.Mount,
+				TotalBytes:  disk.TotalBytes,
+				UsedBytes:   disk.UsedBytes,
+				FreeBytes:   disk.FreeBytes,
+				UsedPercent: disk.UsedPercent,
+			})
+		}
+	}
+	return result
 }
 
 func buildHandlers() map[string]handlerFunc {

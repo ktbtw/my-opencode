@@ -317,6 +317,8 @@ type Machine struct {
 	SeenAt         time.Time `json:"seen_at"`
 	LauncherOnline bool      `json:"launcher_online,omitempty"`
 	Agents         []Agent   `json:"agents,omitempty"`
+	// Metrics 是设备最近一次上报的运行状态，设备离线时保留最后一次数据。
+	Metrics *DeviceMetrics `json:"metrics,omitempty"`
 }
 
 type DevicePreference struct {
@@ -369,8 +371,47 @@ type WelcomePayload struct {
 }
 
 type HeartbeatPayload struct {
-	AgentID       string `json:"agent_id,omitempty"`
-	RunningTaskID string `json:"running_task_id,omitempty"`
+	AgentID       string         `json:"agent_id,omitempty"`
+	RunningTaskID string         `json:"running_task_id,omitempty"`
+	// Metrics 是设备运行状态快照。老版本 launcher 不上报，按"无指标"处理。
+	Metrics *DeviceMetrics `json:"metrics,omitempty"`
+}
+
+// DeviceMetrics 是设备运行状态快照，由 launcher 随心跳上报。
+type DeviceMetrics struct {
+	CollectedAt   time.Time    `json:"collected_at"`
+	Platform      string       `json:"platform,omitempty"`
+	Arch          string       `json:"architecture,omitempty"`
+	UptimeSeconds uint64       `json:"uptime_seconds,omitempty"`
+	MemoryTotal   uint64       `json:"memory_total_bytes,omitempty"`
+	MemoryUsed    uint64       `json:"memory_used_bytes,omitempty"`
+	MemoryPercent float64      `json:"memory_used_percent,omitempty"`
+	CPUPercent    float64      `json:"cpu_used_percent,omitempty"`
+	CPUCores      int          `json:"cpu_cores,omitempty"`
+	Load1         float64      `json:"load_1,omitempty"`
+	Load5         float64      `json:"load_5,omitempty"`
+	Load15        float64      `json:"load_15,omitempty"`
+	LoadAvailable bool         `json:"load_available,omitempty"`
+	Disks         []DiskMetric `json:"disks,omitempty"`
+	// ReceivedAt 是服务端接收该指标的时间，由服务端填写而非设备上报。
+	// 用于客户端判断数据新鲜度，避免设备时钟偏差影响显示。
+	ReceivedAt time.Time `json:"received_at,omitempty"`
+}
+
+// DiskMetric 是单个磁盘分区的占用情况。
+type DiskMetric struct {
+	Mount       string  `json:"mount"`
+	TotalBytes  uint64  `json:"total_bytes"`
+	UsedBytes   uint64  `json:"used_bytes"`
+	FreeBytes   uint64  `json:"free_bytes"`
+	UsedPercent float64 `json:"used_percent"`
+}
+
+// MachineMetricsUpdate 是设备指标变更事件，推送给已订阅的客户端。
+// 只携带索引字段与指标本体，客户端按 machine_id 就地合并，不必重取整个设备。
+type MachineMetricsUpdate struct {
+	MachineID string         `json:"machine_id"`
+	Metrics   *DeviceMetrics `json:"metrics,omitempty"`
 }
 
 type RunPayload struct {

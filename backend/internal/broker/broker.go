@@ -27,8 +27,10 @@ type Device struct {
 	Capabilities []string
 	SeenAt       time.Time
 	CurrentTask  string
-	conn         *websocket.Conn
-	mu           sync.Mutex
+	// Metrics 是设备最近一次心跳上报的运行状态，nil 表示该设备尚未上报。
+	Metrics *model.DeviceMetrics
+	conn    *websocket.Conn
+	mu      sync.Mutex
 }
 
 type ModelCache struct {
@@ -44,6 +46,8 @@ type Broker struct {
 	observerMu  sync.RWMutex
 	onUpsert    func(int64, model.Agent)
 	onRemove    func(int64, model.Agent)
+	// onMetrics 在设备上报新指标时触发，用于把指标推送给已打开设备页的客户端。
+	onMetrics func(int64, model.MachineMetricsUpdate)
 }
 
 func New() *Broker {
@@ -110,7 +114,10 @@ func (b *Broker) Touch(id, currentTask string) {
 	}
 }
 
-func (b *Broker) TouchDevice(dev *Device, currentTask string) bool {
+// TouchDevice 更新设备的在线时间与当前任务，并可附带最新指标快照。
+// metrics 为 nil 时保留已有的指标数据，避免老版本设备覆盖掉历史值。
+// 返回值表示该设备是否仍属于当前 broker。
+func (b *Broker) TouchDevice(dev *Device, currentTask string, metrics *model.DeviceMetrics) bool {
 	if dev == nil {
 		return false
 	}
@@ -123,10 +130,25 @@ func (b *Broker) TouchDevice(dev *Device, currentTask string) bool {
 	previousTask := current.CurrentTask
 	current.SeenAt = time.Now().UTC()
 	current.CurrentTask = currentTask
+	metricsChanged := false
+	var metricsUpdate model.MachineMetricsUpdate
+	if metrics != nil {
+		metrics.ReceivedAt = time.Now().UTC()
+		current.Metrics = metrics
+		metricsChanged = true
+		metricsUpdate = model.MachineMetricsUpdate{
+			MachineID: current.MachineID,
+			Metrics:   metrics,
+		}
+	}
 	agent := snapshot(current)
 	b.mu.Unlock()
-	if previousTask != currentTask {
+	// 指标变化也要广播，让已打开设备页的客户端实时更新。
+	if previousTask != currentTask || metricsChanged {
 		b.notifyUpsert(agent.OperatorID, agent)
+	}
+	if metricsChanged && metricsUpdate.MachineID != "" {
+		b.notifyMetrics(agent.OperatorID, metricsUpdate)
 	}
 	return true
 }
@@ -185,6 +207,22 @@ func (b *Broker) SetObserver(onUpsert, onRemove func(int64, model.Agent)) {
 	b.onUpsert = onUpsert
 	b.onRemove = onRemove
 	b.observerMu.Unlock()
+}
+
+// SetMetricsObserver 注册设备指标变更回调。
+func (b *Broker) SetMetricsObserver(onMetrics func(int64, model.MachineMetricsUpdate)) {
+	b.observerMu.Lock()
+	b.onMetrics = onMetrics
+	b.observerMu.Unlock()
+}
+
+func (b *Broker) notifyMetrics(operatorID int64, update model.MachineMetricsUpdate) {
+	b.observerMu.RLock()
+	observer := b.onMetrics
+	b.observerMu.RUnlock()
+	if observer != nil {
+		observer(operatorID, update)
+	}
 }
 
 func (b *Broker) notifyUpsert(operatorID int64, agent model.Agent) {
@@ -293,6 +331,10 @@ func (b *Broker) ListMachines(operatorID int64) []model.Machine {
 		}
 		if dev.Kind == "launcher" {
 			machine.LauncherOnline = true
+			// 指标由 launcher 上报，同一台机器以 launcher 设备的数据为准。
+			if dev.Metrics != nil {
+				machine.Metrics = dev.Metrics
+			}
 			continue
 		}
 		machine.Agents = append(machine.Agents, snapshot(dev))

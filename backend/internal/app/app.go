@@ -209,6 +209,11 @@ func New() (*App, error) {
 			})
 		},
 	)
+	// 设备指标独立成事件：它挂在机器维度，且更新频率高于 agent 状态，
+	// 客户端可就地合并而不必重取整个设备。
+	a.broker.SetMetricsObserver(func(operatorID int64, update model.MachineMetricsUpdate) {
+		a.overlayHub.Publish(operatorID, "device.metrics", update)
+	})
 	go a.cleanStuckTasks()
 	if a.projectMemoryEnabled {
 		go a.projectMemoryLoop()
@@ -1865,7 +1870,7 @@ func (a *App) handle(device *broker.Device, buf []byte) error {
 				runningTaskID = ""
 			}
 		}
-		a.broker.TouchDevice(device, runningTaskID)
+		a.broker.TouchDevice(device, runningTaskID, msg.Metrics)
 		return nil
 	case "device.ai_config.result":
 		var msg model.DeviceAIConfigResultPayload
