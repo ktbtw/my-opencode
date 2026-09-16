@@ -5,6 +5,96 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('applies context window preset without writing json', (
+    tester,
+  ) async {
+    final changes = <DeviceAIModelInfo>[];
+    await _pumpEditor(
+      tester,
+      model: DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+      }),
+      onChanged: changes.add,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('context-preset-1000000')),
+    );
+    await tester.tap(find.byKey(const ValueKey('context-preset-1000000')));
+    await tester.pump();
+
+    expect(changes.last.manualContextLimit, 1000000);
+    expect(changes.last.contextLimit, 1000000);
+    expect(changes.last.toJson()['context_limit'], 1000000);
+  });
+
+  testWidgets('applies output limit preset and can clear it', (tester) async {
+    final changes = <DeviceAIModelInfo>[];
+    await _pumpEditor(
+      tester,
+      model: DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+      }),
+      onChanged: changes.add,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('output-preset-16384')),
+    );
+    await tester.tap(find.byKey(const ValueKey('output-preset-16384')));
+    await tester.pump();
+    expect(changes.last.manualOutputLimit, 16384);
+    expect(changes.last.outputLimit, 16384);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('output-preset-clear')),
+    );
+    await tester.tap(find.byKey(const ValueKey('output-preset-clear')));
+    await tester.pump();
+    expect(changes.last.manualOutputLimit, isNull);
+    expect(changes.last.outputLimit, isNull);
+  });
+
+  testWidgets('rejects a non-positive context window', (tester) async {
+    await _pumpEditor(
+      tester,
+      model: DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+      }),
+      onChanged: (_) {},
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('context-limit-input')),
+      '0',
+    );
+    await tester.pump();
+
+    expect(find.text('上下文窗口必须是正整数'), findsOneWidget);
+  });
+
+  testWidgets('shows inferred Kun context window in the editor header', (
+    tester,
+  ) async {
+    await _pumpEditor(
+      tester,
+      model: DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+      }),
+      onChanged: (_) {},
+    );
+
+    expect(find.text('Kun · 500k 窗口'), findsOneWidget);
+  });
+
   testWidgets('shows detected capability and emits a manual disable override', (
     tester,
   ) async {
@@ -30,6 +120,7 @@ void main() {
     await _pumpEditor(tester, model: _budgetModel(), onChanged: (_) {});
 
     await tester.enterText(_valueFields().first, '0');
+    await tester.ensureVisible(find.text('校验配置'));
     await tester.tap(find.text('校验配置'));
     await tester.pump();
 
@@ -39,27 +130,33 @@ void main() {
   testWidgets('reports an invalid advanced variants shape', (tester) async {
     await _pumpEditor(tester, model: _budgetModel(), onChanged: (_) {});
 
+    await tester.ensureVisible(find.text('高级参数'));
     await tester.tap(find.text('高级参数'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('thinking-variants-json')),
       '[]',
     );
+    await tester.ensureVisible(find.text('格式化并应用'));
     await tester.tap(find.text('格式化并应用'));
     await tester.pump();
 
     expect(find.text('variants 必须是 JSON 对象'), findsOneWidget);
   });
 
-  testWidgets('reverse parses snake case reasoning effort values', (tester) async {
+  testWidgets('reverse parses snake case reasoning effort values', (
+    tester,
+  ) async {
     await _pumpEditor(tester, model: _budgetModel(), onChanged: (_) {});
 
+    await tester.ensureVisible(find.text('高级参数'));
     await tester.tap(find.text('高级参数'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const ValueKey('thinking-variants-json')),
       '{"省流":{"reasoning_effort":"low"},"深度":{"reasoning_effort":"high"}}',
     );
+    await tester.ensureVisible(find.text('格式化并应用'));
     await tester.tap(find.text('格式化并应用'));
     await tester.pump();
 
@@ -166,7 +263,9 @@ void main() {
       'high',
     );
 
-    await tester.ensureVisible(find.byKey(const ValueKey('thinking-preset-xhigh')));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('thinking-preset-xhigh')),
+    );
     await tester.tap(find.byKey(const ValueKey('thinking-preset-xhigh')));
     await tester.pump();
     expect(changes.last.variants.keys.toList(), ['high', 'xhigh']);

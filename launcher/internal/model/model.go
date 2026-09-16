@@ -140,13 +140,25 @@ type DeviceAIThinkingInfo struct {
 }
 
 type DeviceAIModelInfo struct {
-	ID         string                `json:"id"`
-	Name       string                `json:"name"`
-	OwnedBy    string                `json:"owned_by"`
-	Modalities *DeviceAIModalities   `json:"modalities,omitempty"`
-	Context    int64                 `json:"context_limit,omitempty"`
-	Variants   map[string]any        `json:"variants,omitempty"`
-	Thinking   *DeviceAIThinkingInfo `json:"thinking,omitempty"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	OwnedBy    string              `json:"owned_by"`
+	Modalities *DeviceAIModalities `json:"modalities,omitempty"`
+
+	// Context / Output 是最终生效值：供应商返回 > 手填 > 预设推断。
+	Context int64 `json:"context_limit,omitempty"`
+	Output  int64 `json:"output_limit,omitempty"`
+
+	// Upstream* 记录供应商接口返回的原始值，用于保持优先级稳定。
+	UpstreamContext int64 `json:"upstream_context_limit,omitempty"`
+	UpstreamOutput  int64 `json:"upstream_output_limit,omitempty"`
+
+	// Manual* 记录用户在界面上手填的值。0 表示不手填。
+	ManualContext int64 `json:"manual_context_limit,omitempty"`
+	ManualOutput  int64 `json:"manual_output_limit,omitempty"`
+
+	Variants map[string]any        `json:"variants,omitempty"`
+	Thinking *DeviceAIThinkingInfo `json:"thinking,omitempty"`
 }
 
 type DeviceAIProviderInfo struct {
@@ -185,6 +197,10 @@ type DeviceAIConfigInput struct {
 	Model      string `json:"model,omitempty"`
 	Text       string `json:"text,omitempty"`
 	ProviderID string `json:"provider_id,omitempty"`
+	// Config 携带界面上当前已配置的模型，刷新时用于保留用户手填的窗口值。
+	Config struct {
+		Models []DeviceAIModelInfo `json:"models,omitempty"`
+	} `json:"config,omitempty"`
 }
 
 type DeviceMCPServerInfo struct {
@@ -670,14 +686,14 @@ type DirectoryFileRequest struct {
 
 // UploadStatus 描述一次分块上传的当前进度，供客户端断点续传使用。
 type UploadStatus struct {
-	Path          string  `json:"path"`
-	UploadID      string  `json:"upload_id"`
-	Size          int64   `json:"size"`
-	TotalChunks   int     `json:"total_chunks"`
+	Path           string `json:"path"`
+	UploadID       string `json:"upload_id"`
+	Size           int64  `json:"size"`
+	TotalChunks    int    `json:"total_chunks"`
 	ReceivedChunks []int  `json:"received_chunks"`
-	ReceivedBytes int64   `json:"received_bytes"`
-	Completed     bool    `json:"completed"`
-	Resumable     bool    `json:"resumable"`
+	ReceivedBytes  int64  `json:"received_bytes"`
+	Completed      bool   `json:"completed"`
+	Resumable      bool   `json:"resumable"`
 }
 
 type ProjectFile struct {

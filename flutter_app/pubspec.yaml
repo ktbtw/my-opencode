@@ -2,7 +2,7 @@ name: chat_codex_app
 description: "Chat Codex - 远程设备与 Agent 管理控制台"
 publish_to: 'none'
 
-version: 1.6.78+225
+version: 1.6.79+226
 
 environment:
   sdk: ^3.8.0

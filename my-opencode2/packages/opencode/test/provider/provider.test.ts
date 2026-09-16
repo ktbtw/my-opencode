@@ -446,6 +446,7 @@ it.instance(
     expect(grok.capabilities.attachment).toBe(true)
     expect(grok.capabilities.input.image).toBe(true)
     expect(grok.capabilities.output.text).toBe(true)
+    expect(grok.limit).toMatchObject({ context: 500_000, output: 64_000 })
 
     const gemini = yield* provider.getModel(ProviderID.make("custom-openai-compatible"), ModelID.make("gemini-2.5-pro"))
     expect(gemini.capabilities.input.image).toBe(true)
@@ -1860,6 +1861,55 @@ test("closest checks multiple query terms in order", async () => {
       expect(result?.modelID).toContain("haiku")
     },
   })
+})
+
+test("grok and kun models infer context limits from names", () => {
+  expect(Provider.inferGrokLimit("kun", "订阅grok")).toMatchObject({ context: 500_000, output: 64_000 })
+  expect(Provider.inferGrokLimit("kun", "custom")).toBeUndefined()
+  expect(Provider.inferGrokLimit("grok-4.6")).toMatchObject({ context: 500_000, output: 64_000 })
+  expect(Provider.inferGrokLimit("grok-4.20")).toMatchObject({ context: 1_000_000, output: 64_000 })
+
+  const kun = Provider.inferConfigModelCapabilities("Kun", "Kun", "@ai-sdk/openai-compatible", undefined, "订阅grok")
+  expect(kun?.limit).toMatchObject({ context: 500_000, output: 64_000 })
+  expect(kun?.attachment).toBe(true)
+  expect(kun?.input?.image).toBe(true)
+
+  const unrelatedKun = Provider.inferConfigModelCapabilities(
+    "Kun",
+    "Kun",
+    "@ai-sdk/openai-compatible",
+    undefined,
+    "custom",
+  )
+  expect(unrelatedKun).toBeUndefined()
+
+  const existingZero = {
+    limit: { context: 0, output: 0 },
+  } as Provider.Model
+  const kunWithZeroExisting = Provider.inferConfigModelCapabilities(
+    "Kun",
+    "Kun",
+    "@ai-sdk/openai-compatible",
+    existingZero,
+    "订阅grok",
+  )
+  expect(kunWithZeroExisting?.limit).toMatchObject({ context: 500_000, output: 64_000 })
+
+  const existingKnown = {
+    limit: { context: 128_000, output: 16_384 },
+  } as Provider.Model
+  expect(
+    Provider.inferConfigModelCapabilities(
+      "Kun",
+      "Kun",
+      "@ai-sdk/openai-compatible",
+      existingKnown,
+      "订阅grok",
+    ),
+  ).toBeUndefined()
+
+  expect(Provider.firstPositiveLimit(0, undefined, 500_000)).toBe(500_000)
+  expect(Provider.firstPositiveLimit(0, 0, undefined)).toBeUndefined()
 })
 
 test("model limit defaults to zero when not specified", async () => {

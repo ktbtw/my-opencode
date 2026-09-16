@@ -306,7 +306,9 @@ class _DeviceAIConfigPageState extends ConsumerState<DeviceAIConfigPage> {
   }
 
   Future<ModelTestTarget> _requireModelTestTarget() async {
-    final device = await ref.read(deviceDetailProvider(widget.machineId).future);
+    final device = await ref.read(
+      deviceDetailProvider(widget.machineId).future,
+    );
     final target = resolveModelTestTarget(
       preferredAgentId: widget.agentId,
       preferredProjectId: widget.projectId,
@@ -323,18 +325,20 @@ class _DeviceAIConfigPageState extends ConsumerState<DeviceAIConfigPage> {
     DeviceAIModelInfo item,
   ) async {
     final target = await _requireModelTestTarget();
-    return ref.read(chatRepositoryProvider).testModelLatency(
-      agentId: target.agentId,
-      projectId: target.projectId,
-      model: ModelInfo(
-        providerID: provider.id,
-        providerBaseUrl: provider.baseUrl,
-        providerConsoleUrl: provider.consoleUrl,
-        modelID: item.id,
-        name: item.name.isEmpty ? item.id : item.name,
-        variants: item.variants.keys.toList(),
-      ),
-    );
+    return ref
+        .read(chatRepositoryProvider)
+        .testModelLatency(
+          agentId: target.agentId,
+          projectId: target.projectId,
+          model: ModelInfo(
+            providerID: provider.id,
+            providerBaseUrl: provider.baseUrl,
+            providerConsoleUrl: provider.consoleUrl,
+            modelID: item.id,
+            name: item.name.isEmpty ? item.id : item.name,
+            variants: item.variants.keys.toList(),
+          ),
+        );
   }
 
   Future<void> _openModelsEditor(DeviceAIProviderInfo provider) async {
@@ -813,7 +817,10 @@ class _ProviderCard extends StatelessWidget {
           _InfoRow(
             label: '默认模型',
             value: isCurrent
-                ? (currentModel.isEmpty ? '未设置' : currentModel)
+                ? defaultModelLabel(
+                    models: provider.models,
+                    currentModel: currentModel,
+                  )
                 : '未切换到该供应商',
           ),
         ],
@@ -1129,7 +1136,7 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
     widget.items,
   );
   late Set<String> _selected = Set<String>.from(widget.initialSelected);
-  late String _defaultModel = widget.initialDefault;
+  late String _defaultModel = _matchedModelId(widget.initialDefault);
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   bool _searchVisible = false;
@@ -1146,7 +1153,7 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
   @override
   void initState() {
     super.initState();
-    _activeModelId = _items.any((item) => item.id == _defaultModel)
+    _activeModelId = _defaultModel.isNotEmpty
         ? _defaultModel
         : _items.isEmpty
         ? ''
@@ -1216,6 +1223,10 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
     _searchFocusNode.requestFocus();
   }
 
+  String _matchedModelId(String value) {
+    return matchDeviceAIModel(_items, value)?.id ?? '';
+  }
+
   String _firstSelectedId() {
     for (final item in _items) {
       if (_selected.contains(item.id)) return item.id;
@@ -1250,7 +1261,14 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
       setState(() {
         _items = items;
         _selected = _selected.where(ids.contains).toSet();
-        if (!ids.contains(_activeModelId)) {
+        final matchedDefault =
+            matchDeviceAIModel(items, _defaultModel)?.id ?? '';
+        final matchedActive =
+            matchDeviceAIModel(items, _activeModelId)?.id ?? '';
+        _defaultModel = matchedDefault;
+        if (matchedActive.isNotEmpty) {
+          _activeModelId = matchedActive;
+        } else {
           _activeModelId = items.isEmpty ? '' : items.first.id;
           _mobileEditing = false;
         }
@@ -1797,7 +1815,10 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
                         const SizedBox(width: 5),
                         Expanded(
                           child: Text(
-                            status.$1,
+                            [
+                              formatContextWindow(item.contextLimit),
+                              status.$1,
+                            ].join(' · '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1818,7 +1839,8 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
                 failed: _testResults[item.id]?.success == false,
                 duration: _testDuration(item.id),
                 tooltip: '测试模型连接',
-                onPressed: _testingModelIds.contains(item.id) ||
+                onPressed:
+                    _testingModelIds.contains(item.id) ||
                         _batchTesting ||
                         widget.onTestModel == null
                     ? null

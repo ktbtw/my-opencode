@@ -764,8 +764,14 @@ type DeviceAIModel struct {
 	Owned      string              `json:"owned_by,omitempty"`
 	Modalities *DeviceAIModalities `json:"modalities,omitempty"`
 	Context    int64               `json:"context_limit,omitempty"`
-	Variants   map[string]any      `json:"variants,omitempty"`
-	Thinking   *DeviceAIThinking   `json:"thinking,omitempty"`
+	Output     int64               `json:"output_limit,omitempty"`
+	// Upstream* 记录供应商接口返回的原始值，Manual* 记录用户手填值。
+	UpstreamContext int64             `json:"upstream_context_limit,omitempty"`
+	UpstreamOutput  int64             `json:"upstream_output_limit,omitempty"`
+	ManualContext   int64             `json:"manual_context_limit,omitempty"`
+	ManualOutput    int64             `json:"manual_output_limit,omitempty"`
+	Variants        map[string]any    `json:"variants,omitempty"`
+	Thinking        *DeviceAIThinking `json:"thinking,omitempty"`
 }
 
 type DeviceAIProvider struct {

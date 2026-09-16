@@ -6839,7 +6839,10 @@ class _InputAreaState extends ConsumerState<_InputArea> {
                       right: 10,
                       bottom: 8,
                       child: _ContextUsageButton(
-                        usage: widget.contextUsage,
+                        usage: _contextUsageWithModelLimit(
+                          widget.contextUsage,
+                          widget.selectedModel?.contextLimit,
+                        ),
                         draftTokens: _draftTokenEstimate,
                         configuredThresholdPercent:
                             widget.configuredCompactionThreshold,
@@ -8396,7 +8399,7 @@ class _ModelSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = selectedModel?.modelID ?? '默认模型';
+    final label = selectedModel?.selectorLabel ?? '默认模型';
     return InkWell(
       onTap: () => _showModelPicker(context),
       borderRadius: AppRadius.smRadius,
@@ -9157,6 +9160,13 @@ String _formatDuration(Duration duration) {
   return '$minutes:$seconds';
 }
 
+ContextUsageInfo? _contextUsageWithModelLimit(
+  ContextUsageInfo? usage,
+  int? modelLimit,
+) {
+  return ContextUsageInfo.withModelLimit(usage, modelLimit);
+}
+
 String _formatTime(DateTime time) {
   final local = time.toLocal();
   String two(int value) => value.toString().padLeft(2, '0');
@@ -9350,6 +9360,14 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                                   : AppColors.textPrimary,
                                             ),
                                           ),
+                                          if (m.contextWindowLabel != '窗口未知')
+                                            Text(
+                                              m.contextWindowLabel,
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                color: AppColors.textMuted,
+                                              ),
+                                            ),
                                           if (m.name != m.modelID)
                                             Text(
                                               m.name,

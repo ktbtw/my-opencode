@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../../../shared/grok_context_limit.dart';
+
 enum TaskStatus {
   dispatched,
   started,
@@ -1135,6 +1137,71 @@ class ContextUsageInfo {
     return 0;
   }
 
+  ContextUsageInfo withFallbackLimit(int? limit) {
+    if (limit == null || limit <= 0) return this;
+    if (contextLimit != null && contextLimit! > 0) return this;
+    return copyWith(contextLimit: limit);
+  }
+
+  static ContextUsageInfo? withModelLimit(
+    ContextUsageInfo? usage,
+    int? modelLimit,
+  ) {
+    if (usage != null) return usage.withFallbackLimit(modelLimit);
+    if (modelLimit == null || modelLimit <= 0) return null;
+    return ContextUsageInfo(contextLimit: modelLimit);
+  }
+
+  ContextUsageInfo copyWith({
+    String? stage,
+    String? providerID,
+    String? modelID,
+    String? agent,
+    int? estimatedInputTokens,
+    int? estimatedUserInputTokens,
+    int? contextLimit,
+    int? contextTokens,
+    int? compactionCountTokens,
+    double? contextUsagePercent,
+    int? compactionThresholdTokens,
+    double? compactionThresholdPercent,
+    int? inputTokens,
+    int? outputTokens,
+    int? reasoningTokens,
+    int? cacheReadTokens,
+    int? cacheWriteTokens,
+    int? totalTokens,
+    String? finishReason,
+    DateTime? updatedAt,
+  }) {
+    return ContextUsageInfo(
+      stage: stage ?? this.stage,
+      providerID: providerID ?? this.providerID,
+      modelID: modelID ?? this.modelID,
+      agent: agent ?? this.agent,
+      estimatedInputTokens: estimatedInputTokens ?? this.estimatedInputTokens,
+      estimatedUserInputTokens:
+          estimatedUserInputTokens ?? this.estimatedUserInputTokens,
+      contextLimit: contextLimit ?? this.contextLimit,
+      contextTokens: contextTokens ?? this.contextTokens,
+      compactionCountTokens:
+          compactionCountTokens ?? this.compactionCountTokens,
+      contextUsagePercent: contextUsagePercent ?? this.contextUsagePercent,
+      compactionThresholdTokens:
+          compactionThresholdTokens ?? this.compactionThresholdTokens,
+      compactionThresholdPercent:
+          compactionThresholdPercent ?? this.compactionThresholdPercent,
+      inputTokens: inputTokens ?? this.inputTokens,
+      outputTokens: outputTokens ?? this.outputTokens,
+      reasoningTokens: reasoningTokens ?? this.reasoningTokens,
+      cacheReadTokens: cacheReadTokens ?? this.cacheReadTokens,
+      cacheWriteTokens: cacheWriteTokens ?? this.cacheWriteTokens,
+      totalTokens: totalTokens ?? this.totalTokens,
+      finishReason: finishReason ?? this.finishReason,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
   ContextUsageInfo merge(ContextUsageInfo next) {
     return ContextUsageInfo(
       stage: next.stage.isNotEmpty ? next.stage : stage,
@@ -1596,6 +1663,14 @@ class ModelInfo {
   });
 
   bool get hasVariants => variants.isNotEmpty;
+
+  String get contextWindowLabel => formatContextWindow(contextLimit);
+
+  String get selectorLabel {
+    if (contextWindowLabel == '窗口未知') return modelID;
+    return '$modelID · $contextWindowLabel';
+  }
+
   bool get supportsImageOutput =>
       image ||
       outputModalities.any((item) => item.toLowerCase() == 'image') ||

@@ -22,7 +22,10 @@ void main() {
       formatModelSpeedDuration(const Duration(milliseconds: 850)),
       '850ms',
     );
-    expect(formatModelSpeedDuration(const Duration(milliseconds: 1200)), '1.2s');
+    expect(
+      formatModelSpeedDuration(const Duration(milliseconds: 1200)),
+      '1.2s',
+    );
   });
 
   testWidgets('shows a non-interactive spinner while testing', (tester) async {
@@ -75,7 +78,11 @@ void main() {
         home: ProviderModelsDialog(
           provider: const DeviceAIProviderInfo(id: 'openrouter'),
           items: const [
-            DeviceAIModelInfo(id: 'alpha', name: 'Alpha', ownedBy: 'openrouter'),
+            DeviceAIModelInfo(
+              id: 'alpha',
+              name: 'Alpha',
+              ownedBy: 'openrouter',
+            ),
             DeviceAIModelInfo(id: 'beta', name: 'Beta', ownedBy: 'openrouter'),
           ],
           initialSelected: const {'alpha', 'beta'},
@@ -86,7 +93,9 @@ void main() {
             return _result(
               success: true,
               model: model.id,
-              firstTextTime: Duration(milliseconds: model.id == 'alpha' ? 900 : 1500),
+              firstTextTime: Duration(
+                milliseconds: model.id == 'alpha' ? 900 : 1500,
+              ),
               totalTime: const Duration(seconds: 3),
             );
           },
@@ -111,44 +120,82 @@ void main() {
     expect(find.text('1.5s'), findsOneWidget);
   });
 
-  testWidgets('single-model retest stays disabled while that model is running', (
+  testWidgets(
+    'single-model retest stays disabled while that model is running',
+    (tester) async {
+      _setDesktopSurface(tester);
+      var calls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: ProviderModelsDialog(
+            provider: const DeviceAIProviderInfo(id: 'openrouter'),
+            items: const [
+              DeviceAIModelInfo(
+                id: 'alpha',
+                name: 'Alpha',
+                ownedBy: 'openrouter',
+              ),
+            ],
+            initialSelected: const {'alpha'},
+            initialDefault: '',
+            onTestModel: (_) async {
+              calls += 1;
+              await Future<void>.delayed(const Duration(milliseconds: 80));
+              return _result(
+                success: true,
+                firstTextTime: const Duration(milliseconds: 700),
+                totalTime: const Duration(seconds: 2),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('model-speed-test-alpha')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('model-speed-test-alpha')));
+      await tester.pump();
+      expect(calls, 1);
+
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+      expect(find.text('700ms'), findsOneWidget);
+    },
+  );
+
+  testWidgets('matches qualified grok Kun default and shows 500k window', (
     tester,
   ) async {
     _setDesktopSurface(tester);
-    var calls = 0;
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light,
         home: ProviderModelsDialog(
-          provider: const DeviceAIProviderInfo(id: 'openrouter'),
-          items: const [
-            DeviceAIModelInfo(id: 'alpha', name: 'Alpha', ownedBy: 'openrouter'),
+          provider: const DeviceAIProviderInfo(id: '订阅grok'),
+          items: [
+            DeviceAIModelInfo.fromJson({
+              'id': 'Kun',
+              'name': 'Kun',
+              'owned_by': '订阅grok',
+            }),
+            const DeviceAIModelInfo(
+              id: 'deepseek-v4.1-flash',
+              name: 'deepseek-v4.1-flash',
+              ownedBy: '订阅grok',
+            ),
           ],
-          initialSelected: const {'alpha'},
-          initialDefault: '',
-          onTestModel: (_) async {
-            calls += 1;
-            await Future<void>.delayed(const Duration(milliseconds: 80));
-            return _result(
-              success: true,
-              firstTextTime: const Duration(milliseconds: 700),
-              totalTime: const Duration(seconds: 2),
-            );
-          },
+          initialSelected: const {'Kun', 'deepseek-v4.1-flash'},
+          initialDefault: '订阅grok/Kun',
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('model-speed-test-alpha')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('model-speed-test-alpha')));
-    await tester.pump();
-    expect(calls, 1);
-
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pumpAndSettle();
-    expect(find.text('700ms'), findsOneWidget);
+    expect(find.text('500k 窗口 · 未检测到思考能力'), findsOneWidget);
+    expect(find.text('窗口未知 · 未检测到思考能力'), findsOneWidget);
+    expect(find.text('Kun'), findsWidgets);
   });
 }
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../../../core/config/api_client.dart';
 import '../../../core/config/sse_parser.dart';
+import '../../../shared/grok_context_limit.dart';
 import 'chat_model.dart';
 
 void _chatDiag(String stage, [Map<String, Object?> data = const {}]) {
@@ -1269,7 +1270,13 @@ class ChatRepository {
         final modalities = m['modalities'] as Map<String, dynamic>? ?? {};
         final inputModalities = _stringList(modalities['input']);
         final outputModalities = _stringList(modalities['output']);
-        final contextLimit = _modelContextLimit(m);
+        final contextLimit =
+            _modelContextLimit(m) ??
+            inferGrokContextLimit(
+              provider: providerID,
+              modelID: modelID,
+              modelName: modelName,
+            );
         result.add(
           ModelInfo(
             providerID: providerID,

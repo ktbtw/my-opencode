@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/context_window.dart';
 import '../../../../shared/thinking_variant.dart';
 import '../../../../shared/widgets/widgets.dart';
 import '../../data/device_ai_config_model.dart';
@@ -38,6 +39,10 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
   Map<String, dynamic>? _advancedVariants;
   String _message = '';
   bool _messageError = false;
+  late TextEditingController _contextLimitController;
+  late TextEditingController _outputLimitController;
+  String _contextLimitError = '';
+  String _outputLimitError = '';
 
   DeviceAIThinkingInfo get _baseThinking =>
       widget.model.thinking ??
@@ -55,6 +60,8 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
   void initState() {
     super.initState();
     _jsonController = TextEditingController();
+    _contextLimitController = TextEditingController();
+    _outputLimitController = TextEditingController();
     _reset();
   }
 
@@ -69,6 +76,8 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
   @override
   void dispose() {
     _jsonController.dispose();
+    _contextLimitController.dispose();
+    _outputLimitController.dispose();
     _disposeLevelControllers();
     super.dispose();
   }
@@ -91,8 +100,73 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
     _advancedVariants = null;
     _message = '';
     _messageError = false;
+    _contextLimitController.text = _manualTokenText(widget.model.manualContextLimit);
+    _outputLimitController.text = _manualTokenText(widget.model.manualOutputLimit);
+    _contextLimitError = '';
+    _outputLimitError = '';
     _syncLevelControllers(forceText: true);
     _syncJson();
+  }
+
+  String _manualTokenText(int? value) =>
+      value != null && value > 0 ? value.toString() : '';
+
+  void _applyContextLimitPreset(int value) {
+    setState(() {
+      _contextLimitController.text = value.toString();
+      _contextLimitError = '';
+    });
+    _emitContextLimit();
+  }
+
+  void _applyOutputLimitPreset(int value) {
+    setState(() {
+      _outputLimitController.text = value.toString();
+      _outputLimitError = '';
+    });
+    _emitContextLimit();
+  }
+
+  void _clearContextLimit() {
+    setState(() {
+      _contextLimitController.text = '';
+      _contextLimitError = '';
+    });
+    _emitContextLimit(clearContext: true);
+  }
+
+  void _clearOutputLimit() {
+    setState(() {
+      _outputLimitController.text = '';
+      _outputLimitError = '';
+    });
+    _emitContextLimit(clearOutput: true);
+  }
+
+  void _emitContextLimit({bool clearContext = false, bool clearOutput = false}) {
+    final contextError = validateTokenInput(
+      _contextLimitController.text,
+      label: '上下文窗口',
+    );
+    final outputError = validateTokenInput(
+      _outputLimitController.text,
+      label: '最大输出',
+    );
+    setState(() {
+      _contextLimitError = contextError ?? '';
+      _outputLimitError = outputError ?? '';
+    });
+    if (contextError != null || outputError != null) return;
+    final contextValue = int.tryParse(_contextLimitController.text.trim());
+    final outputValue = int.tryParse(_outputLimitController.text.trim());
+    widget.onChanged(
+      widget.model.copyWith(
+        manualContextLimit: contextValue,
+        manualOutputLimit: outputValue,
+        clearManualContextLimit: clearContext || contextValue == null,
+        clearManualOutputLimit: clearOutput || outputValue == null,
+      ),
+    );
   }
 
   String _validControl(String value) {
@@ -140,9 +214,7 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
         _levelDraft(name: 'high', value: '16000'),
         _levelDraft(name: 'max', value: '32000'),
       ],
-      'toggle' => [
-        _levelDraft(name: 'enabled', value: 'enabled'),
-      ],
+      'toggle' => [_levelDraft(name: 'enabled', value: 'enabled')],
       _ => [
         _levelDraft(name: 'low', value: 'low'),
         _levelDraft(name: 'medium', value: 'medium'),
@@ -199,9 +271,7 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
         );
         return;
       }
-      _levels.add(
-        _levelDraft(name: preset.name, value: preset.value),
-      );
+      _levels.add(_levelDraft(name: preset.name, value: preset.value));
     });
   }
 
@@ -310,7 +380,8 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
 
   void _syncLevelControllers({bool forceText = false}) {
     final keep = _levels.map((item) => item.fieldKey).toSet();
-    for (final id in _nameControllers.keys.where((id) => !keep.contains(id)).toList()) {
+    for (final id
+        in _nameControllers.keys.where((id) => !keep.contains(id)).toList()) {
       _nameControllers.remove(id)?.dispose();
       _valueControllers.remove(id)?.dispose();
     }
@@ -474,6 +545,8 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
                   onChanged: _inputModalitiesChanged,
                 ),
                 const SizedBox(height: 18),
+                _buildContextWindowSection(),
+                const SizedBox(height: 18),
                 _SectionTitle(title: '配置来源', trailing: '手动配置始终优先'),
                 const SizedBox(height: 10),
                 _SourceSegment(manual: _manual, onChanged: _setManual),
@@ -493,6 +566,123 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
         ),
       ],
     );
+  }
+
+  Widget _buildContextWindowSection() {
+    final effectiveContext = widget.model.contextLimit;
+    final isOverride = widget.model.manualContextLimit != null ||
+        widget.model.manualOutputLimit != null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionTitle(title: '上下文窗口', trailing: '供应商返回优先，其次手填'),
+        const SizedBox(height: 4),
+        Text(
+          isOverride
+              ? '已使用手动配置：${formatContextWindow(effectiveContext)}'
+              : '当前生效：${formatContextWindow(effectiveContext)}',
+          style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 10),
+        _SectionTitle(title: '窗口预设', trailing: '点击即填入'),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            for (final preset in contextWindowPresets)
+              _PresetChip(
+                key: ValueKey('context-preset-$preset'),
+                label: formatTokenCount(preset),
+                selected: _selectedContextPreset == preset,
+                onTap: () => _applyContextLimitPreset(preset),
+              ),
+            _PresetChip(
+              key: const ValueKey('context-preset-clear'),
+              label: '清除手填',
+              selected: false,
+              onTap: _clearContextLimit,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 520;
+            final contextField = AppInput(
+              key: const ValueKey('context-limit-input'),
+              label: '上下文窗口',
+              hint: '例如 500000',
+              controller: _contextLimitController,
+              keyboardType: TextInputType.number,
+              errorText: _contextLimitError.isEmpty ? null : _contextLimitError,
+              onChanged: (_) => _emitContextLimit(),
+            );
+            final outputField = AppInput(
+              key: const ValueKey('output-limit-input'),
+              label: '最大输出',
+              hint: '留空由 runtime 决定',
+              controller: _outputLimitController,
+              keyboardType: TextInputType.number,
+              errorText: _outputLimitError.isEmpty ? null : _outputLimitError,
+              onChanged: (_) => _emitContextLimit(),
+            );
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  contextField,
+                  const SizedBox(height: 12),
+                  outputField,
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: contextField),
+                const SizedBox(width: 12),
+                Expanded(child: outputField),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        _SectionTitle(title: '输出预设', trailing: '留空由 runtime 决定'),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            for (final preset in outputTokenPresets)
+              _PresetChip(
+                key: ValueKey('output-preset-$preset'),
+                label: formatTokenCount(preset),
+                selected: _selectedOutputPreset == preset,
+                onTap: () => _applyOutputLimitPreset(preset),
+              ),
+            _PresetChip(
+              key: const ValueKey('output-preset-clear'),
+              label: '清除手填',
+              selected: false,
+              onTap: _clearOutputLimit,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  int? get _selectedContextPreset {
+    final value = int.tryParse(_contextLimitController.text.trim());
+    if (value == null || !contextWindowPresets.contains(value)) return null;
+    return value;
+  }
+
+  int? get _selectedOutputPreset {
+    final value = int.tryParse(_outputLimitController.text.trim());
+    if (value == null || !outputTokenPresets.contains(value)) return null;
+    return value;
   }
 
   Widget _buildManual() {
@@ -602,9 +792,8 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
               const Spacer(),
               TextButton.icon(
                 onPressed: () => _structuredChanged(
-                  () => _levels.add(
-                    _levelDraft(name: 'custom', value: 'custom'),
-                  ),
+                  () =>
+                      _levels.add(_levelDraft(name: 'custom', value: 'custom')),
                 ),
                 icon: const Icon(Icons.add_rounded, size: 15),
                 label: const Text('添加档位'),
@@ -789,7 +978,10 @@ class _EditorHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  model.id,
+                  [
+                    model.id,
+                    formatContextWindow(model.contextLimit),
+                  ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -1105,9 +1297,7 @@ class _LevelRow extends StatelessWidget {
             child: TextFormField(
               key: ValueKey('thinking-value-${level.fieldKey}'),
               controller: valueController,
-              keyboardType: budget
-                  ? TextInputType.number
-                  : TextInputType.text,
+              keyboardType: budget ? TextInputType.number : TextInputType.text,
               decoration: InputDecoration(
                 hintText: budget ? 'Token 数量' : '参数值',
                 isDense: true,
@@ -1467,9 +1657,7 @@ List<_ThinkingLevelDraft> _mainstreamPresets(String control) {
       _ThinkingLevelDraft(name: 'high', value: '16000'),
       _ThinkingLevelDraft(name: 'max', value: '32000'),
     ],
-    'toggle' => const [
-      _ThinkingLevelDraft(name: 'enabled', value: 'enabled'),
-    ],
+    'toggle' => const [_ThinkingLevelDraft(name: 'enabled', value: 'enabled')],
     _ => const [
       _ThinkingLevelDraft(name: 'none', value: 'none'),
       _ThinkingLevelDraft(name: 'minimal', value: 'minimal'),

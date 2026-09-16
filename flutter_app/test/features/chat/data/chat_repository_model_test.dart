@@ -26,7 +26,7 @@ void main() {
         request.response.headers.contentType = ContentType.json;
         request.response.write(
           jsonEncode({
-            'connected': ['cheap'],
+            'connected': ['cheap', '订阅grok'],
             'all': [
               {
                 'id': 'cheap',
@@ -53,6 +53,19 @@ void main() {
                   },
                 },
               },
+              {
+                'id': '订阅grok',
+                'name': '订阅grok',
+                'models': {
+                  'Kun': {
+                    'name': 'Kun',
+                    'modalities': {
+                      'input': ['text', 'image', 'video'],
+                      'output': ['text'],
+                    },
+                  },
+                },
+              },
             ],
           }),
         );
@@ -73,6 +86,13 @@ void main() {
       expect(textModel.outputModalities, contains('text'));
       expect(textModel.contextLimit, 1050000);
       expect(textModel.supportsImageOutput, isFalse);
+
+      final kunModel = models.singleWhere((m) => m.modelID == 'Kun');
+      expect(kunModel.contextLimit, 500000);
+      expect(kunModel.contextWindowLabel, '500k 窗口');
+      expect(kunModel.selectorLabel, 'Kun · 500k 窗口');
+      expect(textModel.selectorLabel, 'gpt-5.4 · 1050k 窗口');
+      expect(imageModel.selectorLabel, 'gpt-image-2 · 128k 窗口');
     },
   );
 
@@ -147,6 +167,27 @@ void main() {
     expect(usage.totalTokens, 660);
     expect(usage.finishReason, 'stop');
     expect(usage.updatedAt, DateTime.parse('2026-06-11T12:02:00Z'));
+  });
+
+  test('ContextUsageInfo falls back to selected model context limit', () {
+    final usage = ContextUsageInfo.fromUsageMetadata({
+      'source': 'llm_usage',
+      'stage': 'request_usage_ready',
+      'provider_id': '订阅grok',
+      'model_id': 'Kun',
+      'context_tokens': 12000,
+    });
+
+    expect(usage, isNotNull);
+    expect(usage!.contextLimit, isNull);
+    expect(usage.withFallbackLimit(500000).contextLimit, 500000);
+    expect(usage.withFallbackLimit(500000).contextTokens, 12000);
+    expect(
+      ContextUsageInfo.withModelLimit(usage, 500000)?.contextLimit,
+      500000,
+    );
+    expect(ContextUsageInfo.withModelLimit(null, 500000)?.contextLimit, 500000);
+    expect(ContextUsageInfo.withModelLimit(null, null), isNull);
   });
 
   test(

@@ -66,6 +66,11 @@ type RuntimeModelCapabilities struct {
 const (
 	thinkingMetadataKey   = "x-operit-thinking"
 	consoleURLMetadataKey = "x-operit-console-url"
+	// 下列键记录窗口值的来源，保证「供应商返回 > 手填 > 预设推断」在多次刷新后仍成立。
+	upstreamContextKey = "x-operit-upstream-context"
+	upstreamOutputKey  = "x-operit-upstream-output"
+	manualContextKey   = "x-operit-manual-context"
+	manualOutputKey    = "x-operit-manual-output"
 )
 
 var exact = map[string]*model.DeviceAIModalities{
@@ -127,6 +132,8 @@ var keywordRules = []rule{
 }
 
 var gptAPIModePattern = regexp.MustCompile(`(?i)(^|/)(chatgpt|gpt)([._-]|\d|$)`)
+var grok46Pattern = regexp.MustCompile(`(?i)^grok[-_.]?4[-_.]?[56](?:$|[-_.])`)
+var grok43Or420Pattern = regexp.MustCompile(`(?i)^grok[-_.]?4[-_.]?(?:3|20)(?:$|[-_.])`)
 
 func Path() (string, error) {
 	return opencodeconfig.Path()
@@ -268,6 +275,9 @@ func enrichDeviceAIModel(item *model.DeviceAIModelInfo, providerID string, model
 	if meta.Limit.Context > 0 {
 		item.Context = meta.Limit.Context
 	}
+	if item.Context <= 0 {
+		item.Context = inferContextLimit(providerID, modelID, item.Name)
+	}
 	if len(meta.Variants) > 0 && !manualOverride {
 		item.Variants = cloneMap(meta.Variants)
 	}
@@ -386,9 +396,9 @@ func parseModels(items map[string]any, provider string) []model.DeviceAIModelInf
 		name := id
 		owned := provider
 		var modalities *model.DeviceAIModalities
-		var contextLimit int64
 		var variants map[string]any
 		var thinking *model.DeviceAIThinkingInfo
+		var upstreamContext, upstreamOutput, manualContext, manualOutput int64
 		if info, ok := item.(map[string]any); ok {
 			if value, ok := info["name"].(string); ok && strings.TrimSpace(value) != "" {
 				name = value
@@ -397,11 +407,37 @@ func parseModels(items map[string]any, provider string) []model.DeviceAIModelInf
 				owned = value
 			}
 			modalities = parseModalities(info["modalities"])
-			contextLimit = parseContextLimit(info)
+			upstreamContext = parseUpstreamContextLimit(info)
+			upstreamOutput = parseUpstreamOutputLimit(info)
+			manualContext = parseManualContextLimit(info)
+			manualOutput = parseManualOutputLimit(info)
+			// 兼容手写或旧版本配置：没有来源标记时，把 limit 里的值当作手填值，
+			// 这样显式窗口不会被预设推断覆盖。
+			if upstreamContext <= 0 && manualContext <= 0 {
+				manualContext = parseContextLimit(info)
+			}
+			if upstreamOutput <= 0 && manualOutput <= 0 {
+				manualOutput = parseOutputLimit(info)
+			}
 			variants = parseVariants(info["variants"])
 			thinking = parseThinkingInfo(info, variants)
 		}
-		out = append(out, model.DeviceAIModelInfo{ID: id, Name: name, OwnedBy: owned, Modalities: matchModalities(provider, id, name, modalities), Context: contextLimit, Variants: variants, Thinking: thinking})
+		inferred := inferContextLimit(provider, id, name)
+		contextLimit, outputLimit := effectiveLimits(upstreamContext, manualContext, inferred, upstreamOutput, manualOutput)
+		out = append(out, model.DeviceAIModelInfo{
+			ID:              id,
+			Name:            name,
+			OwnedBy:         owned,
+			Modalities:      matchModalities(provider, id, name, modalities),
+			Context:         contextLimit,
+			Output:          outputLimit,
+			UpstreamContext: upstreamContext,
+			UpstreamOutput:  upstreamOutput,
+			ManualContext:   manualContext,
+			ManualOutput:    manualOutput,
+			Variants:        variants,
+			Thinking:        thinking,
+		})
 	}
 	return out
 }
@@ -495,18 +531,21 @@ func ListModels(input model.DeviceAIConfigInput) ([]model.DeviceAIModelInfo, err
 			Modalities          *model.DeviceAIModalities `json:"modalities"`
 			Context             int64                     `json:"context_length"`
 			ContextMax          int64                     `json:"context_window"`
+			Output              int64                     `json:"max_output_tokens"`
 			Variants            map[string]any            `json:"variants"`
 			SupportedParameters []string                  `json:"supported_parameters"`
 			Capabilities        any                       `json:"capabilities"`
 			Reasoning           any                       `json:"reasoning"`
 			Limit               struct {
 				Context int64 `json:"context"`
+				Output  int64 `json:"output"`
 			} `json:"limit"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, err
 	}
+	manuals := manualLimitLookup(input)
 	out := make([]model.DeviceAIModelInfo, 0, len(body.Data))
 	for _, item := range body.Data {
 		id := strings.TrimSpace(item.ID)
@@ -518,17 +557,41 @@ func ListModels(input model.DeviceAIConfigInput) ([]model.DeviceAIModelInfo, err
 		if len(variants) == 0 && thinking != nil {
 			variants = cloneMap(thinking.Variants)
 		}
+		ownedBy := firstNonEmpty(item.OwnedBy, provider)
+		upstreamContext := firstPositiveInt64(item.Context, item.ContextMax, item.Limit.Context)
+		upstreamOutput := firstPositiveInt64(item.Output, item.Limit.Output)
+		limits := manuals[id]
+		manualContext, manualOutput := limits[0], limits[1]
+		contextLimit, outputLimit := effectiveLimits(upstreamContext, manualContext, inferContextLimit(provider, id, id), upstreamOutput, manualOutput)
 		out = append(out, model.DeviceAIModelInfo{
-			ID:         id,
-			Name:       id,
-			OwnedBy:    firstNonEmpty(item.OwnedBy, provider),
-			Modalities: matchModalities(provider, id, id, item.Modalities),
-			Context:    firstPositiveInt64(item.Context, item.ContextMax, item.Limit.Context),
-			Variants:   variants,
-			Thinking:   thinking,
+			ID:              id,
+			Name:            id,
+			OwnedBy:         ownedBy,
+			Modalities:      matchModalities(provider, id, id, item.Modalities),
+			Context:         contextLimit,
+			Output:          outputLimit,
+			UpstreamContext: upstreamContext,
+			UpstreamOutput:  upstreamOutput,
+			ManualContext:   manualContext,
+			ManualOutput:    manualOutput,
+			Variants:        variants,
+			Thinking:        thinking,
 		})
 	}
 	return out, nil
+}
+
+// manualLimitLookup 取用户此前手填的窗口值，刷新时不会被供应商返回值冲掉。
+func manualLimitLookup(input model.DeviceAIConfigInput) map[string][2]int64 {
+	result := map[string][2]int64{}
+	for _, item := range input.Config.Models {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		result[id] = [2]int64{item.ManualContext, item.ManualOutput}
+	}
+	return result
 }
 
 func LoadWithModels(input model.DeviceAIConfigInput) (*model.DeviceAIConfigInfo, error) {
@@ -861,9 +924,32 @@ func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, ap
 					"output": append([]string(nil), item.Modalities.Output...),
 				}
 			}
-			if item.Context > 0 {
-				entry["limit"] = mergeLimitContext(entry["limit"], item.Context)
-				entry["context_limit"] = item.Context
+			upstreamContext := item.UpstreamContext
+			upstreamOutput := item.UpstreamOutput
+			manualContext := item.ManualContext
+			manualOutput := item.ManualOutput
+			// 兼容只传最终值的调用方：没有来源标记时，把最终值当作手填值。
+			if upstreamContext <= 0 && upstreamOutput <= 0 && manualContext <= 0 && manualOutput <= 0 {
+				manualContext = item.Context
+				manualOutput = item.Output
+			}
+			inferred := inferContextLimit(providerID, id, item.Name)
+			contextLimit, outputLimit := effectiveLimits(upstreamContext, manualContext, inferred, upstreamOutput, manualOutput)
+			writeLimitMarkers(entry, upstreamContext, upstreamOutput, manualContext, manualOutput)
+			if limit := mergeLimit(entry["limit"], contextLimit, outputLimit); limit != nil {
+				entry["limit"] = limit
+			} else {
+				delete(entry, "limit")
+			}
+			if contextLimit > 0 {
+				entry["context_limit"] = contextLimit
+			} else {
+				delete(entry, "context_limit")
+			}
+			if outputLimit > 0 {
+				entry["output_limit"] = outputLimit
+			} else {
+				delete(entry, "output_limit")
 			}
 			if len(item.Variants) > 0 {
 				entry["variants"] = cloneMap(item.Variants)
@@ -987,6 +1073,146 @@ func parseContextLimit(info map[string]any) int64 {
 		positiveInt64(info["context_length"]),
 		positiveInt64(info["context_window"]),
 	)
+}
+
+func parseOutputLimit(info map[string]any) int64 {
+	if len(info) == 0 {
+		return 0
+	}
+	if limit := asMap(info["limit"]); limit != nil {
+		if value := positiveInt64(limit["output"]); value > 0 {
+			return value
+		}
+	}
+	return firstPositiveInt64(
+		positiveInt64(info["output_limit"]),
+		positiveInt64(info["max_output_tokens"]),
+	)
+}
+
+func parseManualContextLimit(info map[string]any) int64 {
+	if len(info) == 0 {
+		return 0
+	}
+	return positiveInt64(info[manualContextKey])
+}
+
+func parseManualOutputLimit(info map[string]any) int64 {
+	if len(info) == 0 {
+		return 0
+	}
+	return positiveInt64(info[manualOutputKey])
+}
+
+func parseUpstreamContextLimit(info map[string]any) int64 {
+	if len(info) == 0 {
+		return 0
+	}
+	return positiveInt64(info[upstreamContextKey])
+}
+
+func parseUpstreamOutputLimit(info map[string]any) int64 {
+	if len(info) == 0 {
+		return 0
+	}
+	return positiveInt64(info[upstreamOutputKey])
+}
+
+// writeLimitMarkers 只记录来源值，未提供的来源会被清除，避免旧值一直压住新值。
+func writeLimitMarkers(entry map[string]any, upstreamContext, upstreamOutput, manualContext, manualOutput int64) {
+	writeMarker(entry, upstreamContextKey, upstreamContext)
+	writeMarker(entry, upstreamOutputKey, upstreamOutput)
+	writeMarker(entry, manualContextKey, manualContext)
+	writeMarker(entry, manualOutputKey, manualOutput)
+}
+
+func writeMarker(entry map[string]any, key string, value int64) {
+	if value > 0 {
+		entry[key] = value
+		return
+	}
+	delete(entry, key)
+}
+
+// mergeLimit 写入最终生效值；两个值都为空时清掉 limit，交由 runtime 处理。
+func mergeLimit(value any, contextLimit, outputLimit int64) map[string]any {
+	if contextLimit <= 0 && outputLimit <= 0 {
+		return nil
+	}
+	out := cloneMap(asMap(value))
+	if out == nil {
+		out = map[string]any{}
+	}
+	if contextLimit > 0 {
+		out["context"] = contextLimit
+	} else {
+		delete(out, "context")
+	}
+	if outputLimit > 0 {
+		out["output"] = outputLimit
+	} else {
+		delete(out, "output")
+	}
+	return out
+}
+
+// effectiveLimits 按 供应商返回 > 手填 > 预设推断 求出最终生效的窗口值。
+// 输出上限没有预设推断，只取 供应商返回 > 手填。
+func effectiveLimits(upstreamContext, manualContext, inferredContext, upstreamOutput, manualOutput int64) (int64, int64) {
+	return firstPositiveInt64(upstreamContext, manualContext, inferredContext),
+		firstPositiveInt64(upstreamOutput, manualOutput)
+}
+
+func inferContextLimit(provider, modelID, modelName string) int64 {
+	aliases := []string{modelID, modelName}
+	if last := lastPathSegment(modelID); last != "" {
+		aliases = append(aliases, last)
+	}
+	if last := lastPathSegment(modelName); last != "" {
+		aliases = append(aliases, last)
+	}
+	for _, alias := range aliases {
+		if value := grokContextLimit(alias); value > 0 {
+			return value
+		}
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(provider)), "grok") {
+		for _, alias := range aliases {
+			if strings.EqualFold(strings.TrimSpace(alias), "kun") {
+				return 500000
+			}
+		}
+	}
+	return 0
+}
+
+func grokContextLimit(value string) int64 {
+	alias := normalizeModelAlias(value)
+	switch {
+	case grok46Pattern.MatchString(alias):
+		return 500000
+	case grok43Or420Pattern.MatchString(alias):
+		return 1000000
+	case strings.HasPrefix(alias, "grok"):
+		return 256000
+	default:
+		return 0
+	}
+}
+
+func lastPathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.LastIndexAny(value, "/"); idx >= 0 && idx+1 < len(value) {
+		return value[idx+1:]
+	}
+	return ""
+}
+
+func normalizeModelAlias(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func parseVariants(value any) map[string]any {

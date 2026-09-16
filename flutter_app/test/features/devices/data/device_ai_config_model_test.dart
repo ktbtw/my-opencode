@@ -131,4 +131,174 @@ void main() {
       expect(config.apiMode, 'chat');
     });
   });
+
+  group('DeviceAIModelInfo context window', () {
+    test('parses nested limit.context for grok aliases', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+        'limit': {'context': 500000},
+      });
+
+      expect(model.contextLimit, 500000);
+      expect(model.toJson()['context_limit'], 500000);
+    });
+
+    test('parses explicit context_limit', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'grok-4.6',
+        'context_limit': 500000,
+      });
+
+      expect(model.contextLimit, 500000);
+    });
+
+    test('infers grok subscription Kun context when fields are missing', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+      });
+
+      expect(model.contextLimit, 500000);
+      expect(model.toJson()['context_limit'], 500000);
+    });
+
+    test('does not infer Kun context for unrelated providers', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'owned_by': 'custom',
+      });
+
+      expect(model.contextLimit, isNull);
+    });
+
+    test('infers Kun context from provider id when owned_by is missing', () {
+      final provider = DeviceAIProviderInfo.fromJson({
+        'id': '订阅grok',
+        'models': [
+          {'id': 'Kun', 'name': 'Kun'},
+        ],
+      });
+
+      expect(provider.models.single.ownedBy, '订阅grok');
+      expect(provider.models.single.contextLimit, 500000);
+    });
+
+    test('infers Kun window from saved grok config shape', () {
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'Kun',
+        'name': 'Kun',
+        'owned_by': '订阅grok',
+        'reasoning': true,
+        'modalities': {
+          'input': ['text', 'image', 'video'],
+          'output': ['text'],
+        },
+        'variants': {
+          'high': {'reasoningEffort': 'high'},
+        },
+        'x-operit-thinking': {
+          'control': 'effort',
+          'override_enabled': true,
+          'protocol': 'custom',
+          'source': 'manual',
+          'supported': true,
+        },
+      });
+
+      expect(model.contextLimit, 500000);
+      expect(formatContextWindow(model.contextLimit), '500k 窗口');
+    });
+
+    test('infers Kun window from sparse device config payload', () {
+      final config = DeviceAIConfigInfo.fromJson({
+        'exists': true,
+        'provider': '订阅grok',
+        'providers': [
+          {
+            'id': '订阅grok',
+            'models': [
+              {'id': 'Kun', 'name': 'Kun'},
+              {'id': 'deepseek-v4.1-flash', 'name': 'deepseek-v4.1-flash'},
+            ],
+          },
+        ],
+      });
+
+      expect(config.providers.single.models.first.contextLimit, 500000);
+      expect(config.providers.single.models.last.contextLimit, isNull);
+      expect(
+        formatContextWindow(config.providers.single.models.first.contextLimit),
+        '500k 窗口',
+      );
+      expect(
+        formatContextWindow(config.providers.single.models.last.contextLimit),
+        '窗口未知',
+      );
+    });
+  });
+
+  group('formatContextWindow', () {
+    test('formats known grok limits', () {
+      expect(formatContextWindow(500000), '500k 窗口');
+      expect(formatContextWindow(256000), '256k 窗口');
+      expect(formatContextWindow(null), '窗口未知');
+      expect(formatContextWindow(0), '窗口未知');
+    });
+  });
+
+  group('matchDeviceAIModel', () {
+    test('matches qualified grok Kun refs to the local model id', () {
+      final models = [
+        const DeviceAIModelInfo(id: 'Kun', name: 'Kun', ownedBy: '订阅grok'),
+        const DeviceAIModelInfo(
+          id: 'deepseek-v4.1-flash',
+          name: 'deepseek-v4.1-flash',
+          ownedBy: '订阅grok',
+        ),
+      ];
+
+      expect(matchDeviceAIModel(models, 'Kun')?.id, 'Kun');
+      expect(matchDeviceAIModel(models, '订阅grok/Kun')?.id, 'Kun');
+      expect(
+        matchDeviceAIModel(models, 'deepseek-v4.1-flash')?.id,
+        'deepseek-v4.1-flash',
+      );
+      expect(matchDeviceAIModel(models, ''), isNull);
+    });
+  });
+
+  group('defaultModelLabel', () {
+    test('appends inferred Kun window for grok providers', () {
+      final provider = DeviceAIProviderInfo.fromJson({
+        'id': '订阅grok',
+        'models': [
+          {'id': 'Kun', 'name': 'Kun'},
+          {'id': 'deepseek-v4.1-flash', 'name': 'deepseek-v4.1-flash'},
+        ],
+      });
+
+      expect(
+        defaultModelLabel(models: provider.models, currentModel: 'Kun'),
+        'Kun · 500k 窗口',
+      );
+      expect(
+        defaultModelLabel(models: provider.models, currentModel: '订阅grok/Kun'),
+        'Kun · 500k 窗口',
+      );
+      expect(
+        defaultModelLabel(
+          models: provider.models,
+          currentModel: 'deepseek-v4.1-flash',
+        ),
+        'deepseek-v4.1-flash',
+      );
+      expect(
+        defaultModelLabel(models: provider.models, currentModel: ''),
+        '未设置',
+      );
+    });
+  });
 }

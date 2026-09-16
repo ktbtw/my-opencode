@@ -2905,10 +2905,171 @@ func TestLauncherModelsIncludesAllProviders(t *testing.T) {
 	if _, ok := models["grok-4"].(map[string]any); !ok {
 		t.Fatalf("expected grok model entry, got %#v", models)
 	}
+	grokEntry := models["grok-4"].(map[string]any)
+	if grokEntry["context_limit"] != int64(256000) {
+		t.Fatalf("expected grok-4 inferred context, got %#v", grokEntry["context_limit"])
+	}
 	firstModels := all[0]["models"].(map[string]any)
 	gptEntry := firstModels["gpt-5.4"].(map[string]any)
 	if _, ok := gptEntry["variants"]; ok {
 		t.Fatalf("expected gpt model without explicit variants to stay empty, got %#v", gptEntry["variants"])
+	}
+}
+
+func TestLauncherModelsInfersKunContextForGrokProvider(t *testing.T) {
+	payload := launcherModels(&model.DeviceAIConfigPreview{
+		Provider: "订阅grok",
+		Model:    "Kun",
+		Providers: []model.DeviceAIProvider{{
+			ID: "订阅grok",
+			Models: []model.DeviceAIModel{
+				{ID: "Kun", Name: "Kun"},
+				{ID: "deepseek-v4.1-flash", Name: "deepseek-v4.1-flash"},
+			},
+		}},
+	})
+	all, ok := payload["all"].([]map[string]any)
+	if !ok || len(all) != 1 {
+		t.Fatalf("expected one provider payload, got %#v", payload["all"])
+	}
+	models, ok := all[0]["models"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected provider models map, got %#v", all[0]["models"])
+	}
+	kun, ok := models["Kun"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected Kun entry, got %#v", models)
+	}
+	if kun["context_limit"] != int64(500000) {
+		t.Fatalf("expected inferred Kun context, got %#v", kun["context_limit"])
+	}
+	limit, ok := kun["limit"].(map[string]any)
+	if !ok || limit["context"] != int64(500000) {
+		t.Fatalf("expected inferred Kun limit.context, got %#v", kun["limit"])
+	}
+	deepseek, ok := models["deepseek-v4.1-flash"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected deepseek entry, got %#v", models)
+	}
+	if _, exists := deepseek["context_limit"]; exists {
+		t.Fatalf("expected unrelated model to stay empty, got %#v", deepseek["context_limit"])
+	}
+}
+
+func TestNormalizeDeviceAIModelsInfersKunContext(t *testing.T) {
+	got := normalizeDeviceAIModels("订阅grok", []model.DeviceAIModel{
+		{ID: "Kun", Name: "Kun"},
+		{ID: "deepseek-v4.1-flash", Name: "deepseek-v4.1-flash"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 models, got %+v", got)
+	}
+	if got[0].Owned != "订阅grok" || got[0].Context != 500000 {
+		t.Fatalf("expected inferred Kun context, got %+v", got[0])
+	}
+	if got[1].Context != 0 {
+		t.Fatalf("expected unrelated model to stay empty, got %+v", got[1])
+	}
+
+	unrelated := normalizeDeviceAIModels("custom", []model.DeviceAIModel{{ID: "Kun", Name: "Kun"}})
+	if len(unrelated) != 1 || unrelated[0].Context != 0 {
+		t.Fatalf("expected unrelated Kun to stay empty, got %+v", unrelated)
+	}
+}
+
+func TestGetDeviceAIConfigInfersKunContextBeforeReturning(t *testing.T) {
+	mem := store.NewMemory(nil)
+	authManager := auth.NewManager(time.Hour)
+	b := broker.New()
+	api := New(
+		mem,
+		b,
+		authManager,
+		nil,
+		nil,
+		nil,
+		nil,
+		func(_ context.Context, _ int64, _, _, envType string, _ any) (model.DeviceAIConfigResultPayload, error) {
+			if envType != "device.ai_config.get" {
+				t.Fatalf("unexpected ai config env type %s", envType)
+			}
+			return model.DeviceAIConfigResultPayload{
+				Action:  "get",
+				Success: true,
+				Config: &model.DeviceAIConfigPreview{
+					Provider: "订阅grok",
+					Model:    "Kun",
+					Providers: []model.DeviceAIProvider{{
+						ID: "订阅grok",
+						Models: []model.DeviceAIModel{
+							{ID: "Kun", Name: "Kun"},
+							{ID: "deepseek-v4.1-flash", Name: "deepseek-v4.1-flash"},
+						},
+					}},
+				},
+			}, nil
+		},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	operator := model.Operator{ID: 1, Username: "tester"}
+	token, err := authManager.Issue(operator)
+	if err != nil {
+		t.Fatalf("issue token: %v", err)
+	}
+	b.Add(nil, model.HelloPayload{
+		AgentID:   "launcher:m_online",
+		MachineID: "m_online",
+		Hostname:  "MacBook",
+		Kind:      "launcher",
+		Version:   "launcher-0.1.0",
+	}, operator.ID)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/devices/m_online/ai-config", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, &chi.Context{
+		URLParams: chi.RouteParams{Keys: []string{"machineID"}, Values: []string{"m_online"}},
+	}))
+	rr := httptest.NewRecorder()
+	api.GetDeviceAIConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var payload model.DeviceAIConfigResultPayload
+	if err := json.NewDecoder(rr.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Config == nil || len(payload.Config.Providers) != 1 {
+		t.Fatalf("expected grok provider in response, got %+v", payload.Config)
+	}
+	models := payload.Config.Providers[0].Models
+	if len(models) != 2 || models[0].ID != "Kun" || models[0].Context != 500000 {
+		t.Fatalf("expected inferred Kun context in get response, got %+v", models)
+	}
+	if models[1].Context != 0 {
+		t.Fatalf("expected unrelated model to stay empty, got %+v", models[1])
+	}
+
+	cache, ok := b.GetModelCache(operator.ID, "m_online")
+	if !ok || cache.Payload == nil {
+		t.Fatalf("expected model cache after get")
+	}
+	all, ok := cache.Payload["all"].([]map[string]any)
+	if !ok || len(all) != 1 {
+		t.Fatalf("expected cached provider payload, got %#v", cache.Payload["all"])
+	}
+	cachedModels, ok := all[0]["models"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected cached models map, got %#v", all[0]["models"])
+	}
+	kun, ok := cachedModels["Kun"].(map[string]any)
+	if !ok || kun["context_limit"] != int64(500000) {
+		t.Fatalf("expected cached Kun context, got %#v", cachedModels["Kun"])
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -2441,6 +2442,7 @@ func (a *API) GetDeviceAIConfig(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	enrichDeviceAIConfigResult(&result)
 	a.updateLauncherModelCache(operator.ID, machineID, result)
 	write(w, http.StatusOK, result)
 }
@@ -2481,13 +2483,14 @@ func (a *API) ListDeviceAIModels(w http.ResponseWriter, r *http.Request) {
 			APIKey:     strings.TrimSpace(req.APIKey),
 			APIMode:    normalizeDeviceAIAPIMode(req.APIMode),
 			Model:      strings.TrimSpace(req.Model),
-			Models:     normalizeDeviceAIModels(req.Models),
+			Models:     normalizeDeviceAIModels(strings.TrimSpace(req.Provider), req.Models),
 		},
 	})
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	enrichDeviceAIConfigResult(&result)
 	a.updateLauncherModelCache(operator.ID, machineID, result)
 	write(w, http.StatusOK, result)
 }
@@ -2529,13 +2532,14 @@ func (a *API) SaveDeviceAIConfig(w http.ResponseWriter, r *http.Request) {
 			APIKey:     strings.TrimSpace(req.APIKey),
 			APIMode:    normalizeDeviceAIAPIMode(req.APIMode),
 			Model:      strings.TrimSpace(req.Model),
-			Models:     normalizeDeviceAIModels(req.Models),
+			Models:     normalizeDeviceAIModels(strings.TrimSpace(req.Provider), req.Models),
 		},
 	})
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	enrichDeviceAIConfigResult(&result)
 	a.updateLauncherModelCache(operator.ID, machineID, result)
 	write(w, http.StatusOK, result)
 }
@@ -2570,6 +2574,7 @@ func (a *API) SaveDeviceAIConfigText(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	enrichDeviceAIConfigResult(&result)
 	a.updateLauncherModelCache(operator.ID, machineID, result)
 	write(w, http.StatusOK, result)
 }
@@ -2604,6 +2609,7 @@ func (a *API) ClearDeviceAIProvider(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	enrichDeviceAIConfigResult(&result)
 	a.updateLauncherModelCache(operator.ID, machineID, result)
 	write(w, http.StatusOK, result)
 }
@@ -4476,7 +4482,28 @@ func (a *API) deviceLauncherAgentWithCapability(operatorID int64, machineID, cap
 	return "", fmt.Errorf("设备 launcher 不支持 %s", capability)
 }
 
-func normalizeDeviceAIModels(items []model.DeviceAIModel) []model.DeviceAIModel {
+func enrichDeviceAIConfigResult(result *model.DeviceAIConfigResultPayload) {
+	if result == nil || result.Config == nil {
+		return
+	}
+	enrichDeviceAIConfigPreview(result.Config)
+}
+
+func enrichDeviceAIConfigPreview(cfg *model.DeviceAIConfigPreview) {
+	if cfg == nil {
+		return
+	}
+	cfg.Models = normalizeDeviceAIModels(cfg.Provider, cfg.Models)
+	for i := range cfg.Providers {
+		providerID := strings.TrimSpace(cfg.Providers[i].ID)
+		if providerID == "" {
+			providerID = strings.TrimSpace(cfg.Provider)
+		}
+		cfg.Providers[i].Models = normalizeDeviceAIModels(providerID, cfg.Providers[i].Models)
+	}
+}
+
+func normalizeDeviceAIModels(provider string, items []model.DeviceAIModel) []model.DeviceAIModel {
 	if len(items) == 0 {
 		return nil
 	}
@@ -4492,6 +4519,12 @@ func normalizeDeviceAIModels(items []model.DeviceAIModel) []model.DeviceAIModel 
 			item.Name = id
 		}
 		item.Owned = strings.TrimSpace(item.Owned)
+		if item.Owned == "" {
+			item.Owned = strings.TrimSpace(provider)
+		}
+		// 供应商返回 > 手填 > 预设推断。后端只做兜底，优先值以 launcher 回传为准。
+		item.Context = firstPositiveLimit(item.Context, item.ManualContext, inferGrokContextLimit(item.Owned, item.ID, item.Name))
+		item.Output = firstPositiveLimit(item.Output, item.ManualOutput)
 		if item.Thinking != nil {
 			item.Thinking.Source = strings.TrimSpace(item.Thinking.Source)
 			item.Thinking.Control = strings.TrimSpace(item.Thinking.Control)
@@ -4536,6 +4569,59 @@ func isDeviceAIGPTModel(id string) bool {
 		id = id[strings.LastIndex(id, "/")+1:]
 	}
 	return strings.HasPrefix(id, "gpt") || strings.HasPrefix(id, "chatgpt")
+}
+
+var (
+	grok46Pattern      = regexp.MustCompile(`^grok[-_.]?4[-_.]?[56](?:$|[-_.])`)
+	grok43Or420Pattern = regexp.MustCompile(`^grok[-_.]?4[-_.]?(?:3|20)(?:$|[-_.])`)
+)
+
+func inferGrokContextLimit(provider, modelID, modelName string) int64 {
+	aliases := []string{modelID, modelName}
+	if last := lastPathSegment(modelID); last != "" {
+		aliases = append(aliases, last)
+	}
+	if last := lastPathSegment(modelName); last != "" {
+		aliases = append(aliases, last)
+	}
+	for _, alias := range aliases {
+		if value := grokContextLimit(alias); value > 0 {
+			return value
+		}
+	}
+	if strings.Contains(strings.ToLower(strings.TrimSpace(provider)), "grok") {
+		for _, alias := range aliases {
+			if strings.EqualFold(strings.TrimSpace(alias), "kun") {
+				return 500000
+			}
+		}
+	}
+	return 0
+}
+
+func grokContextLimit(value string) int64 {
+	alias := strings.ToLower(strings.TrimSpace(value))
+	switch {
+	case grok46Pattern.MatchString(alias):
+		return 500000
+	case grok43Or420Pattern.MatchString(alias):
+		return 1000000
+	case strings.HasPrefix(alias, "grok"):
+		return 256000
+	default:
+		return 0
+	}
+}
+
+func lastPathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(value, "/"); idx >= 0 && idx+1 < len(value) {
+		return value[idx+1:]
+	}
+	return ""
 }
 
 func deviceAIModelIDs(models []model.DeviceAIModel) []string {
@@ -4588,10 +4674,28 @@ func launcherModels(cfg *model.DeviceAIConfigPreview) map[string]any {
 				"tool_call":   true,
 				"temperature": true,
 			}
-			if item.Context > 0 {
-				entry["context_limit"] = item.Context
-				entry["limit"] = map[string]any{
-					"context": item.Context,
+			contextLimit := item.Context
+			if contextLimit <= 0 {
+				owned := strings.TrimSpace(item.Owned)
+				if owned == "" {
+					owned = providerID
+				}
+				contextLimit = inferGrokContextLimit(owned, id, name)
+			}
+			if contextLimit > 0 || item.Output > 0 {
+				limit := map[string]any{}
+				if contextLimit > 0 {
+					limit["context"] = contextLimit
+				}
+				if item.Output > 0 {
+					limit["output"] = item.Output
+				}
+				entry["limit"] = limit
+				if contextLimit > 0 {
+					entry["context_limit"] = contextLimit
+				}
+				if item.Output > 0 {
+					entry["output_limit"] = item.Output
 				}
 			}
 			if modalities := normalizeModalities(item.Modalities); modalities != nil {
@@ -4648,6 +4752,15 @@ func normalizeModalities(value *model.DeviceAIModalities) *model.DeviceAIModalit
 		return nil
 	}
 	return &model.DeviceAIModalities{Input: input, Output: output}
+}
+
+func firstPositiveLimit(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func compactStrings(items []string) []string {
@@ -4714,6 +4827,7 @@ func (a *API) fetchLauncherModels(ctx context.Context, operatorID int64, machine
 		}
 		return nil, errors.New("launcher 未返回模型配置")
 	}
+	enrichDeviceAIConfigResult(&result)
 	payload := launcherModels(result.Config)
 	a.broker.SetModelCache(operatorID, machineID, payload)
 	return payload, nil

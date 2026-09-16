@@ -1,6 +1,7 @@
 package aiconfig
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -203,6 +204,50 @@ func TestLoadReadsProviderAPIWhenOptionsBaseURLIsMissing(t *testing.T) {
 	}
 }
 
+func TestLoadInfersKunContextFromSavedGrokConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := filepath.Join(os.Getenv("HOME"), ".config", "opencode")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := `{
+  "provider": {
+    "订阅grok": {
+      "options": {
+        "baseURL": "https://www.mcgrox.top/v1",
+        "apiKey": "sk-test"
+      },
+      "models": {
+        "Kun": {"name": "Kun"},
+        "deepseek-v4.1-flash": {"name": "deepseek-v4.1-flash"}
+      }
+    }
+  },
+  "model": "订阅grok/Kun"
+}`
+	if err := os.WriteFile(filepath.Join(root, "opencode.json"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	info, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if info.Provider != "订阅grok" || info.Model != "Kun" {
+		t.Fatalf("expected saved grok provider and Kun model, got %+v", info)
+	}
+	byID := map[string]model.DeviceAIModelInfo{}
+	for _, item := range info.Models {
+		byID[item.ID] = item
+	}
+	if byID["Kun"].Context != 500000 {
+		t.Fatalf("expected inferred Kun context from saved config, got %+v", byID["Kun"])
+	}
+	if byID["deepseek-v4.1-flash"].Context != 0 {
+		t.Fatalf("expected unrelated saved model to stay empty, got %+v", byID["deepseek-v4.1-flash"])
+	}
+}
+
 func TestSaveWritesIntoOpencodeGlobalConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -268,6 +313,83 @@ func TestSaveWritesIntoOpencodeGlobalConfig(t *testing.T) {
 	}
 	if info.APIMode != "responses" {
 		t.Fatalf("expected returned api mode responses, got %s", info.APIMode)
+	}
+}
+
+func TestSaveWritesInferredKunContext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	info, err := Save(model.DeviceAIConfigInfo{
+		Provider:     "订阅grok",
+		BaseURL:      "https://www.mcgrox.top/v1",
+		APIKeyMasked: "sk-test",
+		APIMode:      "responses",
+		Model:        "Kun",
+		Models: []model.DeviceAIModelInfo{{
+			ID:      "Kun",
+			Name:    "Kun",
+			OwnedBy: "订阅grok",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if len(info.Models) != 1 || info.Models[0].Context != 500000 {
+		t.Fatalf("expected saved Kun context, got %+v", info.Models)
+	}
+
+	path, err := Path()
+	if err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		`"Kun": {`,
+		`"context": 500000`,
+		`"context_limit": 500000`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected saved config to contain %s, got %s", expected, text)
+		}
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load saved config: %v", err)
+	}
+	if len(loaded.Models) != 1 || loaded.Models[0].ID != "Kun" || loaded.Models[0].Context != 500000 {
+		t.Fatalf("expected loaded Kun context to persist, got %+v", loaded.Models)
+	}
+}
+
+func TestSaveAcceptsFlutterContextLimitPayload(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var item model.DeviceAIModelInfo
+	if err := json.Unmarshal([]byte(`{"id":"Kun","name":"Kun","owned_by":"订阅grok","context_limit":500000}`), &item); err != nil {
+		t.Fatalf("unmarshal flutter payload: %v", err)
+	}
+	if item.Context != 500000 {
+		t.Fatalf("expected flutter context_limit to decode, got %+v", item)
+	}
+
+	info, err := Save(model.DeviceAIConfigInfo{
+		Provider:     "订阅grok",
+		BaseURL:      "https://www.mcgrox.top/v1",
+		APIKeyMasked: "sk-test",
+		APIMode:      "responses",
+		Model:        "Kun",
+		Models:       []model.DeviceAIModelInfo{item},
+	})
+	if err != nil {
+		t.Fatalf("save flutter payload: %v", err)
+	}
+	if len(info.Models) != 1 || info.Models[0].Context != 500000 {
+		t.Fatalf("expected saved flutter Kun context, got %+v", info.Models)
 	}
 }
 
@@ -784,6 +906,163 @@ func TestParseModelsOnlyUsesExplicitContextLimit(t *testing.T) {
 	}
 }
 
+func TestInferContextLimitForGrokAndKun(t *testing.T) {
+	if got := inferContextLimit("订阅grok", "Kun", "Kun"); got != 500000 {
+		t.Fatalf("expected grok subscription Kun context, got %d", got)
+	}
+	if got := inferContextLimit("custom", "Kun", "Kun"); got != 0 {
+		t.Fatalf("expected unrelated Kun to stay empty, got %d", got)
+	}
+	if got := inferContextLimit("北洛grok", "grok-4.6", "grok-4.6"); got != 500000 {
+		t.Fatalf("expected grok-4.6 context, got %d", got)
+	}
+	if got := inferContextLimit("custom", "gpt-5.5", "gpt-5.5"); got != 0 {
+		t.Fatalf("expected gpt-5.5 without explicit context to stay empty, got %d", got)
+	}
+}
+
+func TestParseModelsInfersGrokContextLimit(t *testing.T) {
+	models := parseModels(map[string]any{
+		"Kun": map[string]any{"name": "Kun"},
+	}, "订阅grok")
+	if len(models) != 1 || models[0].Context != 500000 {
+		t.Fatalf("expected inferred Kun context, got %+v", models)
+	}
+	unrelated := parseModels(map[string]any{
+		"Kun": map[string]any{"name": "Kun"},
+	}, "custom")
+	if len(unrelated) != 1 || unrelated[0].Context != 0 {
+		t.Fatalf("expected unrelated Kun context to stay empty, got %+v", unrelated)
+	}
+}
+
+func TestParseInfoInfersKunContextFromRealSavedGrokConfig(t *testing.T) {
+	info, err := parseInfo("/tmp/opencode.json", `{
+  "provider": {
+    "订阅grok": {
+      "api": "https://www.mcgrox.top/v1",
+      "models": {
+        "Kun": {
+          "modalities": {
+            "input": ["text", "image", "video"],
+            "output": ["text"]
+          },
+          "name": "Kun",
+          "reasoning": true,
+          "variants": {
+            "high": {"reasoningEffort": "high"},
+            "low": {"reasoningEffort": "low"},
+            "max": {"reasoningEffort": "max"}
+          },
+          "variants_mode": "replace",
+          "x-operit-thinking": {
+            "control": "effort",
+            "override_enabled": true,
+            "protocol": "custom",
+            "source": "manual",
+            "supported": true
+          }
+        },
+        "deepseek-v4.1-flash": {
+          "name": "deepseek-v4.1-flash"
+        }
+      },
+      "name": "订阅grok",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "sk-test",
+        "apiMode": "responses",
+        "baseURL": "https://www.mcgrox.top/v1"
+      }
+    }
+  },
+  "model": "订阅grok/Kun"
+}`)
+	if err != nil {
+		t.Fatalf("parse info: %v", err)
+	}
+	if info.Provider != "订阅grok" || info.Model != "Kun" {
+		t.Fatalf("expected saved grok provider and Kun model, got %+v", info)
+	}
+	byID := map[string]model.DeviceAIModelInfo{}
+	for _, item := range info.Models {
+		byID[item.ID] = item
+	}
+	if byID["Kun"].Context != 500000 {
+		t.Fatalf("expected inferred Kun context from real saved grok config, got %+v", byID["Kun"])
+	}
+	if byID["deepseek-v4.1-flash"].Context != 0 {
+		t.Fatalf("expected unrelated saved model to stay empty, got %+v", byID["deepseek-v4.1-flash"])
+	}
+}
+
+func TestParseModelsInfersKunContextFromSavedGrokShape(t *testing.T) {
+	models := parseModels(map[string]any{
+		"Kun": map[string]any{
+			"name":      "Kun",
+			"reasoning": true,
+			"modalities": map[string]any{
+				"input":  []any{"text", "image", "video"},
+				"output": []any{"text"},
+			},
+			"variants": map[string]any{
+				"high": map[string]any{"reasoningEffort": "high"},
+			},
+			"x-operit-thinking": map[string]any{
+				"control":          "effort",
+				"override_enabled": true,
+				"protocol":         "custom",
+				"source":           "manual",
+				"supported":        true,
+			},
+		},
+		"deepseek-v4.1-flash": map[string]any{
+			"name": "deepseek-v4.1-flash",
+		},
+	}, "订阅grok")
+	byID := map[string]model.DeviceAIModelInfo{}
+	for _, item := range models {
+		byID[item.ID] = item
+	}
+	if byID["Kun"].Context != 500000 {
+		t.Fatalf("expected inferred Kun context from saved grok shape, got %+v", byID["Kun"])
+	}
+	if byID["deepseek-v4.1-flash"].Context != 0 {
+		t.Fatalf("expected unrelated saved model to stay empty, got %+v", byID["deepseek-v4.1-flash"])
+	}
+}
+
+func TestListModelsInfersKunContextFromSparseGrokCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"Kun","type":"model","display_name":"Kun","created_at":"2026-01-01T00:00:00Z"},{"id":"deepseek-v4.1-flash","type":"model","display_name":"deepseek-v4.1-flash","created_at":"2026-01-01T00:00:00Z"}]}`))
+	}))
+	defer server.Close()
+
+	models, err := ListModels(model.DeviceAIConfigInput{
+		Provider: "订阅grok",
+		BaseURL:  server.URL + "/v1",
+		APIKey:   "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("list models: %v", err)
+	}
+	byID := map[string]model.DeviceAIModelInfo{}
+	for _, item := range models {
+		byID[item.ID] = item
+	}
+	if byID["Kun"].Context != 500000 {
+		t.Fatalf("expected inferred Kun context from sparse catalog, got %+v", byID["Kun"])
+	}
+	if byID["deepseek-v4.1-flash"].Context != 0 {
+		t.Fatalf("expected unrelated catalog model to stay empty, got %+v", byID["deepseek-v4.1-flash"])
+	}
+}
+
 func TestMatchModalitiesInfersClaudeTestImageInput(t *testing.T) {
 	got := matchModalities("claude-test", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001", nil)
 	if got == nil {
@@ -1070,5 +1349,176 @@ func TestEnrichWithRuntimeProviderMetadataRejectsWrongProvider(t *testing.T) {
 	}
 	if len(got.Models[0].Variants) != 0 {
 		t.Fatalf("expected wrong provider not to merge variants, got %+v", got.Models[0].Variants)
+	}
+}
+
+func TestEnrichWithRuntimeProviderMetadataKeepsInferredKunContext(t *testing.T) {
+	info := &model.DeviceAIConfigInfo{
+		Provider: "订阅grok",
+		Models: []model.DeviceAIModelInfo{{
+			ID:      "Kun",
+			Name:    "Kun",
+			OwnedBy: "订阅grok",
+			Context: 500000,
+		}},
+		Providers: []model.DeviceAIProviderInfo{{
+			ID: "订阅grok",
+			Models: []model.DeviceAIModelInfo{{
+				ID:      "Kun",
+				Name:    "Kun",
+				OwnedBy: "订阅grok",
+				Context: 500000,
+			}},
+		}},
+	}
+
+	got := EnrichWithRuntimeProviderMetadata(info, RuntimeProviderMetadata{
+		Connected: []string{"订阅grok"},
+		All: []RuntimeProviderMetadataItem{{
+			ID: "订阅grok",
+			Models: map[string]RuntimeModelMetadata{
+				"Kun": {
+					ID:         "Kun",
+					ProviderID: "订阅grok",
+					Name:       "Kun",
+					Limit:      RuntimeModelLimit{Context: 0},
+				},
+			},
+		}},
+	})
+	if got.Models[0].Context != 500000 {
+		t.Fatalf("expected inferred Kun context to survive zero runtime limit, got %+v", got.Models[0])
+	}
+
+	zero := &model.DeviceAIConfigInfo{
+		Provider: "订阅grok",
+		Models: []model.DeviceAIModelInfo{{
+			ID:      "Kun",
+			Name:    "Kun",
+			OwnedBy: "订阅grok",
+		}},
+		Providers: []model.DeviceAIProviderInfo{{
+			ID: "订阅grok",
+			Models: []model.DeviceAIModelInfo{{
+				ID:      "Kun",
+				Name:    "Kun",
+				OwnedBy: "订阅grok",
+			}},
+		}},
+	}
+	gotZero := EnrichWithRuntimeProviderMetadata(zero, RuntimeProviderMetadata{
+		Connected: []string{"订阅grok"},
+		All: []RuntimeProviderMetadataItem{{
+			ID: "订阅grok",
+			Models: map[string]RuntimeModelMetadata{
+				"Kun": {
+					ID:         "Kun",
+					ProviderID: "订阅grok",
+					Name:       "Kun",
+					Limit:      RuntimeModelLimit{Context: 0},
+				},
+			},
+		}},
+	})
+	if gotZero.Models[0].Context != 500000 {
+		t.Fatalf("expected runtime zero Kun context to infer 500000, got %+v", gotZero.Models[0])
+	}
+}
+
+func TestParseModelsPriorityUpstreamManualPreset(t *testing.T) {
+	// 供应商返回优先：即使有手填值和预设推断，也以 upstream 为准。
+	upstreamWins := parseModels(map[string]any{
+		"Kun": map[string]any{
+			"name":                      "Kun",
+			"x-operit-upstream-context": 800000,
+			"x-operit-manual-context":   600000,
+		},
+	}, "订阅grok")
+	if upstreamWins[0].Context != 800000 {
+		t.Fatalf("expected upstream context to win, got %+v", upstreamWins[0])
+	}
+
+	// 没有供应商返回值时，手填值压过预设推断。
+	manualWins := parseModels(map[string]any{
+		"Kun": map[string]any{
+			"name":                    "Kun",
+			"x-operit-manual-context": 600000,
+		},
+	}, "订阅grok")
+	if manualWins[0].Context != 600000 {
+		t.Fatalf("expected manual context to win over preset, got %+v", manualWins[0])
+	}
+
+	// 两者都没有时，才回退到预设推断。
+	presetOnly := parseModels(map[string]any{
+		"Kun": map[string]any{"name": "Kun"},
+	}, "订阅grok")
+	if presetOnly[0].Context != 500000 {
+		t.Fatalf("expected preset inferred context, got %+v", presetOnly[0])
+	}
+}
+
+func TestParseModelsReadsOutputLimit(t *testing.T) {
+	models := parseModels(map[string]any{
+		"Kun": map[string]any{
+			"name":                   "Kun",
+			"x-operit-manual-output": 32000,
+		},
+	}, "订阅grok")
+	if models[0].Output != 32000 {
+		t.Fatalf("expected manual output limit, got %+v", models[0])
+	}
+
+	// 未配置输出上限时保持 0，交给 runtime 处理。
+	noOutput := parseModels(map[string]any{
+		"Kun": map[string]any{"name": "Kun"},
+	}, "订阅grok")
+	if noOutput[0].Output != 0 {
+		t.Fatalf("expected empty output limit, got %+v", noOutput[0])
+	}
+}
+
+func TestSaveWritesOutputLimitAndManualMarkers(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	info, err := Save(model.DeviceAIConfigInfo{
+		Provider: "订阅grok",
+		Model:    "Kun",
+		Models: []model.DeviceAIModelInfo{{
+			ID:            "Kun",
+			Name:          "Kun",
+			OwnedBy:       "订阅grok",
+			ManualContext: 600000,
+			ManualOutput:  32000,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if len(info.Models) != 1 {
+		t.Fatalf("expected one model, got %+v", info.Models)
+	}
+	if info.Models[0].Context != 600000 || info.Models[0].Output != 32000 {
+		t.Fatalf("expected manual limits to persist, got %+v", info.Models[0])
+	}
+
+	path, err := Path()
+	if err != nil {
+		t.Fatalf("path: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		`"context": 600000`,
+		`"output": 32000`,
+		`"x-operit-manual-context": 600000`,
+		`"x-operit-manual-output": 32000`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected saved config to contain %s, got %s", expected, text)
+		}
 	}
 }

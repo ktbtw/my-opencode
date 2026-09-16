@@ -1,8 +1,28 @@
+import '../../../shared/grok_context_limit.dart';
+
+export '../../../shared/grok_context_limit.dart'
+    show formatContextWindow, inferGrokContextLimit;
+
 class DeviceAIModelInfo {
   final String id;
   final String name;
   final String ownedBy;
-  final int? contextLimit;
+
+  /// 供应商接口返回的窗口值，只读，优先级最高。
+  final int? upstreamContextLimit;
+
+  /// 供应商接口返回的输出上限，只读，优先级最高。
+  final int? upstreamOutputLimit;
+
+  /// 用户在界面上手填的窗口值。
+  final int? manualContextLimit;
+
+  /// 用户在界面上手填的输出上限。
+  final int? manualOutputLimit;
+
+  /// 按模型名推断出来的窗口值，优先级最低。
+  final int? inferredContextLimit;
+
   final Map<String, dynamic> variants;
   final DeviceAIThinkingInfo? thinking;
   final List<String> inputModalities;
@@ -12,12 +32,23 @@ class DeviceAIModelInfo {
     required this.id,
     required this.name,
     required this.ownedBy,
-    this.contextLimit,
+    this.upstreamContextLimit,
+    this.upstreamOutputLimit,
+    this.manualContextLimit,
+    this.manualOutputLimit,
+    this.inferredContextLimit,
     this.variants = const {},
     this.thinking,
     this.inputModalities = const [],
     this.outputModalities = const [],
   });
+
+  /// 生效的窗口值：供应商返回 > 手填 > 预设推断。
+  int? get contextLimit =>
+      _firstPositive([upstreamContextLimit, manualContextLimit, inferredContextLimit]);
+
+  /// 生效的输出上限：供应商返回 > 手填，留空交由 runtime 处理。
+  int? get outputLimit => _firstPositive([upstreamOutputLimit, manualOutputLimit]);
 
   factory DeviceAIModelInfo.fromJson(Map<String, dynamic> json) {
     final modalities = json['modalities'] as Map<String, dynamic>? ?? {};
@@ -25,11 +56,34 @@ class DeviceAIModelInfo {
       json['variants'] as Map<String, dynamic>? ?? const {},
     );
     final thinkingJson = json['thinking'];
+    final id = json['id'] as String? ?? '';
+    final name = json['name'] as String? ?? id;
+    final ownedBy = json['owned_by'] as String? ?? '';
+    final limit = json['limit'] as Map<String, dynamic>?;
+    // 供应商返回值优先；没有来源标记时把 limit 当作供应商值。
+    final upstreamContext =
+        _positiveInt(json['upstream_context_limit']) ??
+        _positiveInt(json['context_limit']) ??
+        _positiveInt(limit?['context']);
+    final upstreamOutput =
+        _positiveInt(json['upstream_output_limit']) ??
+        _positiveInt(json['output_limit']) ??
+        _positiveInt(limit?['output']);
+    final manualContext = _positiveInt(json['manual_context_limit']);
+    final manualOutput = _positiveInt(json['manual_output_limit']);
     return DeviceAIModelInfo(
-      id: json['id'] as String? ?? '',
-      name: json['name'] as String? ?? json['id'] as String? ?? '',
-      ownedBy: json['owned_by'] as String? ?? '',
-      contextLimit: _readContextLimit(json),
+      id: id,
+      name: name,
+      ownedBy: ownedBy,
+      upstreamContextLimit: upstreamContext,
+      upstreamOutputLimit: upstreamOutput,
+      manualContextLimit: manualContext,
+      manualOutputLimit: manualOutput,
+      inferredContextLimit: inferGrokContextLimit(
+        provider: ownedBy,
+        modelID: id,
+        modelName: name,
+      ),
       variants: variants,
       thinking: thinkingJson is Map
           ? DeviceAIThinkingInfo.fromJson(
@@ -56,9 +110,36 @@ class DeviceAIModelInfo {
     if (ownedBy.isNotEmpty) {
       data['owned_by'] = ownedBy;
     }
-    final limit = contextLimit;
-    if (limit != null && limit > 0) {
-      data['context_limit'] = limit;
+    final upstreamContext = upstreamContextLimit;
+    final upstreamOutput = upstreamOutputLimit;
+    final manualContext = manualContextLimit;
+    final manualOutput = manualOutputLimit;
+    // 带上来源标记，刷新时才能保持 供应商返回 > 手填 > 预设 的优先级。
+    if (manualContext != null && manualContext > 0) {
+      data['manual_context_limit'] = manualContext;
+    }
+    if (manualOutput != null && manualOutput > 0) {
+      data['manual_output_limit'] = manualOutput;
+    }
+    if (upstreamContext != null && upstreamContext > 0) {
+      data['upstream_context_limit'] = upstreamContext;
+    }
+    if (upstreamOutput != null && upstreamOutput > 0) {
+      data['upstream_output_limit'] = upstreamOutput;
+    }
+    final effectiveContext = contextLimit;
+    if (effectiveContext != null && effectiveContext > 0) {
+      final limit = <String, dynamic>{'context': effectiveContext};
+      final effectiveOutput = outputLimit;
+      if (effectiveOutput != null && effectiveOutput > 0) {
+        limit['output'] = effectiveOutput;
+      }
+      data['context_limit'] = effectiveContext;
+      data['limit'] = limit;
+    }
+    final effectiveOutput = outputLimit;
+    if (effectiveOutput != null && effectiveOutput > 0) {
+      data['output_limit'] = effectiveOutput;
     }
     if (variants.isNotEmpty) {
       data['variants'] = variants;
@@ -79,7 +160,13 @@ class DeviceAIModelInfo {
     String? id,
     String? name,
     String? ownedBy,
-    int? contextLimit,
+    int? upstreamContextLimit,
+    int? upstreamOutputLimit,
+    int? manualContextLimit,
+    int? manualOutputLimit,
+    int? inferredContextLimit,
+    bool clearManualContextLimit = false,
+    bool clearManualOutputLimit = false,
     Map<String, dynamic>? variants,
     DeviceAIThinkingInfo? thinking,
     List<String>? inputModalities,
@@ -89,13 +176,28 @@ class DeviceAIModelInfo {
       id: id ?? this.id,
       name: name ?? this.name,
       ownedBy: ownedBy ?? this.ownedBy,
-      contextLimit: contextLimit ?? this.contextLimit,
+      upstreamContextLimit: upstreamContextLimit ?? this.upstreamContextLimit,
+      upstreamOutputLimit: upstreamOutputLimit ?? this.upstreamOutputLimit,
+      manualContextLimit: clearManualContextLimit
+          ? null
+          : manualContextLimit ?? this.manualContextLimit,
+      manualOutputLimit: clearManualOutputLimit
+          ? null
+          : manualOutputLimit ?? this.manualOutputLimit,
+      inferredContextLimit: inferredContextLimit ?? this.inferredContextLimit,
       variants: variants ?? this.variants,
       thinking: thinking ?? this.thinking,
       inputModalities: inputModalities ?? this.inputModalities,
       outputModalities: outputModalities ?? this.outputModalities,
     );
   }
+}
+
+int? _firstPositive(List<int?> values) {
+  for (final value in values) {
+    if (value != null && value > 0) return value;
+  }
+  return null;
 }
 
 class DeviceAIThinkingInfo {
@@ -195,7 +297,13 @@ class DeviceAIProviderInfo {
       apiMode: _normalizeApiMode(json['api_mode'] as String?),
       models: (json['models'] as List<dynamic>? ?? [])
           .whereType<Map<String, dynamic>>()
-          .map(DeviceAIModelInfo.fromJson)
+          .map(
+            (item) => DeviceAIModelInfo.fromJson({
+              ...item,
+              if ((item['owned_by'] as String?)?.trim().isNotEmpty != true)
+                'owned_by': json['id'] as String? ?? '',
+            }),
+          )
           .toList(),
     );
   }
@@ -253,7 +361,13 @@ class DeviceAIConfigInfo {
       warning: json['warning'] as String? ?? '',
       models: (json['models'] as List<dynamic>? ?? [])
           .whereType<Map<String, dynamic>>()
-          .map(DeviceAIModelInfo.fromJson)
+          .map(
+            (item) => DeviceAIModelInfo.fromJson({
+              ...item,
+              if ((item['owned_by'] as String?)?.trim().isNotEmpty != true)
+                'owned_by': json['provider'] as String? ?? '',
+            }),
+          )
           .toList(),
       providers: (json['providers'] as List<dynamic>? ?? [])
           .whereType<Map<String, dynamic>>()
@@ -263,18 +377,47 @@ class DeviceAIConfigInfo {
   }
 }
 
+String defaultModelLabel({
+  required List<DeviceAIModelInfo> models,
+  required String currentModel,
+}) {
+  if (currentModel.isEmpty) return '未设置';
+  final match = matchDeviceAIModel(models, currentModel);
+  final window = formatContextWindow(match?.contextLimit);
+  if (window == '窗口未知') return currentModel;
+  return '${match?.id ?? currentModel} · $window';
+}
+
+DeviceAIModelInfo? matchDeviceAIModel(
+  List<DeviceAIModelInfo> models,
+  String currentModel,
+) {
+  final target = currentModel.trim();
+  if (target.isEmpty) return null;
+  for (final item in models) {
+    if (item.id == target || item.name == target) {
+      return item;
+    }
+  }
+  final alias = target.contains('/')
+      ? target.substring(target.lastIndexOf('/') + 1)
+      : target;
+  if (alias.isEmpty || alias == target) return null;
+  for (final item in models) {
+    if (item.id == alias || item.name == alias) {
+      return item;
+    }
+  }
+  return null;
+}
+
 String _normalizeApiMode(String? value) {
   return value?.trim().toLowerCase() == 'chat' ? 'chat' : 'responses';
 }
 
-int? _readContextLimit(Map<String, dynamic> json) {
-  final direct = _asInt(json['context_limit']) ?? _asInt(json['context']);
-  if (direct != null && direct > 0) {
-    return direct;
-  }
-  final limit = json['limit'] as Map<String, dynamic>?;
-  final nested = _asInt(limit?['context']);
-  return nested != null && nested > 0 ? nested : null;
+int? _positiveInt(Object? value) {
+  final parsed = _asInt(value);
+  return parsed != null && parsed > 0 ? parsed : null;
 }
 
 int? _asInt(Object? value) {

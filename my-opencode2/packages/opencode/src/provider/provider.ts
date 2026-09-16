@@ -178,8 +178,34 @@ function inferClaudeLimit(alias: string): InferredCapabilities["limit"] | undefi
   return undefined
 }
 
-function inferConfigModelCapabilities(modelID: string, modelName: string, apiNpm: string, existing?: Model) {
-  if (existing) return
+export function inferGrokLimit(alias: string, providerID = ""): InferredCapabilities["limit"] | undefined {
+  if (alias === "kun") {
+    return providerID.toLowerCase().includes("grok") ? { context: 500_000, output: 64_000 } : undefined
+  }
+  if (/^grok[-_.]?4[-_.]?[56](?:$|[-_.])/.test(alias)) {
+    return { context: 500_000, output: 64_000 }
+  }
+  if (/^grok[-_.]?4[-_.]?(?:3|20)(?:$|[-_.])/.test(alias)) {
+    return { context: 1_000_000, output: 64_000 }
+  }
+  if (/^grok(?:$|[-_.])/.test(alias)) {
+    return { context: 256_000, output: 64_000 }
+  }
+  return undefined
+}
+
+export function firstPositiveLimit(...values: Array<number | undefined>) {
+  return values.find((value) => typeof value === "number" && value > 0)
+}
+
+export function inferConfigModelCapabilities(
+  modelID: string,
+  modelName: string,
+  apiNpm: string,
+  existing?: Model,
+  providerID = "",
+) {
+  if ((existing?.limit.context ?? 0) > 0) return
   const label = `${modelID} ${modelName}`
   const lowerModelID = modelID.toLowerCase()
   const aliases = [
@@ -192,6 +218,8 @@ function inferConfigModelCapabilities(modelID: string, modelName: string, apiNpm
     .map(normalizeModelAlias)
   const isGptOrClaudeFamily = aliases.some((value) => modelAliasPrefixPattern.test(value))
   const isVisionFamily = aliases.some((value) => visionModelAliasPrefixPattern.test(value))
+  const grokLimit = aliases.map((alias) => inferGrokLimit(alias, providerID)).find((limit) => limit !== undefined)
+  const isGrokFamily = Boolean(grokLimit) || aliases.some((value) => value.startsWith("grok"))
   const isImageOutputModel = imageOutputModelPattern.test(label)
   const inferred: InferredCapabilities = {}
   if (isImageOutputModel) {
@@ -210,10 +238,14 @@ function inferConfigModelCapabilities(modelID: string, modelName: string, apiNpm
       aliases.map((alias) => inferGptLimit(alias) ?? inferClaudeLimit(alias)).find((limit) => limit !== undefined) ??
       inferred.limit
   }
-  if (!isImageOutputModel && isVisionFamily) {
+  if (!isImageOutputModel && (isVisionFamily || isGrokFamily)) {
     inferred.attachment = true
     inferred.input = { ...inferred.input, text: true, audio: false, image: true, video: false, pdf: false }
     inferred.output = { ...inferred.output, text: true, audio: false, image: false, video: false, pdf: false }
+    if (grokLimit) {
+      inferred.reasoning = true
+      inferred.limit = grokLimit
+    }
   }
   if (apiNpm === "@ai-sdk/openai-compatible" && lowerModelID.includes("deepseek")) {
     inferred.reasoning = true
@@ -1471,7 +1503,13 @@ export const layer = Layer.effect(
               apiID,
               name,
             })
-            const inferred = inferConfigModelCapabilities(model.id ?? modelID, name, apiNpm, existingModel)
+            const inferred = inferConfigModelCapabilities(
+              model.id ?? modelID,
+              name,
+              apiNpm,
+              existingModel,
+              providerID,
+            )
             const parsedModel: Model = {
               id: ModelID.make(modelID),
               api: {
@@ -1560,18 +1598,20 @@ export const layer = Layer.effect(
               options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
               limit: {
                 context:
-                  model.limit?.context ??
-                  existingModel?.limit?.context ??
-                  catalogModel?.limit.context ??
-                  inferred?.limit?.context ??
-                  0,
+                  firstPositiveLimit(
+                    model.limit?.context,
+                    existingModel?.limit?.context,
+                    catalogModel?.limit.context,
+                    inferred?.limit?.context,
+                  ) ?? 0,
                 input: model.limit?.input ?? existingModel?.limit?.input ?? inferred?.limit?.input,
                 output:
-                  model.limit?.output ??
-                  existingModel?.limit?.output ??
-                  catalogModel?.limit.output ??
-                  inferred?.limit?.output ??
-                  0,
+                  firstPositiveLimit(
+                    model.limit?.output,
+                    existingModel?.limit?.output,
+                    catalogModel?.limit.output,
+                    inferred?.limit?.output,
+                  ) ?? 0,
               },
               headers: mergeDeep(existingModel?.headers ?? {}, model.headers ?? {}),
               family: model.family ?? existingModel?.family ?? "",
