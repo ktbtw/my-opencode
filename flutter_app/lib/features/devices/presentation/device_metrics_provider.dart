@@ -31,8 +31,9 @@ Stream<DeviceMetrics> _deviceMetricsStream(String machineId) async* {
         final metrics = _metricsFromEvent(event.data, machineId);
         if (metrics != null) yield metrics;
       }
-      // 服务端正常关闭流，交由调用方的重连策略处理。
-      return;
+      // 服务端关闭连接（重启、网络切换）也要重连，
+      // 否则页面开着时指标推送会永久中断。
+      attempt += 1;
     } catch (error) {
       attempt += 1;
       unawaited(
@@ -41,9 +42,9 @@ Stream<DeviceMetrics> _deviceMetricsStream(String machineId) async* {
           data: {'machine_id': machineId, 'attempt': attempt},
         ),
       );
-      // 退避封顶 15 秒，避免设备长时间离线时空转。
-      await Future<void>.delayed(Duration(seconds: attempt.clamp(1, 15)));
     }
+    // 退避封顶 15 秒，避免设备离线或服务端不可达时空转。
+    await Future<void>.delayed(Duration(seconds: attempt.clamp(1, 15)));
   }
 }
 

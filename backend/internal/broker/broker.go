@@ -143,10 +143,15 @@ func (b *Broker) TouchDevice(dev *Device, currentTask string, metrics *model.Dev
 	}
 	agent := snapshot(current)
 	b.mu.Unlock()
-	// 指标变化也要广播，让已打开设备页的客户端实时更新。
-	if previousTask != currentTask || metricsChanged {
+	// 仅在任务状态真正变化时广播 agent 事件。
+	// 心跳本身（含指标）不应触发 agent.upsert：agent 状态没有变化，
+	// 每 15 秒重复推送同一份 agent 快照只是浪费带宽。
+	if previousTask != currentTask {
 		b.notifyUpsert(agent.OperatorID, agent)
 	}
+	// 指标走独立事件。每次心跳的指标都有变化（运行时长递增、
+	// 内存与 CPU 波动），因此不做等值比较，直接推送。
+	// 单设备每 15 秒约 400 字节，带宽开销可忽略。
 	if metricsChanged && metricsUpdate.MachineID != "" {
 		b.notifyMetrics(agent.OperatorID, metricsUpdate)
 	}
