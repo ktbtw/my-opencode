@@ -8399,7 +8399,7 @@ class _ModelSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = selectedModel?.selectorLabel ?? '默认模型';
+    final label = selectedModel?.modelID ?? '默认模型';
     return InkWell(
       onTap: () => _showModelPicker(context),
       borderRadius: AppRadius.smRadius,
@@ -9344,38 +9344,39 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                 child: Row(
                                   children: [
                                     Expanded(
-                                      child: Column(
+                                      child: Row(
                                         crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                            CrossAxisAlignment.baseline,
+                                        textBaseline:
+                                            TextBaseline.alphabetic,
                                         children: [
-                                          Text(
-                                            m.modelID,
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: isSelected
-                                                  ? FontWeight.w600
-                                                  : FontWeight.w400,
-                                              color: isSelected
-                                                  ? AppColors.primary
-                                                  : AppColors.textPrimary,
+                                          Flexible(
+                                            child: Text(
+                                              m.modelID,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: isSelected
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w400,
+                                                color: isSelected
+                                                    ? AppColors.primary
+                                                    : AppColors.textPrimary,
+                                              ),
                                             ),
                                           ),
-                                          if (m.contextWindowLabel != '窗口未知')
+                                          if (m.contextWindowShortLabel !=
+                                              '窗口未知') ...[
+                                            const SizedBox(width: 6),
                                             Text(
-                                              m.contextWindowLabel,
+                                              m.contextWindowShortLabel,
                                               style: const TextStyle(
                                                 fontSize: 11,
                                                 color: AppColors.textMuted,
                                               ),
                                             ),
-                                          if (m.name != m.modelID)
-                                            Text(
-                                              m.name,
-                                              style: const TextStyle(
-                                                fontSize: 11,
-                                                color: AppColors.textMuted,
-                                              ),
-                                            ),
+                                          ],
                                         ],
                                       ),
                                     ),

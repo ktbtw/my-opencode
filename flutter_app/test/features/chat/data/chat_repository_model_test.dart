@@ -90,9 +90,13 @@ void main() {
       final kunModel = models.singleWhere((m) => m.modelID == 'Kun');
       expect(kunModel.contextLimit, 500000);
       expect(kunModel.contextWindowLabel, '500k 窗口');
-      expect(kunModel.selectorLabel, 'Kun · 500k 窗口');
-      expect(textModel.selectorLabel, 'gpt-5.4 · 1050k 窗口');
-      expect(imageModel.selectorLabel, 'gpt-image-2 · 128k 窗口');
+      expect(textModel.contextWindowLabel, '1050k 窗口');
+      expect(imageModel.contextWindowLabel, '128k 窗口');
+
+      // 选择模型列表内只显示容量数字，不带“窗口”二字。
+      expect(kunModel.contextWindowShortLabel, '500k');
+      expect(textModel.contextWindowShortLabel, '1050k');
+      expect(imageModel.contextWindowShortLabel, '128k');
     },
   );
 

@@ -1666,9 +1666,11 @@ class ModelInfo {
 
   String get contextWindowLabel => formatContextWindow(contextLimit);
 
-  String get selectorLabel {
-    if (contextWindowLabel == '窗口未知') return modelID;
-    return '$modelID · $contextWindowLabel';
+  /// 选择模型列表内的紧凑展示：只保留容量数字，省略“窗口”二字。
+  /// 模型名右侧紧邻容量时，“窗口”属于冗余描述。
+  String get contextWindowShortLabel {
+    if (contextWindowLabel == '窗口未知') return contextWindowLabel;
+    return contextWindowLabel.replaceAll(' 窗口', '');
   }
 
   bool get supportsImageOutput =>
