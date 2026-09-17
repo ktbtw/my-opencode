@@ -938,7 +938,9 @@ fi
 if [ "$BUILD_FRONTEND" -eq 1 ]; then
   log_section "构建 Flutter Web"
   cd "$ROOT_DIR/flutter_app"
-  flutter build web --base-href / --dart-define=CHAT_CODEX_DEFAULT_BASE_URL="$PUBLIC_BASE"
+  # --pwa-strategy=none：不注册 Service Worker。控制台不需要离线能力，而 SW 会把
+  # 旧版页面壳缓存下来，发布新版本后老用户会一直拿到新旧混合的文件（白屏 / 启动报错）。
+  flutter build web --pwa-strategy=none --base-href / --dart-define=CHAT_CODEX_DEFAULT_BASE_URL="$PUBLIC_BASE"
   COPYFILE_DISABLE=1 bsdtar --no-xattrs --no-mac-metadata -C build/web -czf "$WEB_TAR_LOCAL" .
   if [ "$BUILD_MOBILE_APP" -eq 1 ]; then
     rm -f "$APK_LOCAL"
@@ -953,7 +955,7 @@ if [ "$BUILD_FRONTEND" -eq 1 ]; then
       build_macos_package
     fi
   fi
-  flutter build web --base-href /codex/ --dart-define=CHAT_CODEX_DEFAULT_BASE_URL="$PUBLIC_BASE"
+  flutter build web --pwa-strategy=none --base-href /codex/ --dart-define=CHAT_CODEX_DEFAULT_BASE_URL="$PUBLIC_BASE"
   COPYFILE_DISABLE=1 bsdtar --no-xattrs --no-mac-metadata -C build/web -czf "$WEB_CODEX_TAR_LOCAL" .
   ls -lh "$WEB_TAR_LOCAL"
   if [ "$BUILD_MOBILE_APP" -eq 1 ]; then

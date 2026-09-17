@@ -34,6 +34,26 @@
 </head>
 <body>
   <!--
+    清掉历史版本注册过的 Service Worker 与缓存：早先的构建带 PWA 缓存，发布新版后
+    浏览器可能继续用旧的页面壳，出现新旧文件混用而白屏或启动报错。现在构建已不再
+    注册 SW（--pwa-strategy=none），这里顺手把老注册与缓存清掉，让受影响的浏览器自愈。
+  -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        registrations.forEach(function (registration) {
+          registration.unregister();
+        });
+      });
+    }
+    if (window.caches && caches.keys) {
+      caches.keys().then(function (keys) {
+        keys.forEach(function (key) { caches.delete(key); });
+      });
+    }
+  </script>
+
+  <!--
     自带 CanvasKit：默认会去 www.gstatic.com 拉引擎文件，国内要么被拦要么很慢
     （实测走代理取 canvaskit.wasm 要十几秒），拉不到就是一直白屏。
     这里按 <base href> 拼出同源路径，两个 base（/ 与 /codex/）都成立，
