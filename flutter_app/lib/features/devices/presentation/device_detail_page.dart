@@ -1203,6 +1203,63 @@ class _ProjectMemoryLoadError extends StatelessWidget {
   }
 }
 
+/// 列表形态的配置入口：横向一行，图标 + 名称 + 指示箭头。
+///
+/// 行高按 44 的可点区域留，行之间用细分隔线而不是边框，避免在窄栏里堆出
+/// 一列方框（那是"卡片套卡片"的同一类问题）。
+class _DeviceEntryRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool showDivider;
+
+  const _DeviceEntryRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.showDivider = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: onTap,
+          borderRadius: AppRadius.smRadius,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            child: Row(
+              children: [
+                Icon(icon, size: 17, color: AppColors.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: AppColors.textMuted,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (showDivider) const Divider(height: 1),
+      ],
+    );
+  }
+}
+
 class _DeviceEntryButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1323,7 +1380,7 @@ String _formatDateTime(DateTime dt) {
 /// 设备配置入口的展示形态。
 /// inline：跟随所在卡片宽度，移动端横向滚动、宽屏两列（整页布局沿用）。
 /// grid：占满容器，移动端两列、宽屏三列（设备总览页使用）。
-enum _DeviceEntriesStyle { inline, grid }
+enum _DeviceEntriesStyle { inline, grid, list }
 
 /// 设备配置入口集合：AI / MCP / Skill / 环境变量 / Launcher / 项目记忆。
 class _DeviceEntries extends ConsumerWidget {
@@ -1367,10 +1424,29 @@ class _DeviceEntries extends ConsumerWidget {
       ),
     ];
 
+    if (style == _DeviceEntriesStyle.list) {
+      return _buildList(entries);
+    }
     if (style == _DeviceEntriesStyle.grid) {
       return _buildGrid(context, entries);
     }
     return _buildInline(context, entries);
+  }
+
+  /// 窄栏：横向列表行。方块控件在窄栏里会堆成一列方框，和统一面板的分区读法冲突。
+  Widget _buildList(List<_DeviceEntryButton> entries) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var index = 0; index < entries.length; index++)
+          _DeviceEntryRow(
+            icon: entries[index].icon,
+            label: entries[index].label,
+            onTap: entries[index].onTap,
+            showDivider: index != entries.length - 1,
+          ),
+      ],
+    );
   }
 
   /// 整页布局：移动端横向滚动，宽屏按容器宽度 1~2 列。
@@ -6859,10 +6935,10 @@ class _PagedSegmentTab extends StatelessWidget {
 /// 标题分组，而不是各套一层边框：叠四张卡片会把"同一台设备"读成四个互不相干
 /// 的面板，边框本身还会和内容抢注意力。
 ///
-/// 顺序即优先级，且在所有宽度下保持一致：先回答"这台设备现在怎么样"
-/// （身份、运行状态），再回答"占用了什么"（磁盘占用），最后才是"能做什么"
-/// （配置入口）。配置入口收尾横排，不做右侧窄栏：入口数量少、状态区很长，
-/// 并列会在窄栏下方空出一大块，反而把同一个面板读成两半。
+/// 分区按"回答什么问题"成栏，两栏长度接近：
+/// - 左栏只回答"这台设备现在怎么样"：身份 + 运行状态。
+/// - 右栏回答"占用了什么 + 能做什么"：磁盘占用 + 配置入口。
+/// - 移动端按同一顺序回落成单列，故事不变。
 class _PagedDeviceTab extends ConsumerWidget {
   final DeviceModel device;
 
@@ -6884,6 +6960,32 @@ class _PagedDeviceTab extends ConsumerWidget {
         .valueOrNull;
     final metrics = liveMetrics ?? device.metrics;
 
+    // 运行状态紧贴身份区：两者共同回答"这台设备现在怎么样"。
+    final statusColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _DeviceIdentitySection(device: device),
+        const SizedBox(height: 20),
+        DeviceRuntimePanel(
+          metrics: metrics,
+          deviceOnline: device.online,
+          embedded: true,
+        ),
+      ],
+    );
+    final resourceColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DeviceStoragePanel(
+          machineId: device.machineId,
+          deviceOnline: device.online,
+          embedded: true,
+        ),
+        const SizedBox(height: _bandGap),
+        _DeviceEntriesRail(device: device),
+      ],
+    );
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(padding),
       child: Center(
@@ -6891,26 +6993,27 @@ class _PagedDeviceTab extends ConsumerWidget {
           constraints: const BoxConstraints(maxWidth: _maxContentWidth),
           child: PanelCard(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _DeviceIdentitySection(device: device),
-                // 运行状态紧贴身份区：两者共同回答"这台设备现在怎么样"。
-                const SizedBox(height: 20),
-                DeviceRuntimePanel(
-                  metrics: metrics,
-                  deviceOnline: device.online,
-                  embedded: true,
-                ),
-                const SizedBox(height: _bandGap),
-                DeviceStoragePanel(
-                  machineId: device.machineId,
-                  deviceOnline: device.online,
-                  embedded: true,
-                ),
-                const SizedBox(height: _bandGap),
-                _DeviceEntriesRail(device: device),
-              ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth < AppBreakpoints.md) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      statusColumn,
+                      const SizedBox(height: _bandGap),
+                      resourceColumn,
+                    ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 6, child: statusColumn),
+                    const SizedBox(width: _bandGap),
+                    Expanded(flex: 4, child: resourceColumn),
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -7039,10 +7142,11 @@ class _OverviewFacts extends StatelessWidget {
   }
 }
 
-/// 配置入口区：统一面板的收尾分区，桌面端收成右侧窄栏。
+/// 配置入口区：右栏的收尾分区。
 ///
-/// 操作项排在状态之后，视觉上比状态区安静：进入设备页的人先看设备怎么样，
-/// 再决定要不要动配置。
+/// 操作项排在状态与占用之后，视觉上最安静：进入设备页的人先看设备怎么样，
+/// 再决定要不要动配置。用列表行而不是方块控件——窄栏里堆一列方框会把
+/// 统一面板重新读成一堆小卡片。
 class _DeviceEntriesRail extends StatelessWidget {
   final DeviceModel device;
 
@@ -7061,10 +7165,10 @@ class _DeviceEntriesRail extends StatelessWidget {
             color: AppColors.textPrimary,
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         _DeviceEntries(
           device: device,
-          style: _DeviceEntriesStyle.grid,
+          style: _DeviceEntriesStyle.list,
         ),
       ],
     );
