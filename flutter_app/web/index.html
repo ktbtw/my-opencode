@@ -33,6 +33,22 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+  <!--
+    自带 CanvasKit：默认会去 www.gstatic.com 拉引擎文件，国内要么被拦要么很慢
+    （实测走代理取 canvaskit.wasm 要十几秒），拉不到就是一直白屏。
+    这里按 <base href> 拼出同源路径，两个 base（/ 与 /codex/）都成立，
+    也避免深链路由下相对路径拼错。
+  -->
+  <script>
+    {{flutter_js}}
+    {{flutter_build_config}}
+    (function () {
+      var base = document.querySelector('base')?.getAttribute('href') || '/';
+      if (base.charAt(base.length - 1) !== '/') base += '/';
+      _flutter.loader.load({
+        config: { canvasKitBaseUrl: base + 'canvaskit' }
+      });
+    })();
+  </script>
 </body>
 </html>
