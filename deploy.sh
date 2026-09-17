@@ -1324,15 +1324,31 @@ if [ "$DEPLOY_FRONTEND" -eq 1 ]; then
       if [ -f $DOMAIN_NGINX_CONF ]; then
         cp $DOMAIN_NGINX_CONF $DOMAIN_NGINX_CONF.bak-codex-\$(date +%Y%m%d%H%M%S) &&
         python3 - <<'PY' &&
+import re
 from pathlib import Path
 path = Path('$DOMAIN_NGINX_CONF')
 text = path.read_text(encoding='utf-8')
 old = 'location ^~ /codex/ {\\n    alias /opt/chat-codex/web/;\\n    try_files \$uri \$uri/ /codex/index.html;\\n}'
 new = 'location ^~ /codex/ {\\n    alias /opt/chat-codex/web-codex/;\\n    try_files \$uri \$uri/ /codex/index.html;\\n}'
 if old in text:
-    path.write_text(text.replace(old, new), encoding='utf-8')
+    text = text.replace(old, new)
 elif 'alias /opt/chat-codex/web-codex/;' not in text:
     raise SystemExit('未找到 /codex/ 静态资源 location')
+# WebAssembly 编译要求 application/wasm，默认 mime.types 里没有这条；
+# 缺了它 Chromium 内核（Edge 等）会直接拒绝编译 canvaskit.wasm 而白屏。
+if 'application/wasm' not in text:
+    pattern = re.compile(r'(location \^~ /codex/ \{[^}]*?)(\\n\s*\})', re.S)
+    text, count = pattern.subn(
+        lambda m: m.group(1)
+        + '\\n    include /etc/nginx/mime.types;'
+        + '\\n    types { application/wasm wasm; }'
+        + m.group(2),
+        text,
+        count=1,
+    )
+    if count != 1:
+        raise SystemExit('未找到可注入 wasm 类型的 /codex/ location')
+path.write_text(text, encoding='utf-8')
 PY
         nginx -t &&
         nginx -s reload
