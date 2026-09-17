@@ -857,7 +857,7 @@ import sys
 payload = {
     "version": version,
     "channel": "latest",
-    "changelog": "- 内置 Verify 技能增加 inspect_patched_apk 与 patch_local_apk 引导",
+    "changelog": "- 修复手填的模型上下文窗口被运行时上报值覆盖，设置后界面仍显示旧值的问题\\n- 上传中断后重选同一文件不再整份重传，只补传缺失分块\\n- 自动清理中断上传残留的临时目录",
     "downloads": [
         {
             "platform": "windows-x64",
