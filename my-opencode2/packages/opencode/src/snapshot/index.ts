@@ -2,6 +2,8 @@ import { Cause, Duration, Effect, Layer, Schedule, Schema, Semaphore, Context } 
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { formatPatch, structuredPatch } from "diff"
 import path from "path"
+import { Glob } from "@opencode-ai/core/util/glob"
+import { readdir, stat, statfs } from "node:fs/promises"
 import { AppProcess } from "@opencode-ai/core/process"
 import { InstanceState } from "@/effect/instance-state"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
@@ -31,6 +33,35 @@ export type FileDiff = typeof FileDiff.Type
 const log = Log.create({ service: "snapshot" })
 const prune = "7.days"
 const limit = 2 * 1024 * 1024
+// Shared by discovery, migration, diffs and restore. Runtime databases are not
+// user deliverables: recording their own writes makes snapshot size recursive.
+export const runtimeExclusions = [
+  "**/.chatcodex-artifacts/display-log.sqlite",
+  "**/.chatcodex-artifacts/display-log.sqlite-*",
+  "**/.chatcodex-artifacts/display-log/**",
+]
+// Build and dependency caches are reproducible and can grow into gigabytes.
+// They are never useful as conversation undo history.
+const generatedExclusions = [
+  "**/.dart_tool/**",
+  "**/.gradle/**",
+  "**/node_modules/**",
+  "**/__pycache__/**",
+  "**/build/**",
+]
+const snapshotExclusions = [...runtimeExclusions, ...generatedExclusions]
+export const isRuntimeFile = (file: string) =>
+  runtimeExclusions.some((pattern) => Glob.match(pattern, file.replaceAll("\\", "/")))
+export const isSnapshotExcluded = (file: string) =>
+  snapshotExclusions.some((pattern) => Glob.match(pattern, file.replaceAll("\\", "/")))
+const runtimePathspecs = snapshotExclusions.map((pattern) => `:(exclude,glob)${pattern}`)
+const gcReserveBytes = 2 * 1024 ** 3
+
+export function hasRepackSpace(freeBytes: number, packBytes: number) {
+  // Repack writes its replacement before removing old packs. Keep room for
+  // a full copy plus a reserve for the model/session database and the OS.
+  return freeBytes >= packBytes + gcReserveBytes
+}
 const core = ["-c", "core.longpaths=true", "-c", "core.symlinks=true"]
 const cfg = ["-c", "core.autocrlf=false", ...core]
 const quote = [...cfg, "-c", "core.quotepath=false"]
@@ -122,26 +153,30 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
                 "-z",
               ],
               {
-                cwd: state.directory,
+                cwd: state.worktree,
                 stdin: feed(files),
               },
             )
-            if (check.code !== 0 && check.code !== 1) return new Set<string>()
-            return new Set(check.text.split("\0").filter(Boolean))
+            const internal = files.filter(isSnapshotExcluded)
+            if (check.code !== 0 && check.code !== 1) return new Set(internal)
+            return new Set([...internal, ...check.text.split("\0").filter(Boolean)])
           })
 
           const drop = Effect.fnUntraced(function* (files: string[]) {
             if (!files.length) return
-            yield* git(
+            const result = yield* git(
               [
                 ...cfg,
                 ...args(["rm", "--cached", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"]),
               ],
               {
-                cwd: state.directory,
+                cwd: state.worktree,
                 stdin: feed(files),
               },
             )
+            if (result.code !== 0) {
+              return yield* Effect.die(new Error(`Snapshot index removal failed: ${result.stderr}`))
+            }
           })
 
           const stage = Effect.fnUntraced(function* (files: string[]) {
@@ -149,7 +184,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
             const result = yield* git(
               [...cfg, ...args(["add", "--all", "--sparse", "--pathspec-from-file=-", "--pathspec-file-nul"])],
               {
-                cwd: state.directory,
+                cwd: state.worktree,
                 stdin: feed(files),
               },
             )
@@ -185,6 +220,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
             const target = path.join(state.gitdir, "info", "exclude")
             const text = [
               file ? (yield* read(file)).trimEnd() : "",
+              ...snapshotExclusions,
               ...list.map((item) => `/${item.replaceAll("\\", "/")}`),
             ]
               .filter(Boolean)
@@ -193,14 +229,28 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
             yield* fs.writeFileString(target, text ? `${text}\n` : "").pipe(Effect.orDie)
           })
 
+          const dropSnapshotExcludedFiles = Effect.fnUntraced(function* () {
+            // Ignore rules alone do not remove already tracked databases. Run
+            // this before writes AND old-snapshot restores, even if unchanged.
+            const cached = yield* git([...quote, ...args(["ls-files", "--cached", "--full-name", "-z"])], {
+              cwd: state.worktree,
+            })
+            if (cached.code !== 0) {
+              return yield* Effect.die(new Error(`Snapshot index listing failed: ${cached.stderr}`))
+            }
+            const files = cached.text.split("\0").filter(isSnapshotExcluded)
+            if (files.length) yield* drop(files)
+          })
+
           const add = Effect.fnUntraced(function* () {
             yield* sync()
+            yield* dropSnapshotExcludedFiles()
             const [diff, other] = yield* Effect.all(
               [
                 git([...quote, ...args(["diff-files", "--name-only", "-z", "--", "."])], {
                   cwd: state.directory,
                 }),
-                git([...quote, ...args(["ls-files", "--others", "--exclude-standard", "-z", "--", "."])], {
+                git([...quote, ...args(["ls-files", "--full-name", "--others", "--exclude-standard", "-z", "--", "."])], {
                   cwd: state.directory,
                 }),
               ],
@@ -239,7 +289,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
               (yield* Effect.all(
                 allow.map((item) =>
                   fs
-                    .stat(path.join(state.directory, item))
+                    .stat(path.join(state.worktree, item))
                     .pipe(Effect.catch(() => Effect.void))
                     .pipe(
                       Effect.map((stat) => {
@@ -252,8 +302,15 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
                 { concurrency: 8 },
               )).filter((item): item is string => Boolean(item)),
             )
-            const block = new Set(untracked.filter((item) => large.has(item)))
-            yield* sync(Array.from(block))
+            // Apply the cap to tracked files as well. Otherwise a generated
+            // binary that was tracked once keeps every future version alive in
+            // the snapshot object database forever. The worktree file remains
+            // untouched; only snapshot tracking is dropped.
+            const block = new Set(allow.filter((item) => large.has(item)))
+            if (block.size) {
+              yield* sync(Array.from(block))
+              yield* drop(Array.from(block))
+            }
             // Stage only the allowed candidate paths so snapshot updates stay scoped.
             yield* stage(allow.filter((item) => !block.has(item)))
           })
@@ -263,7 +320,28 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
               Effect.gen(function* () {
                 if (!(yield* enabled())) return
                 if (!(yield* exists(state.gitdir))) return
-                const result = yield* git(args(["gc", `--prune=${prune}`]), { cwd: state.directory })
+                const space = yield* Effect.promise(async () => {
+                  const packDir = path.join(state.gitdir, "objects", "pack")
+                  const disk = await statfs(state.gitdir).catch(() => undefined)
+                  const names = await readdir(packDir).catch(() => undefined)
+                  if (!disk || !names) return undefined
+                  const sizes = await Promise.all(names.filter((name) => name.endsWith(".pack")).map(async (name) =>
+                    (await stat(path.join(packDir, name)).catch(() => undefined))?.size,
+                  ))
+                  if (sizes.some((size) => size === undefined)) return undefined
+                  const loose = await Promise.all(
+                    (await readdir(path.join(state.gitdir, "objects")).catch(() => [])).filter((name) => /^[0-9a-f]{2}$/.test(name)).map(async (name) => {
+                      const entries = await readdir(path.join(state.gitdir, "objects", name)).catch(() => [])
+                      return (await Promise.all(entries.map(async (entry) => (await stat(path.join(state.gitdir, "objects", name, entry)).catch(() => undefined))?.size))).reduce<number>((sum, size) => sum + (size ?? 0), 0)
+                    }),
+                  )
+                  return { free: disk.bavail * disk.bsize, packs: sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0) + loose.reduce((sum, size) => sum + size, 0) }
+                })
+                if (!space || !hasRepackSpace(space.free, space.packs)) {
+                  log.warn("skipping snapshot repack: insufficient disk headroom", space ?? {})
+                  return
+                }
+                const result = yield* git(args(["gc", `--prune=${prune}`, "--no-cruft"]), { cwd: state.directory })
                 if (result.code !== 0) {
                   log.warn("cleanup failed", {
                     exitCode: result.code,
@@ -340,6 +418,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
                 log.info("restore", { commit: snapshot })
                 const result = yield* git([...core, ...args(["read-tree", snapshot])], { cwd: state.worktree })
                 if (result.code === 0) {
+                  yield* dropSnapshotExcludedFiles()
                   const checkout = yield* git([...core, ...args(["checkout-index", "-a", "-f"])], {
                     cwd: state.worktree,
                   })
@@ -367,7 +446,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
                 const seen = new Set<string>()
                 for (const item of patches) {
                   for (const file of item.files) {
-                    if (seen.has(file)) continue
+                    if (seen.has(file) || isSnapshotExcluded(path.relative(state.worktree, file))) continue
                     seen.add(file)
                     ops.push({
                       hash: item.hash,
@@ -479,7 +558,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
             return yield* locked(
               Effect.gen(function* () {
                 yield* add()
-                const result = yield* git([...quote, ...args(["diff", "--cached", "--no-ext-diff", hash, "--", "."])], {
+                const result = yield* git([...quote, ...args(["diff", "--cached", "--no-ext-diff", hash, "--", ".", ...runtimePathspecs])], {
                   cwd: state.worktree,
                 })
                 if (result.code !== 0) {

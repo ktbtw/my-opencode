@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设备页布局方案对比 · 分页布局的「设备」标签页</title>
+<style>
+  :root{
+    --bg:#F2F6FC; --surface:#fff; --surfaceElevated:#FAFCFF;
+    --border:#D0DDEF; --borderLight:#E8EFF8; --divider:#E4ECF5;
+    --primary:#2563EB; --primaryLight:#EFF6FF; --primaryMuted:#BFD7FF;
+    --text:#0F1729; --text2:#4A5D7A; --muted:#8FA3BF;
+    --online:#16A34A; --onlineLight:#DCFCE7;
+    --warning:#D97706; --warningLight:#FEF3C7;
+    --r-sm:6px; --r-md:10px; --r-lg:14px; --r-xl:20px;
+    --shadow:0 4px 12px rgba(26,58,106,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 24px 72px;background:var(--bg);color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif}
+  h1{font-size:22px;margin:0 0 6px}
+  h2{font-size:15px;margin:0}
+  .lede{color:var(--text2);margin:0 0 28px;max-width:76ch}
+  .opt{margin:0 0 44px}
+  .opt-head{display:flex;align-items:baseline;gap:10px;margin:0 0 4px}
+  .tag{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;
+    border-radius:var(--r-sm);background:var(--primaryLight);color:var(--primary);
+    font-weight:700;font-size:12px;padding:0 6px}
+  .tag.cur{background:var(--onlineLight);color:var(--online)}
+  .why{color:var(--text2);margin:0 0 16px;max-width:76ch}
+  .why b{color:var(--text)}
+  .frames{display:flex;gap:32px;align-items:flex-start;overflow-x:auto;padding-bottom:8px}
+  .device{border-radius:var(--r-lg);overflow:hidden;flex:0 0 auto}
+  .device .caption{font-size:11px;color:var(--muted);margin:6px 0 0}
+  .pc{width:1040px;zoom:.8;background:var(--bg);padding:24px}
+  .mb{width:390px;background:var(--bg);padding:16px}
+
+  /* 面板：与 PanelCard 一致 */
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+    box-shadow:var(--shadow);padding:20px}
+  .stack16 > * + *{margin-top:16px}
+  .band + .band{margin-top:32px}
+  .tightband + .tightband{margin-top:20px}
+
+  /* 身份区 */
+  .identity{display:flex;gap:12px;align-items:flex-start}
+  .avatar{width:44px;height:44px;border-radius:var(--r-md);background:var(--primaryLight);
+    display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:20px;flex:0 0 auto}
+  .name{font-size:20px;font-weight:600;line-height:1.25}
+  .pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 8px;border-radius:999px;
+    background:var(--onlineLight);color:var(--online);font-size:11px;font-weight:600}
+  .pill .dot{width:6px;height:6px;border-radius:999px;background:currentColor}
+  .facts{display:flex;flex-wrap:wrap;gap:8px 56px;margin-top:18px}
+  .fact .k{font-size:11px;color:var(--muted)}
+  .fact .v{font-size:13px;font-weight:600;margin-top:2px}
+  .edit{margin-left:auto;color:var(--muted);font-size:14px}
+
+  /* 分区标题 */
+  .sec{display:flex;align-items:baseline;gap:8px}
+  .sec .t{font-size:14px;font-weight:600}
+  .sec .trail{margin-left:auto;font-size:11px;color:var(--muted)}
+  .sec .trail.warn{color:var(--warning)}
+
+  /* 指标条 */
+  .metric{margin-top:16px}
+  .metric .row{display:flex;align-items:baseline;gap:8px;font-size:13px}
+  .metric .lbl{color:var(--text2)}
+  .metric .val{margin-left:auto;font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums}
+  .track{height:6px;border-radius:999px;background:var(--borderLight);margin-top:8px;overflow:hidden}
+  .fill{height:100%;border-radius:999px;background:var(--primary)}
+  .fill.warn{background:var(--warning)}
+  .sub{margin-top:6px;font-size:11px;color:var(--muted)}
+  hr.sep{border:0;border-top:1px solid var(--divider);margin:18px 0 14px}
+
+  /* 存储行 */
+  .srow{display:flex;align-items:baseline;gap:10px;font-size:13px;margin-top:12px}
+  .srow .n{color:var(--text)}
+  .srow .d{font-size:11px;color:var(--muted)}
+  .srow .b{margin-left:auto;font-weight:600;font-size:12px;font-variant-numeric:tabular-nums}
+  .srow .bar{width:72px;height:5px;border-radius:999px;background:var(--borderLight);overflow:hidden;align-self:center}
+  .srow .bar i{display:block;height:100%;background:var(--primaryMuted)}
+  .srow .clear{font-size:10px;color:var(--online);background:var(--onlineLight);
+    border-radius:var(--r-sm);padding:1px 5px;font-weight:600}
+
+  /* 配置入口：方块控件 vs 列表行 */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:16px}
+  .tile{border:1px solid var(--border);border-radius:var(--r-md);background:var(--surface);
+    padding:14px 10px;text-align:center;box-shadow:var(--shadow)}
+  .tile .i{font-size:16px;color:var(--primary)}
+  .tile .l{font-size:12px;margin-top:6px;color:var(--text)}
+  .rows{margin-top:8px}
+  .erow{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--divider);
+    font-size:13px;color:var(--text)}
+  .erow:last-child{border-bottom:0}
+  .erow .i{color:var(--primary);width:18px;text-align:center}
+  .erow .arrow{margin-left:auto;color:var(--muted);font-size:12px}
+
+  /* 带底色的状态锚点（方案 C） */
+  .anchor{background:var(--primaryLight);border-radius:var(--r-md);padding:16px}
+
+  /* 双栏（方案 D） */
+  .cols{display:flex;gap:32px;align-items:flex-start}
+  .cols > .main{flex:6 1 0;min-width:0}
+  .cols > .side{flex:4 1 0;min-width:0}
+  .muted-note{font-size:11px;color:var(--muted);margin-top:10px}
+</style>
+</head>
+<body>
+
+<h1>设备页布局方案对比</h1>
+<p class="lede">分页布局里「设备」标签页的四种排法。都用 App 的真实色板与圆角还原：面板 <code>#FFF</code> / 边框 <code>#D0DDEF</code> / 圆角 14px / 阴影 <code>0 4px 12px rgba(26,58,106,.04)</code>。
+建议先看方案对比的<b>结构差异</b>（几层边框、眼睛先落在哪、桌面端有没有空档），再看细节。</p>
+
+<!-- ───────────── 方案 A ───────────── -->
+<section class="opt">
+  <div class="opt-head"><span class="tag cur">A</span><h2>现状：四张卡片各自成块</h2></div>
+  <p class="why">每个区各有一圈边框和阴影，边框数量多、彼此等重，读起来是"四个面板"而不是"一台设备"。这是你要改掉的那版。 <b>问题</b>：没有主次，边界喧宾夺主。</p>
+  <div class="frames">
+    <div class="device">
+      <div class="pc">
+        <div class="stack16">
+          <div class="panel">
+            <div class="identity">
+              <div class="avatar">▣</div>
+              <div style="flex:1">
+                <div class="name">开发电脑</div>
+                <div style="margin-top:6px"><span class="pill"><span class="dot"></span>在线</span></div>
+              </div>
+              <div class="edit">✎</div>
+            </div>
+            <div class="facts">
+              <div class="fact"><div class="k">系统主机名</div><div class="v">MACBOOK-A.local</div></div>
+              <div class="fact"><div class="k">Agent 数量</div><div class="v">2 启动 / 5 总计</div></div>
+              <div class="fact"><div class="k">最近在线</div><div class="v">今天 12:00</div></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="sec"><span class="t">运行状态</span><span class="trail">刚刚更新</span></div>
+            <div class="metric"><div class="row"><span class="lbl">内存</span><span class="val">20.0 GB / 32.0 GB</span></div>
+              <div class="track"><span class="fill" style="width:62.5%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">磁盘 /</span><span class="val">828 GB / 926 GB</span></div>
+              <div class="track"><span class="fill warn" style="width:89.4%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">CPU</span><span class="val">23.4%</span></div>
+              <div class="track"><span class="fill" style="width:23.4%"></span></div></div>
+            <hr class="sep">
+            <div class="facts" style="margin-top:0">
+              <div class="fact"><div class="k">运行环境</div><div class="v">macOS 15.3 · arm64</div></div>
+              <div class="fact"><div class="k">已运行</div><div class="v">4 天 23 小时</div></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="sec"><span class="t">磁盘占用</span><span class="trail">合计 12.5 GB</span></div>
+            <div class="srow"><span class="n">依赖缓存</span><span class="d">pip / npm / gradle</span><span class="bar"><i style="width:22%"></i></span><span class="b">1.2 GB</span><span class="clear">可清理</span></div>
+            <div class="srow"><span class="n">历史版本</span><span class="d">已安装运行时旧版</span><span class="bar"><i style="width:60%"></i></span><span class="b">3.4 GB</span><span class="clear">可清理</span></div>
+            <div class="srow"><span class="n">运行时组件</span><span class="d">当前使用中</span><span class="bar"><i style="width:100%"></i></span><span class="b">5.6 GB</span></div>
+            <div class="srow"><span class="n">下载安装包</span><span class="d">apk / dmg</span><span class="bar"><i style="width:38%"></i></span><span class="b">2.1 GB</span><span class="clear">可清理</span></div>
+          </div>
+          <div class="panel">
+            <div class="sec"><span class="t">配置入口</span></div>
+            <div class="tiles">
+              <div class="tile"><div class="i">◈</div><div class="l">AI 配置</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">目录文件</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">项目记忆</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">运行环境</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">MCP 服务</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">技能</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">桌面（内容宽 1120，示意缩放）</div>
+    </div>
+    <div class="device">
+      <div class="mb">
+        <div class="stack16">
+          <div class="panel">
+            <div class="identity"><div class="avatar">▣</div>
+              <div style="flex:1"><div class="name">开发电脑</div>
+              <div style="margin-top:6px"><span class="pill"><span class="dot"></span>在线</span></div></div>
+              <div class="edit">✎</div></div>
+          </div>
+          <div class="panel">
+            <div class="sec"><span class="t">运行状态</span><span class="trail">刚刚更新</span></div>
+            <div class="metric"><div class="row"><span class="lbl">内存</span><span class="val">62.5%</span></div>
+              <div class="track"><span class="fill" style="width:62.5%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">CPU</span><span class="val">23.4%</span></div>
+              <div class="track"><span class="fill" style="width:23.4%"></span></div></div>
+          </div>
+          <div class="panel"><div class="sec"><span class="t">磁盘占用</span><span class="trail">合计 12.5 GB</span></div>
+            <div class="srow"><span class="n">依赖缓存</span><span class="b">1.2 GB</span></div></div>
+          <div class="panel"><div class="sec"><span class="t">配置入口</span></div>
+            <div class="tiles"><div class="tile"><div class="i">◈</div><div class="l">AI 配置</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">目录文件</div></div></div></div>
+        </div>
+      </div>
+      <div class="caption">移动 390</div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── 方案 B ───────────── -->
+<section class="opt">
+  <div class="opt-head"><span class="tag">B</span><h2>统一面板 · 分区（我这次改成的版本）</h2></div>
+  <p class="why">整页只剩一个面板，四个区靠留白（区之间 32、区内 14~20）和分区标题分组。顺序即优先级：身份 → 运行状态 → 磁盘占用 → 配置入口。 <b>代价</b>：四个区完全等重，没有明确的第一落点；底部配置入口仍是 6 个带边框的方块。</p>
+  <div class="frames">
+    <div class="device">
+      <div class="pc">
+        <div class="panel">
+          <div class="identity">
+            <div class="avatar">▣</div>
+            <div style="flex:1"><div class="name">开发电脑</div>
+              <div style="margin-top:6px"><span class="pill"><span class="dot"></span>在线</span></div></div>
+            <div class="edit">✎</div>
+          </div>
+          <div class="facts">
+            <div class="fact"><div class="k">系统主机名</div><div class="v">MACBOOK-A.local</div></div>
+            <div class="fact"><div class="k">Agent 数量</div><div class="v">2 启动 / 5 总计</div></div>
+            <div class="fact"><div class="k">最近在线</div><div class="v">今天 12:00</div></div>
+          </div>
+
+          <div class="tightband" style="margin-top:20px">
+            <div class="sec"><span class="t">运行状态</span><span class="trail">刚刚更新</span></div>
+            <div class="metric"><div class="row"><span class="lbl">内存</span><span class="val">20.0 GB / 32.0 GB</span></div>
+              <div class="track"><span class="fill" style="width:62.5%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">磁盘 /</span><span class="val">828 GB / 926 GB</span></div>
+              <div class="track"><span class="fill warn" style="width:89.4%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">CPU</span><span class="val">23.4%</span></div>
+              <div class="track"><span class="fill" style="width:23.4%"></span></div></div>
+            <hr class="sep">
+            <div class="facts" style="margin-top:0">
+              <div class="fact"><div class="k">运行环境</div><div class="v">macOS 15.3 · arm64</div></div>
+              <div class="fact"><div class="k">已运行</div><div class="v">4 天 23 小时</div></div>
+            </div>
+          </div>
+
+          <div class="band">
+            <div class="sec"><span class="t">磁盘占用</span><span class="trail">合计 12.5 GB</span></div>
+            <div class="srow"><span class="n">依赖缓存</span><span class="d">pip / npm / gradle</span><span class="bar"><i style="width:22%"></i></span><span class="b">1.2 GB</span><span class="clear">可清理</span></div>
+            <div class="srow"><span class="n">历史版本</span><span class="d">已安装运行时旧版</span><span class="bar"><i style="width:60%"></i></span><span class="b">3.4 GB</span><span class="clear">可清理</span></div>
+            <div class="srow"><span class="n">运行时组件</span><span class="d">当前使用中</span><span class="bar"><i style="width:100%"></i></span><span class="b">5.6 GB</span></div>
+            <div class="srow"><span class="n">下载安装包</span><span class="d">apk / dmg</span><span class="bar"><i style="width:38%"></i></span><span class="b">2.1 GB</span><span class="clear">可清理</span></div>
+          </div>
+
+          <div class="band">
+            <div class="sec"><span class="t">配置入口</span></div>
+            <div class="tiles">
+              <div class="tile"><div class="i">◈</div><div class="l">AI 配置</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">目录文件</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">项目记忆</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">运行环境</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">MCP 服务</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">技能</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">桌面</div>
+    </div>
+    <div class="device">
+      <div class="mb">
+        <div class="panel">
+          <div class="identity"><div class="avatar">▣</div>
+            <div style="flex:1"><div class="name">开发电脑</div>
+            <div style="margin-top:6px"><span class="pill"><span class="dot"></span>在线</span></div></div>
+            <div class="edit">✎</div></div>
+          <div class="tightband" style="margin-top:20px">
+            <div class="sec"><span class="t">运行状态</span><span class="trail">刚刚更新</span></div>
+            <div class="metric"><div class="row"><span class="lbl">内存</span><span class="val">62.5%</span></div>
+              <div class="track"><span class="fill" style="width:62.5%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">CPU</span><span class="val">23.4%</span></div>
+              <div class="track"><span class="fill" style="width:23.4%"></span></div></div>
+          </div>
+          <div class="band"><div class="sec"><span class="t">磁盘占用</span><span class="trail">合计 12.5 GB</span></div>
+            <div class="srow"><span class="n">依赖缓存</span><span class="b">1.2 GB</span></div>
+            <div class="srow"><span class="n">历史版本</span><span class="b">3.4 GB</span></div></div>
+          <div class="band"><div class="sec"><span class="t">配置入口</span></div>
+            <div class="tiles"><div class="tile"><div class="i">◈</div><div class="l">AI 配置</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">目录文件</div></div>
+              <div class="tile"><div class="i">◈</div><div class="l">技能</div></div></div></div>
+        </div>
+      </div>
+      <div class="caption">移动 390</div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── 方案 C ───────────── -->
+<section class="opt">
+  <div class="opt-head"><span class="tag">C</span><h2>统一面板 · 状态锚点（我的推荐）</h2></div>
+  <p class="why">在 B 的基础上给运行状态区加一块<b>无边框的浅色底</b>（<code>#EFF6FF</code>）作为视觉锚点，眼睛第一下就落在"设备现在怎么样"；配置入口压平成分隔线列表，去掉 6 个方框。 <b>好处</b>：有明确的落点，整页仍是一个面；<b>代价</b>：多了一个色块（但不是卡片——没有边框和阴影）。</p>
+  <div class="frames">
+    <div class="device">
+      <div class="pc">
+        <div class="panel">
+          <div class="identity">
+            <div class="avatar">▣</div>
+            <div style="flex:1"><div class="name">开发电脑</div>
+              <div style="margin-top:6px"><span class="pill"><span class="dot"></span>在线</span></div></div>
+            <div class="edit">✎</div>
+          </div>
+          <div class="facts">
+            <div class="fact"><div class="k">系统主机名</div><div class="v">MACBOOK-A.local</div></div>
+            <div class="fact"><div class="k">Agent 数量</div><div class="v">2 启动 / 5 总计</div></div>
+            <div class="fact"><div class="k">最近在线</div><div class="v">今天 12:00</div></div>
+          </div>
+
+          <div class="anchor" style="margin-top:20px">
+            <div class="sec"><span class="t">运行状态</span><span class="trail">刚刚更新</span></div>
+            <div class="metric"><div class="row"><span class="lbl">内存</span><span class="val">20.0 GB / 32.0 GB</span></div>
+              <div class="track" style="background:#DCE7F7"><span class="fill" style="width:62.5%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">磁盘 /</span><span class="val">828 GB / 926 GB</span></div>
+              <div class="track" style="background:#DCE7F7"><span class="fill warn" style="width:89.4%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">CPU</span><span class="val">23.4%</span></div>
+              <div class="track" style="background:#DCE7F7"><span class="fill" style="width:23.4%"></span></div></div>
+          </div>
+
+          <div class="band">
+            <div class="sec"><span class="t">磁盘占用</span><span class="trail">合计 12.5 GB</span></div>
+            <div class="srow"><span class="n">依赖缓存</span><span class="d">pip / npm / gradle</span><span class="bar"><i style="width:22%"></i></span><span class="b">1.2 GB</span><span class="clear">可清理</span></div>
+            <div class="srow"><span class="n">历史版本</span><span class="d">已安装运行时旧版</span><span class="bar"><i style="width:60%"></i></span><span class="b">3.4 GB</span><span class="clear">可清理</span></div>
+            <div class="srow"><span class="n">运行时组件</span><span class="d">当前使用中</span><span class="bar"><i style="width:100%"></i></span><span class="b">5.6 GB</span></div>
+            <div class="srow"><span class="n">下载安装包</span><span class="d">apk / dmg</span><span class="bar"><i style="width:38%"></i></span><span class="b">2.1 GB</span><span class="clear">可清理</span></div>
+          </div>
+
+          <div class="band">
+            <div class="sec"><span class="t">配置入口</span></div>
+            <div class="rows">
+              <div class="erow"><span class="i">◈</span>AI 配置<span class="arrow">›</span></div>
+              <div class="erow"><span class="i">◈</span>目录文件<span class="arrow">›</span></div>
+              <div class="erow"><span class="i">◈</span>项目记忆<span class="arrow">›</span></div>
+              <div class="erow"><span class="i">◈</span>运行环境<span class="arrow">›</span></div>
+              <div class="erow"><span class="i">◈</span>MCP 服务<span class="arrow">›</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">桌面</div>
+    </div>
+    <div class="device">
+      <div class="mb">
+        <div class="panel">
+          <div class="identity"><div class="avatar">▣</div>
+            <div style="flex:1"><div class="name">开发电脑</div>
+            <div style="margin-top:6px"><span class="pill"><span class="dot"></span>在线</span></div></div>
+            <div class="edit">✎</div></div>
+          <div class="anchor" style="margin-top:20px">
+            <div class="sec"><span class="t">运行状态</span><span class="trail">刚刚更新</span></div>
+            <div class="metric"><div class="row"><span class="lbl">内存</span><span class="val">62.5%</span></div>
+              <div class="track" style="background:#DCE7F7"><span class="fill" style="width:62.5%"></span></div></div>
+            <div class="metric"><div class="row"><span class="lbl">CPU</span><span class="val">23.4%</span></div>
+              <div class="track" style="background:#DCE7F7"><span class="fill" style="width:23.4%"></span></div></div>
+          </div>
+          <div class="band"><div class="sec"><span class="t">磁盘占用</span><span class="trail">合计 12.5 GB</span></div>
+            <div class="srow"><span class="n">依赖缓存</span><span class="b">1.2 GB</span></div>
+            <div class="srow"><span class="n">历史版本</span><span class="b">3.4 GB</span></div></div>
+          <div class="band"><div class="sec"><span class="t">配置入口</span></div>
+            <div class="rows">
+              <div class="erow"><span class="i">◈</span>AI 配置<span class="arrow">›</span></div>
+              <div class="erow"><span class="i">◈</span>目录文件<span class="arrow">›</span></div>
+              <div class="erow"><span class="i">◈</span>技能<span class="arrow">›</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">移动 390</div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── 方案 D ───────────── -->
+<section class="opt">
+  <div class="opt-head"><span class="tag">D</span><h2>双栏仪表盘 · 状态左 / 占用与操作右</h2></div>
+  <p class="why">桌面端分两栏，让两栏长度接近：左栏只回答"现在怎么样"，右栏放"占用了什么 + 能做什么"。<b>好处</b>：宽屏信息密度高、没有空档；<b>代价</b>：移动端仍要回落到单列，两栏的语义划分（状态 / 其他）不如单列清晰。</p>
+  <div class="frames">
+    <div class="device">
+      <div class="pc">
+        <div class="panel">
+          <div class="cols">
+            <div class="main">
+              <div class="identity"><div class="avatar">▣</div>
+                <div style="flex:1"><div class="name">开发电脑</div>
+                <div style="margin-top:6px"><span class="pill"><span class="dot"></span>在线</span></div></div>
+                <div class="edit">✎</div></div>
+              <div class="facts">
+                <div class="fact"><div class="k">系统主机名</div><div class="v">MACBOOK-A.local</div></div>
+                <div class="fact"><div class="k">Agent 数量</div><div class="v">2 启动 / 5 总计</div></div>
+              </div>
+              <div class="tightband" style="margin-top:20px">
+                <div class="sec"><span class="t">运行状态</span><span class="trail">刚刚更新</span></div>
+                <div class="metric"><div class="row"><span class="lbl">内存</span><span class="val">20.0 GB / 32.0 GB</span></div>
+                  <div class="track"><span class="fill" style="width:62.5%"></span></div></div>
+                <div class="metric"><div class="row"><span class="lbl">磁盘 /</span><span class="val">828 GB / 926 GB</span></div>
+                  <div class="track"><span class="fill warn" style="width:89.4%"></span></div></div>
+                <div class="metric"><div class="row"><span class="lbl">CPU</span><span class="val">23.4%</span></div>
+                  <div class="track"><span class="fill" style="width:23.4%"></span></div></div>
+                <hr class="sep">
+                <div class="facts" style="margin-top:0">
+                  <div class="fact"><div class="k">运行环境</div><div class="v">macOS 15.3 · arm64</div></div>
+                  <div class="fact"><div class="k">已运行</div><div class="v">4 天 23 小时</div></div>
+                </div>
+              </div>
+            </div>
+            <div class="side">
+              <div class="sec"><span class="t">磁盘占用</span><span class="trail">合计 12.5 GB</span></div>
+              <div class="srow"><span class="n">依赖缓存</span><span class="b">1.2 GB</span><span class="clear">可清理</span></div>
+              <div class="srow"><span class="n">历史版本</span><span class="b">3.4 GB</span><span class="clear">可清理</span></div>
+              <div class="srow"><span class="n">运行时组件</span><span class="b">5.6 GB</span></div>
+              <div class="srow"><span class="n">下载安装包</span><span class="b">2.1 GB</span><span class="clear">可清理</span></div>
+              <div class="band">
+                <div class="sec"><span class="t">配置入口</span></div>
+                <div class="rows">
+                  <div class="erow"><span class="i">◈</span>AI 配置<span class="arrow">›</span></div>
+                  <div class="erow"><span class="i">◈</span>目录文件<span class="arrow">›</span></div>
+                  <div class="erow"><span class="i">◈</span>项目记忆<span class="arrow">›</span></div>
+                  <div class="erow"><span class="i">◈</span>运行环境<span class="arrow">›</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="caption">桌面（两栏）</div>
+    </div>
+    <div class="device">
+      <div class="mb">
+        <div class="panel">
+          <div class="muted-note" style="margin:0">移动端与方案 C 相同（单列）</div>
+        </div>
+      </div>
+      <div class="caption">移动 390</div>
+    </div>
+  </div>
+</section>
+
+<p class="lede">选定后告诉我编号，我按那一版改代码（A 是回退到原样，只需 <code>git revert 12dcae1b6</code>）。也可以说要混搭，比如"B 的结构 + C 的配置列表 + D 的桌面两栏"。</p>
+
+</body>
+</html>

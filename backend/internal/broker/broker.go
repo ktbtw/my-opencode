@@ -17,6 +17,9 @@ import (
 var ErrOffline = errors.New("device offline")
 
 type Device struct {
+	linkMu       sync.Mutex
+	linkSample   LinkLatency
+	linkPending  chan struct{}
 	ID           string
 	OperatorID   int64
 	MachineID    string

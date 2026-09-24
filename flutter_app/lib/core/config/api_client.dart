@@ -78,15 +78,37 @@ class ApiClient {
   static Future<Map<String, dynamic>> get(
     String path, {
     Duration? timeout,
+    String? expectedIdentity,
   }) async {
-    final uri = Uri.parse('$baseUrl$path');
-    final request = http.get(uri, headers: _headers());
-    var resp = await (timeout == null ? request : request.timeout(timeout));
-    if (resp.statusCode == 401 && await _tryRefreshToken()) {
-      final retry = http.get(uri, headers: _headers());
-      resp = await (timeout == null ? retry : retry.timeout(timeout));
+    void checkIdentity() {
+      if (expectedIdentity != null &&
+          AppStorage.storageIdentity != expectedIdentity) {
+        throw StateError('Account changed during settings sync');
+      }
     }
-    return _handle(resp);
+
+    checkIdentity();
+    final uri = Uri.parse('$baseUrl$path');
+    final client = http.Client();
+    Future<Map<String, dynamic>> perform() async {
+      var resp = await client.get(uri, headers: _headers());
+      checkIdentity();
+      if (resp.statusCode == 401 && await _tryRefreshToken()) {
+        checkIdentity();
+        resp = await client.get(uri, headers: _headers());
+      }
+      checkIdentity();
+      return _handle(resp);
+    }
+
+    try {
+      final request = perform();
+      return await (timeout == null ? request : request.timeout(timeout));
+    } finally {
+      // A timed-out top-level http.get keeps its own client alive until the
+      // response finishes. Own the client so a suspended request is aborted.
+      client.close();
+    }
   }
 
   static Future<List<dynamic>> getList(String path) async {
@@ -121,7 +143,16 @@ class ApiClient {
     Map<String, dynamic> body, {
     bool withAuth = true,
     Duration? timeout,
+    String? expectedIdentity,
   }) async {
+    void checkIdentity() {
+      if (expectedIdentity != null &&
+          AppStorage.storageIdentity != expectedIdentity) {
+        throw StateError('Account changed during settings sync');
+      }
+    }
+
+    checkIdentity();
     final uri = Uri.parse('$baseUrl$path');
     final request = http.post(
       uri,
@@ -129,7 +160,9 @@ class ApiClient {
       body: jsonEncode(body),
     );
     var resp = await (timeout == null ? request : request.timeout(timeout));
+    checkIdentity();
     if (resp.statusCode == 401 && withAuth && await _tryRefreshToken()) {
+      checkIdentity();
       final retry = http.post(
         uri,
         headers: _headers(withAuth: true),
@@ -200,63 +233,84 @@ class ApiClient {
   static Stream<SseEvent> sseEvents(
     String path, {
     Map<String, String>? extraHeaders,
+    void Function()? onConnected,
+    void Function()? onActivity,
   }) {
-    return _sseEventsWithRefresh(Uri.parse('$baseUrl$path'), extraHeaders);
+    return _sseEventsWithRefresh(
+      Uri.parse('$baseUrl$path'),
+      extraHeaders,
+      onConnected: onConnected,
+      onActivity: onActivity,
+    );
   }
 
   static Stream<SseEvent> _sseEventsWithRefresh(
     Uri uri,
-    Map<String, String>? extraHeaders,
-  ) async* {
+    Map<String, String>? extraHeaders, {
+    void Function()? onConnected,
+    void Function()? onActivity,
+  }) {
     var refreshed = false;
-    while (true) {
+    var cancelled = false;
+    StreamSubscription<SseEvent>? subscription;
+    late final StreamController<SseEvent> controller;
+    void connect() {
+      if (cancelled) return;
       final token = AppStorage.getToken();
-      final headers = <String, String>{
-        'Accept': 'text/event-stream',
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-        ...?extraHeaders,
-      };
-      try {
-        await for (final event in sse_impl.sseEventStream(uri, headers)) {
-          yield event;
-        }
-        return;
-      } on SseHttpException catch (error) {
-        if (error.statusCode == 401 && !refreshed && await _tryRefreshToken()) {
-          refreshed = true;
-          continue;
-        }
-        rethrow;
-      }
+      subscription = sse_impl
+          .sseEventStream(
+            uri,
+            {
+              'Accept': 'text/event-stream',
+              if (token != null && token.isNotEmpty)
+                'Authorization': 'Bearer $token',
+              ...?extraHeaders,
+            },
+            onConnected: () {
+              if (!cancelled) onConnected?.call();
+            },
+            onActivity: () {
+              if (!cancelled) onActivity?.call();
+            },
+          )
+          .listen(
+            controller.add,
+            onError: (Object error, StackTrace stack) async {
+              if (cancelled) return;
+              if (error is SseHttpException &&
+                  error.statusCode == 401 &&
+                  !refreshed &&
+                  await _tryRefreshToken()) {
+                refreshed = true;
+                connect();
+                return;
+              }
+              if (cancelled) return;
+              controller.addError(error, stack);
+              unawaited(controller.close());
+            },
+            onDone: () => unawaited(controller.close()),
+            cancelOnError: true,
+          );
+      if (controller.isPaused) subscription?.pause();
     }
+
+    controller = StreamController<SseEvent>(
+      onListen: connect,
+      onPause: () => subscription?.pause(),
+      onResume: () => subscription?.resume(),
+      onCancel: () async {
+        cancelled = true;
+        await subscription?.cancel();
+      },
+    );
+    return controller.stream;
   }
 
   static Stream<String> _sseWithRefresh(
     Uri uri,
     Map<String, String>? extraHeaders,
-  ) async* {
-    var refreshed = false;
-    while (true) {
-      final token = AppStorage.getToken();
-      final headers = <String, String>{
-        'Accept': 'text/event-stream',
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-        ...?extraHeaders,
-      };
-      try {
-        await for (final payload in sse_impl.sseStream(uri, headers)) {
-          yield payload;
-        }
-        return;
-      } on SseHttpException catch (error) {
-        if (error.statusCode == 401 && !refreshed && await _tryRefreshToken()) {
-          refreshed = true;
-          continue;
-        }
-        rethrow;
-      }
-    }
-  }
+  ) => _sseEventsWithRefresh(uri, extraHeaders).map((event) => event.data);
 }
 
 class ApiException implements Exception {

@@ -15,6 +15,12 @@ const (
 	TaskCancelled       TaskStatus = "cancelled"
 )
 
+// TaskMetaCancelRequestedAt records the instant a stop was requested. The cancel
+// grace is measured from this value instead of UpdatedAt, because detached
+// subagent events keep refreshing UpdatedAt and would push the deadline forward
+// indefinitely, leaving the task stuck in "cancelling" forever.
+const TaskMetaCancelRequestedAt = "cancel_requested_at"
+
 type Task struct {
 	ID          string            `json:"task_id"`
 	AgentID     string            `json:"agent_id"`

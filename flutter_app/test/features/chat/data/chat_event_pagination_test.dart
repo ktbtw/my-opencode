@@ -114,46 +114,64 @@ void main() {
     ]);
   });
 
-  test('keeps tools running when agent-history has no terminal event', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    addTearDown(server.close);
-    await AppStorage.setBaseUrl('http://${server.address.host}:${server.port}');
-    server.listen((request) async {
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(
-        jsonEncode({
-          'events': [
-            {
-              'type': 'delta',
-              'field': 'text',
-              'content': '正文还在',
-              'sent_at': '2026-01-01T00:00:00Z',
-            },
-            {
-              'type': 'tool_updated',
-              'tool': {'id': 't1', 'call_id': 'c1', 'tool': 'read', 'status': 'running'},
-              'sent_at': '2026-01-01T00:00:01Z',
-            },
-          ],
-          'next_cursor': '',
-          'has_more': false,
-        }),
+  test(
+    'keeps tools running when agent-history has no terminal event',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      await AppStorage.setBaseUrl(
+        'http://${server.address.host}:${server.port}',
       );
-      await request.response.close();
-    });
+      server.listen((request) async {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'events': [
+              {
+                'type': 'delta',
+                'field': 'text',
+                'content': '正文还在',
+                'sent_at': '2026-01-01T00:00:00Z',
+              },
+              {
+                'type': 'tool_updated',
+                'tool': {
+                  'id': 't1',
+                  'call_id': 'c1',
+                  'tool': 'read',
+                  'status': 'running',
+                },
+                'sent_at': '2026-01-01T00:00:01Z',
+              },
+            ],
+            'next_cursor': '',
+            'has_more': false,
+          }),
+        );
+        await request.response.close();
+      });
 
-    final snapshot = await ChatRepository().getTaskEventSnapshot('task-running-tool');
-    expect(snapshot.text, '正文还在');
-    expect(snapshot.toolCalls, hasLength(1));
-    expect(snapshot.toolCalls.single.isRunning, isTrue);
-    expect(
-      snapshot.blocks.where((block) => block.type == ChatMessageBlockType.text),
-      isNotEmpty,
-    );
-  });
+      final snapshot = await ChatRepository().getTaskEventSnapshot(
+        'task-running-tool',
+      );
+      expect(snapshot.text, '正文还在');
+      expect(snapshot.toolCalls, hasLength(1));
+      expect(snapshot.toolCalls.single.isRunning, isTrue);
+      expect(
+        snapshot.blocks.where(
+          (block) => block.type == ChatMessageBlockType.text,
+        ),
+        isNotEmpty,
+      );
+    },
+  );
 
   test('defaults a tool with missing status to running', () {
-    final tool = ToolCallInfo.fromJson({'id': 't1', 'call_id': 'c1', 'tool': 'read'});
+    final tool = ToolCallInfo.fromJson({
+      'id': 't1',
+      'call_id': 'c1',
+      'tool': 'read',
+    });
     expect(tool.status, 'running');
     expect(tool.isRunning, isTrue);
   });
@@ -169,7 +187,12 @@ void main() {
           'events': [
             {
               'type': 'tool_updated',
-              'tool': {'id': 't1', 'call_id': 'c1', 'tool': 'read', 'status': 'running'},
+              'tool': {
+                'id': 't1',
+                'call_id': 'c1',
+                'tool': 'read',
+                'status': 'running',
+              },
               'sent_at': '2026-01-01T00:00:01Z',
             },
             {
@@ -185,7 +208,9 @@ void main() {
       await request.response.close();
     });
 
-    final snapshot = await ChatRepository().getTaskEventSnapshot('task-terminal-tool');
+    final snapshot = await ChatRepository().getTaskEventSnapshot(
+      'task-terminal-tool',
+    );
     expect(snapshot.toolCalls.single.isRunning, isFalse);
     expect(snapshot.toolCalls.single.isCompleted, isTrue);
   });
@@ -277,7 +302,7 @@ void main() {
   );
 
   test(
-    'reconnects task SSE with sequence and composite cursor headers',
+    'new conversation subscription does not inherit an old body cursor',
     () async {
       final headers = <Map<String, String>>[];
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -310,8 +335,8 @@ void main() {
       expect(headers, hasLength(2));
       expect(headers[0]['sequence'], isEmpty);
       expect(headers[0]['cursor'], isEmpty);
-      expect(headers[1]['sequence'], '1');
-      expect(headers[1]['cursor'], isNotEmpty);
+      expect(headers[1]['sequence'], isEmpty);
+      expect(headers[1]['cursor'], isEmpty);
     },
   );
 }

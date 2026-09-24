@@ -15,6 +15,7 @@ Future<String?> downloadArtifactWithNotification({
   required String taskId,
   required AiArtifact artifact,
   ArtifactDownloadRunner? runner,
+  String? project,
 }) async {
   final operationId =
       'artifact:download:$taskId:${artifact.id}:${DateTime.now().microsecondsSinceEpoch}';
@@ -35,7 +36,15 @@ Future<String?> downloadArtifactWithNotification({
   );
 
   try {
-    final download = runner ?? ArtifactDownloadService.download;
+    final ArtifactDownloadRunner download =
+        runner ??
+        ({required taskId, required artifact, onReceiveProgress}) =>
+            ArtifactDownloadService.download(
+              taskId: taskId,
+              artifact: artifact,
+              project: project,
+              onReceiveProgress: onReceiveProgress,
+            );
     final saved = await download(
       taskId: taskId,
       artifact: artifact,

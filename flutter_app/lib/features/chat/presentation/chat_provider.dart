@@ -1,23 +1,37 @@
+import '../../../core/services/connection_telemetry.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/config/api_client.dart';
+import '../../../core/services/account_scope.dart';
 import '../../../core/services/app_log_service.dart';
 import '../../../core/storage/app_storage.dart';
 import '../../../features/settings/settings_provider.dart';
 import '../data/artifact_cache_service.dart';
 import '../data/chat_model.dart';
 import '../data/chat_repository.dart';
+import '../data/task_event_batcher.dart';
 import '../data/local_chat_store.dart';
+import '../data/local_event_writer.dart';
 import 'chat_error_formatter.dart';
 
-final chatRepositoryProvider = Provider((ref) => ChatRepository());
+final chatRepositoryProvider = Provider((ref) {
+  ref.watch(accountScopeProvider);
+  final repository = ChatRepository();
+  ref.onDispose(repository.dispose);
+  return repository;
+});
 
 int _elapsedMsSince(DateTime startedAt) =>
     DateTime.now().difference(startedAt).inMilliseconds;
+
+// A completed result is already available from the task index. Defer the
+// expensive event/tool reconstruction for unusually large replies until the
+// user asks for tool history explicitly.
+const _maxAutoHydrateResultChars = 256 * 1024;
 
 // 模型列表按机器加载，避免多设备时拿到其他 launcher 的供应商缓存。
 final availableModelsProvider = FutureProvider.family<List<ModelInfo>, String>((
@@ -558,6 +572,30 @@ final sessionListProvider = FutureProvider.autoDispose
           .toList();
     });
 
+enum ChatOperationStepState { pending, active, done, failed }
+
+class ChatOperationStep {
+  final String key;
+  final String label;
+  final String detail;
+  final ChatOperationStepState state;
+
+  const ChatOperationStep({
+    required this.key,
+    required this.label,
+    this.detail = '',
+    this.state = ChatOperationStepState.pending,
+  });
+
+  ChatOperationStep copyWith({String? detail, ChatOperationStepState? state}) =>
+      ChatOperationStep(
+        key: key,
+        label: label,
+        detail: detail ?? this.detail,
+        state: state ?? this.state,
+      );
+}
+
 // 对话控制器状态
 class ChatState {
   final List<ChatMessage> messages;
@@ -577,6 +615,8 @@ class ChatState {
   final ChatQueueSnapshot queue;
   final bool queueLoading;
   final String? queueError;
+  final String? operationTitle;
+  final List<ChatOperationStep> operationSteps;
 
   const ChatState({
     this.messages = const [],
@@ -596,7 +636,17 @@ class ChatState {
     this.queue = const ChatQueueSnapshot(),
     this.queueLoading = false,
     this.queueError,
+    this.operationTitle,
+    this.operationSteps = const [],
   });
+
+  bool get canStop =>
+      taskActive ||
+      messages.any(
+        (message) =>
+            message.role == MessageRole.agent &&
+            message.state == MessageState.streaming,
+      );
 
   ChatState copyWith({
     List<ChatMessage>? messages,
@@ -621,6 +671,9 @@ class ChatState {
     bool? queueLoading,
     String? queueError,
     bool clearQueueError = false,
+    String? operationTitle,
+    List<ChatOperationStep>? operationSteps,
+    bool clearOperation = false,
   }) {
     return ChatState(
       messages: messages == null
@@ -653,6 +706,12 @@ class ChatState {
       queue: queue ?? this.queue,
       queueLoading: queueLoading ?? this.queueLoading,
       queueError: clearQueueError ? null : (queueError ?? this.queueError),
+      operationTitle: clearOperation
+          ? null
+          : (operationTitle ?? this.operationTitle),
+      operationSteps: clearOperation
+          ? const []
+          : (operationSteps ?? this.operationSteps),
     );
   }
 }
@@ -663,21 +722,161 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   /// 应用进入后台时挂起长连接属于预期行为，期间产生的队列断开不应提示用户。
   bool _appInBackground = false;
+  bool _pageVisible = true;
+  int _liveVersion = 0;
+  bool get _detailsEnabled => !_disposed && _pageVisible && !_appInBackground;
+
+  void _beginOperation(
+    String title,
+    List<ChatOperationStep> steps, {
+    bool autoClear = false,
+  }) {
+    _operationClearTimer?.cancel();
+    state = state.copyWith(operationTitle: title, operationSteps: steps);
+    if (autoClear) _scheduleOperationClear();
+  }
+
+  void _updateOperation(
+    String key, {
+    ChatOperationStepState? stepState,
+    String? detail,
+    String? title,
+    bool autoClear = false,
+  }) {
+    final steps = [
+      for (final step in state.operationSteps)
+        step.key == key
+            ? step.copyWith(state: stepState, detail: detail)
+            : step,
+    ];
+    state = state.copyWith(
+      operationTitle: title ?? state.operationTitle,
+      operationSteps: steps,
+    );
+    if (autoClear) _scheduleOperationClear();
+  }
+
+  void _scheduleOperationClear() {
+    _operationClearTimer?.cancel();
+    _operationClearTimer = Timer(const Duration(seconds: 4), () {
+      if (_disposed) return;
+      state = state.copyWith(clearOperation: true);
+      _operationClearTimer = null;
+    });
+  }
+
+  void setPageVisible(bool visible) {
+    if (_disposed || _pageVisible == visible) return;
+    if (!visible) _flushEventDeltas?.call();
+    _pageVisible = visible;
+    if (visible) {
+      _prepareResumeRecoveryState();
+      if (!_appInBackground) unawaited(reconcileAfterResume());
+    } else {
+      _suspendDetails();
+    }
+  }
+
+  void _suspendDetails() {
+    // Pending raw deltas are recovered from the authoritative snapshot on return.
+    _flushEventDeltas = null;
+    _resumeReconciliationToken = null;
+    _terminalProbeToken = null;
+    _liveVersion++;
+    _terminalReconcileTimer?.cancel();
+    _terminalReconcileTimer = null;
+    unawaited(_eventSub?.cancel());
+    _eventSub = null;
+    _cancelQueueSub();
+    // Keep task identity and message state for stop/recovery; only connections
+    // belong to page visibility. No server-side cancellation happens here.
+  }
 
   /// 标记应用进入后台：后续队列连接断开按预期行为处理，不产生用户可见错误。
   void markAppBackgrounded() {
+    // Accepted events have already advanced dedupe/persistence state. Flush
+    // them before hiding the page so cancellation cannot lose their body.
+    _flushEventDeltas?.call();
     _appInBackground = true;
+    _resumeRecoveryWatchdog?.cancel();
+    _resumeRecoveryWatchdog = null;
+    _operationClearTimer?.cancel();
+    _operationClearTimer = null;
+    _suspendDetails();
+  }
+
+  void _prepareResumeRecoveryState() {
+    final hasSyncing = state.messages.any(
+      (message) =>
+          message.role == MessageRole.agent &&
+          message.streamRecovery == StreamRecovery.syncing,
+    );
+    if (!hasSyncing) return;
+    // A navigation return must never inherit an unbounded "syncing" label.
+    // The probe starts below; until it answers, show an honest reconnecting state.
+    final messages = [
+      for (final message in state.messages)
+        if (message.role == MessageRole.agent &&
+            message.streamRecovery == StreamRecovery.syncing)
+          (message.copyForUpdate()
+            ..streamRecovery = StreamRecovery.reconnecting)
+        else
+          message,
+    ];
+    state = state.copyWith(messages: messages);
+  }
+
+  void _armResumeRecoveryWatchdog(Object token) {
+    _resumeRecoveryWatchdog?.cancel();
+    _resumeRecoveryWatchdog = Timer(resumeRecoveryWatchdogTimeout, () {
+      if (_disposed || !identical(_resumeReconciliationToken, token)) return;
+      _resumeReconciliationToken = null;
+      replySyncProgress?.finish('连接恢复超时');
+      _updateOperation(
+        'opencode',
+        stepState: ChatOperationStepState.failed,
+        detail: 'Agent 状态确认超时',
+      );
+      _updateOperation(
+        'task',
+        stepState: ChatOperationStepState.active,
+        detail: '正在重连回复通道',
+        title: '连接恢复中',
+      );
+      final messages = [
+        for (final message in state.messages)
+          if (message.role == MessageRole.agent &&
+              message.streamRecovery == StreamRecovery.syncing)
+            (message.copyForUpdate()
+              ..streamRecovery = StreamRecovery.reconnecting)
+          else
+            message,
+      ];
+      state = state.copyWith(messages: messages);
+      if (_currentTaskId != null && _detailsEnabled) {
+        _listenEvents(
+          _currentTaskId!,
+          _activeTaskAgentMessageIds[_currentTaskId!] ?? '',
+          DateTime.now(),
+        );
+      }
+    });
   }
 
   final ChatRepository _repo;
   final LocalChatStore _localStore;
+  late final _eventWriter = LocalEventWriter(_localStore);
   final String agentId;
   final String projectId;
 
   StreamSubscription<Map<String, dynamic>>? _eventSub;
+  void Function()? _flushEventDeltas;
   StreamSubscription<ChatQueueSnapshot>? _queueSub;
   Timer? _terminalReconcileTimer;
+  Timer? _resumeRecoveryWatchdog;
+  Timer? _operationClearTimer;
   String? _currentTaskId; // 当前正在进行的 task id，用于取消
+  String? get activeTaskId => _currentTaskId;
   Completer<String>? _sessionReadyCompleter;
   String? _queueSessionId;
   Timer? _queueReconnectTimer;
@@ -693,7 +892,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
   DateTime? _historyCursorCreatedAt;
   String? _historyCursorTaskId;
   int? _authoritativeSessionLoadVersion;
-  bool _resumeReconciliationInFlight = false;
+  Object? _resumeReconciliationToken;
+  Object? _terminalProbeToken;
+  ReplySyncProgress? replySyncProgress;
+
+  @visibleForTesting
+  Duration recoveryStatusTimeout = const Duration(seconds: 6);
+  Duration resumeRecoveryWatchdogTimeout = const Duration(seconds: 9);
+  @visibleForTesting
+  Duration recoveryHistoryTimeout = const Duration(seconds: 4);
+  @visibleForTesting
+  Duration activeHistoryHydrationTimeout = const Duration(milliseconds: 750);
+  @visibleForTesting
+  Duration terminalHistoryTimeout = const Duration(seconds: 26);
 
   @visibleForTesting
   Duration terminalReconcileInterval = const Duration(seconds: 8);
@@ -703,17 +914,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required this.agentId,
     required this.projectId,
     LocalChatStore? localStore,
+    bool initiallyVisible = true,
   }) : _repo = repo,
        _localStore = localStore ?? createLocalChatStore(),
-       super(const ChatState());
-
-  String get _localIdentity {
-    try {
-      return AppStorage.storageIdentity;
-    } catch (_) {
-      return '';
-    }
+       _localIdentity = AppStorage.initialized
+           ? AppStorage.storageIdentity
+           : '',
+       super(const ChatState()) {
+    _pageVisible = initiallyVisible;
   }
+
+  final String _localIdentity;
 
   Future<void> _loadCachedSession(String sessionId, int loadVersion) async {
     final identity = _localIdentity;
@@ -760,6 +971,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
             : null,
         hasEarlierHistory: cached.length >= _sessionHistoryPageSize,
       );
+      // Restore usage before waiting for network reconciliation. The per-account
+      // event cache already contains the last live measurement for this session.
+      for (final task in sortedTasks.reversed.take(1)) {
+        final snapshot = await _localSnapshotForTask(task.taskId);
+        if (!_isCurrentSessionLoad(sessionId, loadVersion)) return;
+        final usage = snapshot.contextUsage;
+        if (usage == null || !usage.hasContextMeasurement) continue;
+        state = state.copyWith(
+          contextUsage: _mergeContextUsage(state.contextUsage, usage),
+        );
+        break;
+      }
       await _reconcileTerminalStreamingMessages(
         sessionId: sessionId,
         loadVersion: loadVersion,
@@ -905,56 +1128,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
     };
   }
 
-  final Map<String, int> _persistOkCounts = {};
-
   void _persistTaskEvent(
     String taskId,
     String eventKey,
     Map<String, dynamic> event,
   ) {
     final identity = _localIdentity;
-    if (identity.isEmpty) {
-      _logChatDiag(
-        'persist_skip',
-        taskId: taskId,
-        data: {'reason': 'empty_identity'},
-      );
-      return;
-    }
-    unawaited(() async {
-      try {
-        await _localStore.init();
-        final inserted = await _localStore.recordEvent(
-          identity: identity,
-          taskId: taskId,
-          eventKey: eventKey,
-          payload: event,
-        );
-        if (!inserted) return;
-        final count = (_persistOkCounts[taskId] ?? 0) + 1;
-        _persistOkCounts[taskId] = count;
-        final type = event['type']?.toString() ?? '';
-        if (count == 1 ||
-            count % 25 == 0 ||
-            type == 'tool_updated' ||
-            type == 'completed' ||
-            type == 'failed' ||
-            type == 'cancelled') {
-          _logChatDiag(
-            'persist_ok',
-            taskId: taskId,
-            data: {'count': count, 'type': type},
-          );
-        }
-      } catch (error) {
-        debugPrint('[Chat] local event write failed: $error');
-        _logChatDiag(
-          'persist_failed',
-          taskId: taskId,
-          data: {'error': error.toString()},
-        );
-      }
-    }());
+    if (identity.isEmpty) return;
+    _eventWriter.add(LocalChatEvent(identity, taskId, eventKey, event));
   }
 
   int _nextTaskMessageIndex(String taskId) {
@@ -983,7 +1164,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       ...?data,
     };
     debugPrint('[Latency][Chat] $payload');
-    unawaited(AppLogService.log('chat_latency', data: payload));
+    unawaited(_writeChatDiagnostic('chat_latency', payload));
   }
 
   void _logChatDiag(
@@ -999,7 +1180,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
       ...?data,
     };
     debugPrint('[ChatDiag] $stage $payload');
-    unawaited(AppLogService.log('chat_diag', data: payload));
+    unawaited(_writeChatDiagnostic('chat_diag', payload));
+  }
+
+  Future<void> _writeChatDiagnostic(
+    String event,
+    Map<String, dynamic> payload,
+  ) async {
+    try {
+      await AppLogService.log(event, data: payload);
+    } catch (error) {
+      // A removed/rotated log file or full disk must not interrupt live chat.
+      debugPrint('[ChatDiag] log write failed: $error');
+    }
   }
 
   String _blockOrderSummary(List<ChatMessageBlock> blocks) {
@@ -1098,19 +1291,23 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   ({List<ChatMessage> messages, List<String> snapshotTaskIds})
-  _messagesFromHistoryTasks(List<TaskModel> sortedTasks) {
+  _messagesFromHistoryTasks(
+    List<TaskModel> sortedTasks, {
+    bool hydrateLatest = true,
+  }) {
     final msgs = <ChatMessage>[];
     final snapshotTaskIds = <String>[];
     for (final task in sortedTasks) {
       final taskCreatedAt =
           task.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-      if (task.userText != null && task.userText!.isNotEmpty) {
+      final userText = task.userText;
+      if (userText != null && userText.isNotEmpty) {
         msgs.add(
           ChatMessage(
             id: 'user_${task.taskId}',
             role: MessageRole.user,
             state: MessageState.done,
-            content: task.userText!,
+            content: userText,
             createdAt: taskCreatedAt,
             taskId: task.taskId,
             taskCreatedAt: taskCreatedAt,
@@ -1121,15 +1318,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
       String agentContent = task.result ?? '';
       String thinkingContent = '';
-      String statusHint = '';
-      final needsEventSnapshot =
-          task.status != TaskStatus.dispatched &&
-          task.status != TaskStatus.started &&
-          task.status != TaskStatus.running;
       final isActive = _isTaskActive(task.status);
-      if (needsEventSnapshot ||
-          task.status == TaskStatus.waitingApproval ||
-          isActive) {
+      String statusHint = '';
+      // Only the newest task is hydrated automatically. Older bodies remain
+      // immediately readable; their tool details are explicitly requested.
+      if (hydrateLatest &&
+          task.taskId == sortedTasks.last.taskId &&
+          agentContent.length <= _maxAutoHydrateResultChars) {
         snapshotTaskIds.add(task.taskId);
       }
       final isCancelling = task.status == TaskStatus.cancelling;
@@ -1152,7 +1347,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
           state: msgState,
           content: agentContent,
           thinkingContent: thinkingContent,
+          historyDetails: snapshotTaskIds.contains(task.taskId)
+              ? HistoryDetailsState.loading
+              : HistoryDetailsState.deferred,
           statusHint: statusHint,
+          streamRecovery: isActive
+              ? StreamRecovery.syncing
+              : StreamRecovery.none,
           errorDetail: task.status == TaskStatus.failed
               ? _taskErrorDetail(task, const TaskEventSnapshot())
               : '',
@@ -1186,9 +1387,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
         'session_id': sessionId,
       },
     );
+    if (_disposed) return;
     _cancelEventSub();
     _cancelQueueSub();
+    replySyncProgress = null;
     final loadVersion = ++_sessionLoadVersion;
+    _handledTaskEventKeys.clear();
+    _activeTaskAgentMessageIds.clear();
     _historyCursorCreatedAt = null;
     _historyCursorTaskId = null;
     _authoritativeSessionLoadVersion = null;
@@ -1280,6 +1485,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
           : null;
       if (taskToWatch != null && agentMessageIdToWatch != null) {
         _currentTaskId = taskToWatch.taskId;
+        // The live subscription is the source of truth for an active task.
+        // Do not keep the bubble in the historical-sync animation while a
+        // potentially large Agent history is being hydrated.
+        _updateMessage(agentMessageIdToWatch, (message) {
+          if (message.streamRecovery == StreamRecovery.syncing) {
+            message.streamRecovery = StreamRecovery.following;
+          }
+        });
         _listenEvents(
           taskToWatch.taskId,
           agentMessageIdToWatch,
@@ -1354,7 +1567,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final pageTasks = tasks.take(_sessionHistoryPageSize).toList();
       final sortedTasks = [...pageTasks]..sort(_compareTaskTimeline);
       _updateHistoryCursor(sortedTasks);
-      final history = _messagesFromHistoryTasks(sortedTasks);
+      final history = _messagesFromHistoryTasks(
+        sortedTasks,
+        hydrateLatest: false,
+      );
       final existingIds = state.messages.map((message) => message.id).toSet();
       final prependMessages = history.messages
           .where((message) => !existingIds.contains(message.id))
@@ -1363,16 +1579,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         messages: [...prependMessages, ...state.messages],
         hasEarlierHistory: tasks.length > _sessionHistoryPageSize,
       );
-      // Snapshot hydration can expand one historical task into multiple visual
-      // messages. Keep the history transaction active until that expansion is
-      // complete so the UI never treats it as new conversation output.
-      if (history.snapshotTaskIds.isNotEmpty) {
-        await _hydrateSessionSnapshots(
-          sessionId: sessionId,
-          loadVersion: loadVersion,
-          taskIds: history.snapshotTaskIds,
-        );
-      }
       if (!_isCurrentSessionLoad(sessionId, loadVersion)) return 0;
       state = state.copyWith(loadingEarlierHistory: false);
       await AppLogService.log(
@@ -1409,6 +1615,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   void newSession() {
+    replySyncProgress = null;
     unawaited(
       AppLogService.log(
         'chat_new_session',
@@ -1940,7 +2147,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   Future<void> _startQueueSync(String sessionId, {bool force = false}) async {
     final normalized = sessionId.trim();
-    if (_disposed || normalized.isEmpty) return;
+    if (!_detailsEnabled || normalized.isEmpty) return;
     if (!force && _queueSessionId == normalized && _queueSub != null) return;
     if (_queueSessionId != normalized) {
       _queueInitialSyncFailures = 0;
@@ -1948,7 +2155,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final syncVersion = ++_queueSyncVersion;
     _queueReconnectTimer?.cancel();
     await _queueSub?.cancel();
-    if (_disposed || syncVersion != _queueSyncVersion) return;
+    if (!_detailsEnabled || syncVersion != _queueSyncVersion) return;
     _queueSessionId = normalized;
     _queueInitialSyncPending = true;
     state = state.copyWith(queueLoading: true, clearQueueError: true);
@@ -1980,7 +2187,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
             }
             // 只有确实存在待发送消息时，才把断连暴露给用户。
             if (state.queue.queuedItems.isEmpty) {
-              state = state.copyWith(queueLoading: false, clearQueueError: true);
+              state = state.copyWith(
+                queueLoading: false,
+                clearQueueError: true,
+              );
             } else {
               state = state.copyWith(
                 queueLoading: false,
@@ -2015,6 +2225,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   void _scheduleQueueReconnect(String sessionId) {
+    if (!_detailsEnabled) return;
     _queueReconnectTimer?.cancel();
     _queueReconnectTimer = Timer(const Duration(seconds: 2), () {
       if (!_disposed && _queueSessionId == sessionId) {
@@ -2114,10 +2325,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
     _listenEvents(item.taskId, agentMessageId, DateTime.now());
   }
 
-  void _listenEvents(String taskId, String agentMsgId, DateTime sentAt) {
+  void _listenEvents(
+    String taskId,
+    String agentMsgId,
+    DateTime sentAt, {
+    bool fastActiveRecovery = false,
+  }) {
     debugPrint('[Chat] _listenEvents taskId=$taskId agentMsgId=$agentMsgId');
     _cancelEventSub(clearPendingCancel: false);
     _currentTaskId = taskId;
+    if (!_detailsEnabled) return;
+    final liveVersion = ++_liveVersion;
     _activeTaskAgentMessageIds.putIfAbsent(taskId, () => agentMsgId);
     String activeAgentMessageId() =>
         _activeTaskAgentMessageIds[taskId] ?? agentMsgId;
@@ -2127,7 +2345,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
     var activeRoundStartedAt = sentAt;
     final sseListenStartedAt = DateTime.now();
-    bool firstDelta = true;
     var firstSseEvent = true;
     var firstTextDeltaLogged = false;
     var firstReasoningDeltaLogged = false;
@@ -2182,7 +2399,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         activeGoalIteration = eventIteration ?? goalRoundIndex;
         openedGoalIterations.add(activeGoalIteration!);
         activeRoundStartedAt = startedAt;
-        firstDelta = true;
         return;
       }
 
@@ -2204,7 +2420,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       activeGoalIteration = eventIteration ?? goalRoundIndex;
       openedGoalIterations.add(activeGoalIteration!);
       activeRoundStartedAt = startedAt;
-      firstDelta = true;
     }
 
     _logChatLatency('sse_listen_started', taskId: taskId, startedAt: sentAt);
@@ -2235,17 +2450,42 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
     }
 
-    _eventSub = _repo
-        .watchTaskEvents(taskId)
-        .listen(
+    final rawEvents = _repo.watchTaskEvents(taskId).where((event) {
+      if (!_detailsEnabled || liveVersion != _liveVersion) return false;
+      if (event['type'] == 'connection_ready') {
+        _logChatDiag(
+          'resume_live_connected',
+          taskId: taskId,
+          data: {'elapsed_ms': _elapsedMsSince(sseListenStartedAt)},
+        );
+        _updateMessage(activeAgentMessageId(), (m) {
+          m.streamRecovery = StreamRecovery.following;
+        });
+        if (state.operationTitle == '正在恢复回复') {
+          _updateOperation(
+            'opencode',
+            stepState: ChatOperationStepState.done,
+            detail: '实时通道已连接',
+          );
+        }
+        return false; // Transport status is neither a task event nor history.
+      }
+      final eventKey = _taskEventKey(event);
+      if (!handledEventKeys.add(eventKey)) {
+        dupDropped += 1;
+        return false;
+      }
+      persistedCount += 1;
+      _persistTaskEvent(taskId, eventKey, event);
+      return true;
+    });
+    _eventSub =
+        batchTaskDeltas(
+          rawEvents,
+          onFlushReady: (flush) => _flushEventDeltas = flush,
+        ).listen(
           (event) {
-            final eventKey = _taskEventKey(event);
-            if (!handledEventKeys.add(eventKey)) {
-              dupDropped += 1;
-              return;
-            }
-            persistedCount += 1;
-            _persistTaskEvent(taskId, eventKey, event);
+            if (!_detailsEnabled || liveVersion != _liveVersion) return;
             final type = event['type'] as String? ?? 'unknown';
             sseCounts[type] = (sseCounts[type] ?? 0) + 1;
             final notable =
@@ -2277,6 +2517,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
             logSseSummary(force: notable);
             if (firstSseEvent) {
               firstSseEvent = false;
+              _updateMessage(activeAgentMessageId(), (m) {
+                if (m.streamRecovery == StreamRecovery.syncing ||
+                    m.streamRecovery == StreamRecovery.reconnecting) {
+                  m.streamRecovery = StreamRecovery.following;
+                }
+              });
               _logChatLatency(
                 'first_sse_event',
                 taskId: taskId,
@@ -2337,13 +2583,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
                   state = state.copyWith(
                     contextUsage: _mergeContextUsage(state.contextUsage, usage),
                   );
-                  final generated =
-                      (usage.outputTokens ?? 0) + (usage.reasoningTokens ?? 0);
-                  if (generated > 0) {
-                    _updateMessage(activeAgentMessageId(), (m) {
-                      m.tokenCount = math.max(m.tokenCount ?? 0, generated);
-                    });
-                  }
+                  _updateMessage(activeAgentMessageId(), (m) {
+                    _applyReplyStatistics(
+                      m,
+                      const ReplyStatistics().recordUsage(
+                        Map<String, dynamic>.from(event['metadata'] as Map),
+                      ),
+                    );
+                  });
                 }
                 break;
 
@@ -2543,6 +2790,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
                     }
                     final mutable = message.copyForUpdate();
                     _finalizeRunningTools(mutable);
+                    // A live round boundary is not a history recovery failure.
+                    mutable.historyDetails = HistoryDetailsState.none;
+                    mutable.streamRecovery = StreamRecovery.none;
                     if (mutable.state == MessageState.streaming) {
                       mutable.statusHint = '';
                       mutable.imageGeneration = null;
@@ -2562,7 +2812,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
                   taskCreatedAt ??= sentAt;
                   final taskMessageIndex = _nextTaskMessageIndex(taskId);
                   if (!isSubagent &&
-                      !messages.any((message) => message.id == inputMessageId)) {
+                      !messages.any(
+                        (message) => message.id == inputMessageId,
+                      )) {
                     messages.add(
                       ChatMessage(
                         id: inputMessageId,
@@ -2599,7 +2851,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
                   }
                   setActiveAgentMessageId(nextAgentMessageId);
                   activeRoundStartedAt = eventTime(event);
-                  firstDelta = true;
                 }
                 state = startsNewRound
                     ? state.copyWith(
@@ -2617,12 +2868,29 @@ class ChatNotifier extends StateNotifier<ChatState> {
                 final content = event['content'] as String? ?? '';
                 final field = event['field'] as String? ?? 'text';
                 _updateMessage(activeAgentMessageId(), (m) {
-                  // 记录首字耗时（仅第一个 text delta）
-                  if (firstDelta && field == 'text' && content.isNotEmpty) {
-                    m.firstTokenTime = DateTime.now().difference(
-                      activeRoundStartedAt,
+                  if (field == 'text' &&
+                      content.isNotEmpty &&
+                      event['_reconstructed_history'] != true) {
+                    _applyReplyStatistics(
+                      m,
+                      const ReplyStatistics()
+                          .recordUsage(
+                            Map<String, dynamic>.from(
+                              (event['_first_delta_metadata'] ??
+                                      event['metadata'] ??
+                                      const {})
+                                  as Map,
+                            ),
+                          )
+                          .recordFirstText(
+                            DateTime.tryParse(
+                              (event['_first_delta_sent_at'] ??
+                                          event['sent_at'])
+                                      ?.toString() ??
+                                  '',
+                            ),
+                          ),
                     );
-                    firstDelta = false;
                   }
                   if (!firstReasoningDeltaLogged &&
                       field == 'reasoning' &&
@@ -2664,14 +2932,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
                     m.content += content;
                     _appendTextBlock(m, content);
                     m.statusHint = '';
-                  }
-                  final generatedChars =
-                      m.content.runes.length + m.thinkingContent.runes.length;
-                  if (generatedChars > 0) {
-                    final estimated = (generatedChars + 3) ~/ 4;
-                    if ((m.tokenCount ?? 0) < estimated) {
-                      m.tokenCount = estimated;
-                    }
                   }
                   _markStreaming(m);
                 });
@@ -2767,6 +3027,35 @@ class ChatNotifier extends StateNotifier<ChatState> {
                       event['content'] as String? ??
                       '任务超时，正在终止执行',
                 );
+                if (_cancelRequestedTaskIds.contains(taskId) ||
+                    state.cancelRequested) {
+                  _updateOperation(
+                    'server',
+                    stepState: ChatOperationStepState.done,
+                    detail: '已转发到 Agent',
+                  );
+                  _updateOperation(
+                    'opencode',
+                    stepState: ChatOperationStepState.active,
+                    detail: 'Agent 已接收停止指令 · 停止中',
+                  );
+                  _updateOperation(
+                    'task',
+                    stepState: ChatOperationStepState.active,
+                    detail: '正在停止',
+                  );
+                  _updateMessage(activeAgentMessageId(), (m) {
+                    if (!_isClosedMessage(m)) {
+                      m.statusHint = 'Agent 已接收停止指令 · 正在停止';
+                    }
+                  });
+                  state = state.copyWith(
+                    sending: false,
+                    taskActive: true,
+                    cancelRequested: true,
+                  );
+                  break;
+                }
                 _updateMessage(activeAgentMessageId(), (m) {
                   m.statusHint = '';
                   if (m.content.isEmpty) {
@@ -2899,10 +3188,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
                     );
                   }
                 }
-                final totalTokens = usage != null
-                    ? ((usage['output_tokens'] as num?)?.toInt() ?? 0) +
-                          ((usage['reasoning_tokens'] as num?)?.toInt() ?? 0)
-                    : null;
                 if (artifacts.isEmpty && files.isNotEmpty) {
                   unawaited(
                     AppLogService.log(
@@ -2952,8 +3237,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
                   m.finalDeliveryPhase = FinalDeliveryPhase.idle;
                   _finalizeRunningTools(m);
                   m.state = MessageState.done;
-                  if (totalTokens != null && totalTokens > 0) {
-                    m.tokenCount = math.max(m.tokenCount ?? 0, totalTokens);
+                  if (usage != null) {
+                    _applyReplyStatistics(
+                      m,
+                      const ReplyStatistics().recordUsage(usage),
+                    );
                   }
                 });
                 _closeStreamingAgentMessagesForTask(taskId);
@@ -3015,8 +3303,23 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
               case 'cancelled':
                 reachedTerminal = true;
+                if (_cancelRequestedTaskIds.contains(taskId) ||
+                    state.cancelRequested) {
+                  _updateOperation(
+                    'opencode',
+                    stepState: ChatOperationStepState.done,
+                    detail: 'Agent 已停止执行',
+                  );
+                  _updateOperation(
+                    'task',
+                    stepState: ChatOperationStepState.done,
+                    detail: '任务已停止',
+                    title: '任务已停止',
+                    autoClear: true,
+                  );
+                }
                 _updateMessage(activeAgentMessageId(), (m) {
-                  m.statusHint = '';
+                  m.statusHint = state.cancelRequested ? '任务已停止' : '';
                   m.imageGeneration = null;
                   m.finalDeliveryPhase = FinalDeliveryPhase.idle;
                   if (m.content.isEmpty) {
@@ -3041,6 +3344,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
             }
           },
           onError: (e) {
+            if (!_detailsEnabled || liveVersion != _liveVersion) return;
             debugPrint('[Chat] SSE error: $e');
             logSseSummary(force: true);
             _logChatDiag(
@@ -3059,10 +3363,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
                 taskId,
                 activeAgentMessageId(),
                 activeRoundStartedAt,
+                fastActiveRecovery: fastActiveRecovery,
               ),
             );
           },
           onDone: () {
+            if (!_detailsEnabled || liveVersion != _liveVersion) return;
             debugPrint('[Chat] SSE stream done');
             logSseSummary(force: true);
             _logChatDiag(
@@ -3084,6 +3390,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
                 taskId,
                 activeAgentMessageId(),
                 activeRoundStartedAt,
+                fastActiveRecovery: fastActiveRecovery,
               ),
             );
           },
@@ -3098,7 +3405,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   bool _isCurrentSessionLoad(String sessionId, int loadVersion) {
-    return state.currentSessionId == sessionId &&
+    return !_disposed &&
+        state.currentSessionId == sessionId &&
         _sessionLoadVersion == loadVersion;
   }
 
@@ -3187,6 +3495,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           (message) =>
               message.role == MessageRole.agent &&
               message.state == MessageState.streaming &&
+              message.historyDetails != HistoryDetailsState.deferred &&
               message.taskId?.trim().isNotEmpty == true,
         )
         .map((message) => message.taskId!.trim())
@@ -3303,7 +3612,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     } catch (_) {
       // The task status is authoritative. An unavailable event archive must
       // not keep a terminal task rendered as an active stream.
-      server = const TaskEventSnapshot();
+      server = const TaskEventSnapshot(complete: false);
     }
     final local = await _localSnapshotForTask(taskId);
     return _mergeSnapshotsPreferringInsertionOrder(
@@ -3389,15 +3698,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         'server': _blockOrderSummary(server.blocks),
       },
     );
-    if (ordered.isEmpty) {
-      // A snapshot can carry round/input/lifecycle data without materialized
-      // blocks (for example, a completed task restored from the event log).
-      // Do not discard that structured history merely because both block
-      // arrays are empty.
-      return _snapshotHasStructuredData(server) ? server : local;
-    }
     final preferServerText = used == 'server' && server.text.isNotEmpty;
     return TaskEventSnapshot(
+      complete: server.complete,
+      preservesToolPositions: used == 'server'
+          ? server.preservesToolPositions
+          : local.preservesToolPositions,
       text: preferServerText
           ? server.text
           : (local.text.isNotEmpty ? local.text : server.text),
@@ -3418,8 +3724,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       errorDetail: server.errorDetail.isNotEmpty
           ? server.errorDetail
           : local.errorDetail,
-      rounds: server.rounds.isNotEmpty ? server.rounds : local.rounds,
+      rounds: _mergeRoundStatistics(local.rounds, server.rounds),
       contextUsage: server.contextUsage ?? local.contextUsage,
+      statistics: local.statistics.merge(server.statistics),
       appliedInputs: server.appliedInputs.isNotEmpty
           ? server.appliedInputs
           : local.appliedInputs,
@@ -3427,18 +3734,70 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
   }
 
-  bool _snapshotHasStructuredData(TaskEventSnapshot snapshot) {
-    return snapshot.text.isNotEmpty ||
-        snapshot.reasoning.isNotEmpty ||
-        snapshot.statusHint.isNotEmpty ||
-        snapshot.goalProgress.isNotEmpty ||
-        snapshot.planHistory.isNotEmpty ||
-        snapshot.toolCalls.isNotEmpty ||
-        snapshot.rounds.isNotEmpty ||
-        snapshot.appliedInputs.isNotEmpty ||
-        snapshot.errorDetail.isNotEmpty ||
-        snapshot.contextUsage != null ||
-        snapshot.finalDeliveryPhase != FinalDeliveryPhase.idle;
+  List<TaskEventRoundSnapshot> _mergeRoundStatistics(
+    List<TaskEventRoundSnapshot> local,
+    List<TaskEventRoundSnapshot> server,
+  ) {
+    if (server.isEmpty) return local;
+    // Equal boundaries establish an index mapping. With a partial local cache,
+    // only merge a round when its start time or request identity matches.
+    return [
+      for (var i = 0; i < server.length; i++)
+        (() {
+          final round = server[i];
+          TaskEventRoundSnapshot? cached;
+          if (local.length == server.length) {
+            cached = local[i];
+          } else {
+            for (final candidate in local) {
+              if ((round.startedAt != null &&
+                      candidate.startedAt == round.startedAt) ||
+                  round.statistics.requests.keys.any(
+                    candidate.statistics.requests.containsKey,
+                  )) {
+                cached = candidate;
+                break;
+              }
+            }
+          }
+          final stats = (cached?.statistics ?? const ReplyStatistics()).merge(
+            round.statistics,
+          );
+          return TaskEventRoundSnapshot(
+            text: round.text,
+            reasoning: round.reasoning,
+            statusHint: round.statusHint,
+            goalProgress: round.goalProgress,
+            planHistory: round.planHistory,
+            toolCalls: round.toolCalls,
+            blocks: round.blocks,
+            errorDetail: round.errorDetail,
+            startedAt: round.startedAt,
+            statistics: stats,
+            tokenCount: stats.totalTokens,
+          );
+        })(),
+    ];
+  }
+
+  ReplyStatistics _statisticsForMessage(
+    ChatMessage message,
+    TaskEventSnapshot snapshot,
+  ) {
+    if (snapshot.rounds.length <= 1) return snapshot.statistics;
+    final candidates = snapshot.rounds
+        .where((round) => round.hasOutput)
+        .toList();
+    final messages = state.messages
+        .where((m) => m.role == MessageRole.agent && m.taskId == message.taskId)
+        .toList();
+    final index = messages.indexWhere((m) => m.id == message.id);
+    if (index >= 0 && messages.length == candidates.length) {
+      return candidates[index].statistics;
+    }
+    // During initial hydration only the task summary bubble may exist. Wait
+    // for round expansion instead of assigning whole-task totals to it.
+    return const ReplyStatistics();
   }
 
   String _goalCompletionContent(ChatMessage message) {
@@ -3484,20 +3843,66 @@ class ChatNotifier extends StateNotifier<ChatState> {
     return changed;
   }
 
+  ChatMessage? _lastTaskReply(String taskId) {
+    for (final message in state.messages.reversed) {
+      if (message.role == MessageRole.agent && message.taskId == taskId) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  final Map<String, Future<void>> _historyHydrations = {};
+
   Future<void> _hydrateSessionSnapshots({
     required String sessionId,
     required int loadVersion,
     required List<String> taskIds,
   }) async {
+    await Future.wait(
+      taskIds.map((taskId) async {
+        final key = '$loadVersion:$sessionId:$taskId';
+        final work = _historyHydrations.putIfAbsent(key, () async {
+          try {
+            await _applySessionSnapshot(
+              sessionId: sessionId,
+              loadVersion: loadVersion,
+              taskIds: [taskId],
+            );
+          } finally {
+            _historyHydrations.remove(key);
+          }
+        });
+        if (_lastTaskReply(taskId)?.state == MessageState.streaming) {
+          // Bound the caller's wait, not the lifetime of the hydration. The
+          // original read must still apply its result after a slow first page.
+          await work.timeout(activeHistoryHydrationTimeout, onTimeout: () {});
+        } else {
+          await work;
+        }
+      }),
+    );
+  }
+
+  Future<void> _applySessionSnapshot({
+    required String sessionId,
+    required int loadVersion,
+    required List<String> taskIds,
+  }) async {
+    final owners = {for (final id in taskIds) id: _lastTaskReply(id)};
     final startedAt = DateTime.now();
     _logChatDiag('history_hydrate_start', data: {'tasks': taskIds.length});
     final snapshots = await Future.wait(
       taskIds.map((taskId) async {
         try {
-          final snapshot = await _readTaskEventSnapshot(taskId);
+          final snapshot = await _readTaskEventSnapshot(
+            taskId,
+          ).timeout(terminalHistoryTimeout);
           return MapEntry(taskId, snapshot);
         } catch (_) {
-          return const MapEntry('', TaskEventSnapshot());
+          // SSE only carries a recent window; it is not proof of complete
+          // body recovery. Expose an explicit retryable historical gap.
+          return MapEntry(taskId, const TaskEventSnapshot(complete: false));
         }
       }),
     );
@@ -3506,9 +3911,38 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final snapshotMap = <String, TaskEventSnapshot>{};
     for (final entry in snapshots) {
       if (entry.key.isEmpty) continue;
+      final owner = owners[entry.key];
+      final current = _lastTaskReply(entry.key);
+      // A snapshot requested before a new live round must not replace it.
+      if (owner == null ||
+          current?.id != owner.id ||
+          current?.state != owner.state) {
+        continue;
+      }
+      if (owner.state == MessageState.streaming &&
+          (current!.content != owner.content ||
+              current.blocks.length != owner.blocks.length ||
+              current.state != owner.state)) {
+        _updateMessage(owner.id, (m) {
+          m.historyDetails = HistoryDetailsState.partial;
+          if (m.streamRecovery == StreamRecovery.syncing) {
+            m.streamRecovery = StreamRecovery.following;
+          }
+        });
+        continue;
+      }
       snapshotMap[entry.key] = entry.value;
     }
     if (snapshotMap.isEmpty) {
+      if (taskIds.contains(_currentTaskId) &&
+          state.operationTitle == '正在恢复回复') {
+        replySyncProgress?.finish('实时回复已更新，历史详情可重试');
+        _updateOperation(
+          'task',
+          stepState: ChatOperationStepState.failed,
+          detail: '已保留实时回复，历史详情可重试',
+        );
+      }
       _logChatDiag(
         'history_hydrate_end',
         data: {'tasks': 0, 'elapsed_ms': _elapsedMsSince(startedAt)},
@@ -3528,9 +3962,48 @@ class ChatNotifier extends StateNotifier<ChatState> {
       if (replacedRoundTaskIds.contains(original.taskId)) continue;
       final snapshot = snapshotMap[original.taskId!];
       if (snapshot == null) continue;
+      if (!snapshot.complete) {
+        final partial = original.copyForUpdate()
+          ..historyDetails = original.id == owners[original.taskId]?.id
+              ? HistoryDetailsState.partial
+              : HistoryDetailsState.none;
+        // A bounded read can still contain useful body text. Show a verified
+        // single-round prefix only in an empty bubble; never replace a fuller
+        // live reply or guess a boundary across inserted/goal rounds.
+        if (partial.content.isEmpty &&
+            snapshot.text.isNotEmpty &&
+            snapshot.appliedInputs.isEmpty &&
+            snapshot.rounds.length <= 1) {
+          _applyHistorySnapshotToMessage(
+            partial,
+            snapshot,
+            finalizeTools: partial.state != MessageState.streaming,
+          );
+          _setRecoveredBody(partial, snapshot.text);
+        }
+        msgs[i] = partial;
+        changed = true;
+        continue;
+      }
       final mutableMessage = original.copyForUpdate();
       msgs[i] = mutableMessage;
       final msg = mutableMessage;
+      msg.historyDetails = HistoryDetailsState.none;
+      msg.toolOrderKnown =
+          snapshot.preservesToolPositions ||
+          (msg.toolOrderKnown && _blocksAreInterleaved(msg.blocks));
+      changed = true;
+      final previousTokens = msg.tokenCount;
+      final previousLatency = msg.firstTokenTime;
+      _applyReplyStatistics(msg, _statisticsForMessage(msg, snapshot));
+      if (previousTokens != msg.tokenCount ||
+          previousLatency != msg.firstTokenTime) {
+        changed = true;
+      }
+      if (msg.streamRecovery == StreamRecovery.syncing) {
+        msg.streamRecovery = StreamRecovery.following;
+        changed = true;
+      }
       if (snapshot.contextUsage != null) {
         nextContextUsage = _mergeContextUsage(
           nextContextUsage,
@@ -3557,7 +4030,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
             endIndex += 1;
           }
           final roundMessages = _messagesFromTaskRoundSnapshot(
-            msgs[firstIndex],
+            msgs[firstIndex].copyForUpdate()
+              ..state = owners[msg.taskId]!.state
+              ..streamRecovery = msg.streamRecovery
+              ..historyDetails = HistoryDetailsState.none,
             snapshot,
           );
           if (roundMessages.isNotEmpty) {
@@ -3576,8 +4052,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
           }
         }
       }
-      if (msg.content.isEmpty && snapshot.text.isNotEmpty) {
-        msg.content = snapshot.text;
+      if (snapshot.text.isNotEmpty &&
+          (msg.content.isEmpty ||
+              (msg.state == MessageState.streaming &&
+                  snapshot.appliedInputs.isEmpty &&
+                  snapshot.rounds.length <= 1))) {
+        // The unchanged-owner guard above establishes the live boundary. A
+        // complete single-round snapshot supplies the whole body, not merely
+        // the recent SSE suffix; keep content and rendered blocks in sync.
+        _setRecoveredBody(msg, snapshot.text);
         changed = true;
       }
       final previousBlocks = msg.blocks;
@@ -3622,6 +4105,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
         contextUsage: nextContextUsage,
       );
     }
+    if (_isCurrentSessionLoad(sessionId, loadVersion) &&
+        taskIds.contains(_currentTaskId) &&
+        state.operationTitle == '正在恢复回复') {
+      final reply = _lastTaskReply(_currentTaskId!);
+      final complete = reply?.historyDetails == HistoryDetailsState.none;
+      replySyncProgress?.finish(complete ? '已有回复已恢复' : '历史回复尚未补齐');
+      _updateOperation(
+        'task',
+        stepState: complete
+            ? ChatOperationStepState.done
+            : ChatOperationStepState.failed,
+        detail: complete ? '已有回复已恢复' : '历史回复尚未补齐，可重试',
+        autoClear: complete,
+      );
+    }
     _logChatDiag(
       'history_hydrate_end',
       data: {
@@ -3648,6 +4146,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     ChatMessage base,
     TaskEventSnapshot snapshot,
   ) {
+    base = base.copyForUpdate()
+      ..toolOrderKnown =
+          snapshot.preservesToolPositions ||
+          (base.toolOrderKnown && _blocksAreInterleaved(base.blocks));
     final taskId = base.taskId;
     if (taskId == null) return const [];
     final rounds = snapshot.rounds;
@@ -3766,7 +4268,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     String fallbackAgentMessageId,
     TaskEventSnapshot snapshot,
   ) {
-    if (snapshot.appliedInputs.isEmpty || snapshot.rounds.isEmpty) {
+    if ((snapshot.appliedInputs.isEmpty &&
+            !_shouldRenderSnapshotAsGoalRounds(snapshot)) ||
+        snapshot.rounds.isEmpty) {
       return fallbackAgentMessageId;
     }
     final messages = List<ChatMessage>.from(state.messages);
@@ -3781,7 +4285,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
       endIndex += 1;
     }
     final restored = _messagesFromTaskRoundSnapshot(
-      messages[firstAgentIndex],
+      messages[firstAgentIndex].copyForUpdate()
+        ..state = (_lastTaskReply(taskId) ?? messages[firstAgentIndex]).state
+        ..historyDetails = (_lastTaskReply(taskId) ?? messages[firstAgentIndex])
+            .historyDetails,
       snapshot,
     );
     if (restored.isEmpty) return fallbackAgentMessageId;
@@ -3826,6 +4333,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       content: visibleContent,
       thinkingContent: round.reasoning,
       statusHint: isLast ? round.statusHint : '',
+      streamRecovery: isLast ? base.streamRecovery : StreamRecovery.none,
+      historyDetails: isLast ? base.historyDetails : HistoryDetailsState.none,
+      toolOrderKnown: base.toolOrderKnown,
       errorDetail: isLast
           ? (round.errorDetail.isNotEmpty
                 ? round.errorDetail
@@ -3849,11 +4359,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
       hasPlanBinding:
           round.planHistory.isNotEmpty ||
           (isLast && base.plan != null && !base.plan!.isEmpty),
-      tokenCount: round.tokenCount ?? (isLast ? base.tokenCount : null),
+      tokenCount: round.statistics.totalTokens ?? round.tokenCount,
+      statistics: round.statistics,
       finalDeliveryPhase: isLast
           ? base.finalDeliveryPhase
           : FinalDeliveryPhase.idle,
-      firstTokenTime: visibleIndex == 0 ? base.firstTokenTime : null,
+      firstTokenTime:
+          round.statistics.latencyFrom(
+            visibleIndex == 0
+                ? (base.taskCreatedAt ?? base.createdAt)
+                : (round.startedAt ?? base.createdAt),
+          ) ??
+          (visibleIndex == 0 ? base.firstTokenTime : null),
     );
   }
 
@@ -3872,7 +4389,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   String _finalTaskContent(TaskModel task, TaskEventSnapshot snapshot) {
-    if (snapshot.appliedInputs.isNotEmpty) {
+    if (snapshot.appliedInputs.isNotEmpty ||
+        _shouldRenderSnapshotAsGoalRounds(snapshot)) {
       for (final round in snapshot.rounds.reversed) {
         if (!round.hasOutput) continue;
         if (round.text.trim().isNotEmpty) return round.text;
@@ -3915,6 +4433,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final marker = raw.indexOf('\ndetail:');
     if (marker < 0) return '';
     return raw.substring(marker + '\ndetail:'.length).trim();
+  }
+
+  void _applyReplyStatistics(ChatMessage message, ReplyStatistics incoming) {
+    message.statistics = message.statistics.merge(incoming);
+    message.tokenCount = message.statistics.totalTokens;
+    final start = (message.taskMessageIndex ?? 1) <= 1
+        ? (message.taskCreatedAt ?? message.createdAt)
+        : message.createdAt;
+    message.firstTokenTime =
+        message.statistics.latencyFrom(start) ?? message.firstTokenTime;
   }
 
   ContextUsageInfo _mergeContextUsage(
@@ -4227,6 +4755,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     TaskEventSnapshot snapshot, {
     required bool finalizeTools,
   }) {
+    _applyReplyStatistics(message, _statisticsForMessage(message, snapshot));
+    message.toolOrderKnown =
+        snapshot.preservesToolPositions ||
+        (message.toolOrderKnown && _blocksAreInterleaved(message.blocks));
     final tools = finalizeTools
         ? _finalizedToolCalls(snapshot.toolCalls)
         : snapshot.toolCalls;
@@ -4260,8 +4792,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
     TaskModel task,
     TaskEventSnapshot snapshot,
   ) {
+    _applyReplyStatistics(message, _statisticsForMessage(message, snapshot));
+    message.toolOrderKnown =
+        snapshot.preservesToolPositions ||
+        (message.toolOrderKnown && _blocksAreInterleaved(message.blocks));
     TaskEventRoundSnapshot? finalRound;
-    if (snapshot.appliedInputs.isNotEmpty) {
+    if (snapshot.appliedInputs.isNotEmpty ||
+        _shouldRenderSnapshotAsGoalRounds(snapshot)) {
       for (final round in snapshot.rounds.reversed) {
         if (round.hasOutput) {
           finalRound = round;
@@ -4333,119 +4870,455 @@ class ChatNotifier extends StateNotifier<ChatState> {
     message.state = MessageState.done;
   }
 
+  void _setRecoveredBody(ChatMessage message, String content) {
+    if (content.isEmpty) return;
+    final rendered = message.blocks
+        .where((b) => b.type == ChatMessageBlockType.text)
+        .map((b) => b.text)
+        .join();
+    if (content.startsWith(rendered)) {
+      _appendTextBlock(message, content.substring(rendered.length));
+    } else {
+      // Keep tool positions; replace old body fragments with the authoritative
+      // result until the detailed interleaved snapshot arrives.
+      final blocks = <ChatMessageBlock>[];
+      var inserted = false;
+      for (final block in message.blocks) {
+        if (block.type == ChatMessageBlockType.text) {
+          if (!inserted) {
+            blocks.add(block.copyWith(text: content));
+            inserted = true;
+          }
+        } else {
+          blocks.add(block);
+        }
+      }
+      if (!inserted) {
+        blocks.add(
+          ChatMessageBlock.text(id: '${message.id}_result', text: content),
+        );
+      }
+      message.blocks = blocks;
+    }
+    message.content = content;
+  }
+
+  void _finishRecoveredTask(TaskModel task, String agentMsgId) {
+    final taskId = task.taskId;
+    final wasCancelRequested =
+        state.cancelRequested || _cancelRequestedTaskIds.contains(taskId);
+    final failed = task.status == TaskStatus.failed;
+    final completed = task.status == TaskStatus.completed;
+    _updateMessage(agentMsgId, (message) {
+      var result = completed ? (task.result ?? '') : '';
+      // A task result can span inserted-input rounds. Remove only an exact
+      // known preceding prefix; detailed history will restore missing rounds.
+      final previous = state.messages
+          .where((m) => m.role == MessageRole.agent && m.taskId == taskId)
+          .takeWhile((m) => m.id != agentMsgId)
+          .map((m) => m.content)
+          .join();
+      if (previous.isNotEmpty && result.startsWith(previous)) {
+        result = result.substring(previous.length);
+      }
+      if (result.isNotEmpty) _setRecoveredBody(message, result);
+      if (message.content.isEmpty && !completed) {
+        _setRecoveredBody(
+          message,
+          failed ? formatChatTaskError(task.error ?? '任务执行失败') : '已停止',
+        );
+      }
+      if (task.artifacts.isNotEmpty) {
+        message.artifacts = task.artifacts;
+        message.files = const [];
+      }
+      message.errorDetail = _taskErrorDetail(task, const TaskEventSnapshot());
+      message.statusHint = '';
+      message.streamRecovery = StreamRecovery.none;
+      message.historyDetails = HistoryDetailsState.loading;
+      message.imageGeneration = null;
+      message.finalDeliveryPhase = FinalDeliveryPhase.idle;
+      message.state = failed ? MessageState.failed : MessageState.done;
+      _finalizeRunningTools(message);
+    });
+    _closeStreamingAgentMessagesForTask(
+      taskId,
+      endState: failed ? MessageState.failed : MessageState.done,
+    );
+    _cancelEventSub();
+    if (wasCancelRequested || task.status == TaskStatus.cancelled) {
+      _updateOperation(
+        'opencode',
+        stepState: ChatOperationStepState.done,
+        detail: 'Agent 已停止执行',
+      );
+      _updateOperation(
+        'task',
+        stepState: ChatOperationStepState.done,
+        detail: '任务已停止',
+        title: '任务已停止',
+        autoClear: true,
+      );
+    }
+    state = state.copyWith(
+      sending: false,
+      taskActive: false,
+      cancelRequested: false,
+      clearApproval: true,
+      clearQuestion: true,
+    );
+    _logChatDiag(
+      'resume_terminal_applied',
+      taskId: taskId,
+      data: {
+        'status': task.status.name,
+        'result_length': task.result?.length ?? 0,
+      },
+    );
+    unawaited(_enrichRecoveredTask(task, agentMsgId, _sessionLoadVersion));
+  }
+
+  Future<void> retryHistoryDetails(String taskId) async {
+    final messages = state.messages
+        .where((m) => m.role == MessageRole.agent && m.taskId == taskId)
+        .toList();
+    if (messages.isEmpty ||
+        messages.any((m) => m.historyDetails == HistoryDetailsState.loading)) {
+      return;
+    }
+    final version = _sessionLoadVersion;
+    final messageId = messages.last.id;
+    bool ownsRound() =>
+        !_disposed &&
+        version == _sessionLoadVersion &&
+        _lastTaskReply(taskId)?.id == messageId;
+    _updateMessage(
+      messageId,
+      (m) => m.historyDetails = HistoryDetailsState.loading,
+    );
+    try {
+      final task = await _repo.getTask(taskId).timeout(recoveryStatusTimeout);
+      if (!ownsRound()) return;
+      if (_isTaskActive(task.status)) {
+        final sessionId = state.currentSessionId;
+        if (sessionId != null) {
+          await _hydrateSessionSnapshots(
+            sessionId: sessionId,
+            loadVersion: version,
+            taskIds: [taskId],
+          );
+        }
+      } else {
+        await _enrichRecoveredTask(task, messageId, version);
+      }
+    } catch (_) {
+      if (ownsRound()) {
+        _updateMessage(
+          messageId,
+          (m) => m.historyDetails = HistoryDetailsState.partial,
+        );
+      }
+    }
+  }
+
+  Future<void> _enrichRecoveredTask(
+    TaskModel task,
+    String agentMsgId,
+    int loadVersion,
+  ) async {
+    var ownerId = _lastTaskReply(task.taskId)?.id ?? agentMsgId;
+    bool ownsRound() =>
+        !_disposed &&
+        _sessionLoadVersion == loadVersion &&
+        _lastTaskReply(task.taskId)?.id == ownerId;
+    final progress = ReplySyncProgress('补齐历史详情');
+    replySyncProgress = progress;
+    void setDetails(HistoryDetailsState value) {
+      if (!ownsRound()) return;
+      state = state.copyWith(
+        messages: [
+          for (final message in state.messages)
+            if (message.role == MessageRole.agent &&
+                message.taskId == task.taskId)
+              message.copyForUpdate()
+                ..historyDetails = message.id == ownerId
+                    ? value
+                    : HistoryDetailsState.none
+            else
+              message,
+        ],
+      );
+    }
+
+    setDetails(HistoryDetailsState.loading);
+    try {
+      final snapshot = await _readTaskEventSnapshot(
+        task.taskId,
+      ).timeout(terminalHistoryTimeout);
+      if (!ownsRound() || _messageById(agentMsgId) == null) {
+        return;
+      }
+      if (!snapshot.complete) {
+        progress.finish('正文已就绪，历史详情未全部载入');
+        setDetails(HistoryDetailsState.partial);
+        _logChatDiag('resume_details_partial', taskId: task.taskId);
+        return;
+      }
+      var messageId = ownerId;
+      if (snapshot.appliedInputs.isNotEmpty ||
+          _shouldRenderSnapshotAsGoalRounds(snapshot)) {
+        messageId = _restoreTaskRoundMessages(
+          task.taskId,
+          agentMsgId,
+          snapshot,
+        );
+      }
+      ownerId = messageId;
+      _updateMessage(messageId, (message) {
+        if (task.status == TaskStatus.completed &&
+            (snapshot.text.isNotEmpty ||
+                snapshot.rounds.any((round) => round.hasOutput))) {
+          _applyCompletedTaskSnapshot(message, task, snapshot);
+        } else {
+          _applyHistorySnapshotToMessage(
+            message,
+            snapshot,
+            finalizeTools: true,
+          );
+          if (snapshot.text.isNotEmpty) {
+            _setRecoveredBody(message, snapshot.text);
+          }
+          message.errorDetail = _taskErrorDetail(task, snapshot);
+        }
+        message.streamRecovery = StreamRecovery.none;
+      });
+      if (snapshot.contextUsage != null) {
+        state = state.copyWith(
+          contextUsage: _mergeContextUsage(
+            state.contextUsage,
+            snapshot.contextUsage!,
+          ),
+        );
+      }
+      setDetails(HistoryDetailsState.none);
+      progress.finish('历史详情已补齐');
+      _logChatDiag('resume_details_applied', taskId: task.taskId);
+    } catch (error) {
+      progress.finish('正文已就绪，详情稍后同步');
+      setDetails(HistoryDetailsState.partial);
+      // Body and terminal state are already visible; detail retrieval never
+      // keeps the composer or the reply in a pending state.
+      if (!_disposed) {
+        _logChatDiag(
+          'resume_details_deferred',
+          taskId: task.taskId,
+          data: {'error': error.toString()},
+        );
+      }
+    }
+  }
+
   Future<void> _recoverTaskAfterStreamBreak(
     String taskId,
     String agentMsgId,
-    DateTime sentAt,
-  ) async {
-    if (_currentTaskId != taskId) return;
+    DateTime sentAt, {
+    bool fastActiveRecovery = false,
+  }) async {
+    final loadVersion = _sessionLoadVersion;
+    final liveVersion = _liveVersion;
+    bool isCurrent() =>
+        _detailsEnabled &&
+        _liveVersion == liveVersion &&
+        _currentTaskId == taskId &&
+        _sessionLoadVersion == loadVersion;
+    if (!isCurrent()) return;
+    final recoveryStartedAt = DateTime.now();
+    final progress = ReplySyncProgress('确认任务状态');
+    replySyncProgress = progress;
+    _beginOperation('正在恢复回复', const [
+      ChatOperationStep(
+        key: 'phone',
+        label: '手机',
+        detail: '请求任务状态',
+        state: ChatOperationStepState.active,
+      ),
+      ChatOperationStep(key: 'server', label: '服务端', detail: '等待响应'),
+      ChatOperationStep(
+        key: 'opencode',
+        label: 'OpenCode',
+        detail: '等待 Agent 状态',
+      ),
+      ChatOperationStep(key: 'task', label: '回复', detail: '等待恢复'),
+    ]);
     try {
-      final task = await _repo.getTask(taskId);
-      if (task.status == TaskStatus.cancelling ||
+      _logChatDiag('resume_status_start', taskId: taskId);
+      final task = await _repo.getTask(taskId).timeout(recoveryStatusTimeout);
+      _logChatDiag(
+        'resume_status_received',
+        taskId: taskId,
+        data: {
+          'status': task.status.name,
+          'elapsed_ms': DateTime.now()
+              .difference(recoveryStartedAt)
+              .inMilliseconds,
+        },
+      );
+      if (!isCurrent()) return;
+      _updateOperation(
+        'phone',
+        stepState: ChatOperationStepState.done,
+        detail: '状态请求完成',
+      );
+      _updateOperation(
+        'server',
+        stepState: ChatOperationStepState.done,
+        detail: '已返回任务状态',
+      );
+      _updateOperation(
+        'opencode',
+        stepState: ChatOperationStepState.active,
+        detail: 'Agent 状态：${task.status.name}',
+      );
+      if (task.status == TaskStatus.completed ||
+          task.status == TaskStatus.failed ||
           task.status == TaskStatus.cancelled) {
-        final snapshot = await _readTaskEventSnapshot(taskId);
-        _updateMessage(agentMsgId, (m) {
-          if (m.thinkingContent.isEmpty && snapshot.reasoning.isNotEmpty) {
-            m.thinkingContent = snapshot.reasoning;
-          }
-          _applyHistorySnapshotToMessage(m, snapshot, finalizeTools: true);
-          m.statusHint = '';
-          m.errorDetail = _taskErrorDetail(task, snapshot);
-          m.imageGeneration = null;
-          m.finalDeliveryPhase = FinalDeliveryPhase.idle;
-          if (m.content.isEmpty) {
-            if (snapshot.text.isNotEmpty) {
-              m.content = snapshot.text;
-              if (m.blocks.isEmpty) {
-                _appendTextBlock(m, snapshot.text);
-              }
-            } else if (task.error?.isNotEmpty == true) {
-              m.content = formatChatTaskError(task.error);
-              if (m.blocks.isEmpty) {
-                _appendTextBlock(m, m.content);
-              }
-            } else if (task.status == TaskStatus.cancelled) {
-              m.content = '已停止';
-              if (m.blocks.isEmpty) {
-                _appendTextBlock(m, m.content);
-              }
-            } else {
-              m.content = '任务超时，正在终止执行';
-              if (m.blocks.isEmpty) {
-                _appendTextBlock(m, m.content);
-              }
-            }
-          }
-          m.state = task.status == TaskStatus.cancelled
-              ? MessageState.done
-              : MessageState.failed;
-        });
-        state = state.copyWith(
-          sending: false,
-          taskActive: task.status == TaskStatus.cancelling,
-          clearApproval: true,
-          clearQuestion: true,
+        _finishRecoveredTask(task, agentMsgId);
+        _updateOperation(
+          'opencode',
+          stepState: ChatOperationStepState.done,
+          detail: 'Agent 已返回终态',
         );
-        if (task.status == TaskStatus.cancelling) {
-          await Future<void>.delayed(const Duration(milliseconds: 600));
-          if (_currentTaskId == taskId) {
-            _listenEvents(taskId, agentMsgId, sentAt);
-          }
-        }
+        _updateOperation(
+          'task',
+          stepState: task.status == TaskStatus.failed
+              ? ChatOperationStepState.failed
+              : ChatOperationStepState.done,
+          detail: task.status == TaskStatus.completed
+              ? '任务已完成'
+              : task.status == TaskStatus.cancelled
+              ? '任务已停止'
+              : '任务失败',
+          title: task.status == TaskStatus.completed ? '回复已恢复' : '任务状态已恢复',
+          autoClear: true,
+        );
         return;
       }
-      if (task.status == TaskStatus.completed) {
-        final snapshot = await _readTaskEventSnapshot(taskId);
-        var completedMessageId = agentMsgId;
-        if (snapshot.appliedInputs.isNotEmpty) {
-          completedMessageId = _restoreTaskRoundMessages(
-            taskId,
-            agentMsgId,
-            snapshot,
+      if (task.status == TaskStatus.cancelling) {
+        state = state.copyWith(
+          sending: false,
+          taskActive: true,
+          cancelRequested: true,
+        );
+        _updateMessage(agentMsgId, (m) {
+          m.state = MessageState.streaming;
+          m.streamRecovery = StreamRecovery.following;
+        });
+        _listenEvents(
+          taskId,
+          agentMsgId,
+          sentAt,
+          fastActiveRecovery: fastActiveRecovery,
+        );
+        _logChatDiag(
+          'resume_live_subscription_started',
+          taskId: taskId,
+          data: {
+            'elapsed_ms': DateTime.now()
+                .difference(recoveryStartedAt)
+                .inMilliseconds,
+            'fast': fastActiveRecovery,
+          },
+        );
+        return;
+      }
+
+      if (fastActiveRecovery) {
+        // Foreground recovery must re-establish the live path before reading
+        // historical pages. Agent history is intentionally eventual here:
+        // the resumed SSE stream replays the bounded event archive and keeps
+        // receiving new deltas, while the full detail hydration can happen
+        // later without blocking the composer or the recovery indicator.
+        final activeMessage = _messageById(agentMsgId);
+        if (activeMessage != null) {
+          _updateMessage(agentMsgId, (m) {
+            m.streamRecovery = StreamRecovery.following;
+            m.statusHint = '';
+            if (m.state != MessageState.failed) {
+              m.state = MessageState.streaming;
+            }
+          });
+        }
+        if (task.status == TaskStatus.waitingApproval &&
+            task.approval != null) {
+          state = state.copyWith(
+            sending: false,
+            taskActive: true,
+            pendingApproval: task.approval,
+            pendingApprovalTaskId: taskId,
+          );
+        } else if (task.question != null) {
+          state = state.copyWith(
+            sending: false,
+            taskActive: true,
+            pendingQuestion: task.question,
+            pendingQuestionTaskId: taskId,
+          );
+        } else {
+          state = state.copyWith(sending: true, taskActive: true);
+        }
+        // Task status is not proof that the SSE handshake or body replay
+        // completed. Keep transport and historical content states separate.
+        _updateMessage(agentMsgId, (m) {
+          m.historyDetails = HistoryDetailsState.loading;
+        });
+        _updateOperation(
+          'opencode',
+          stepState: ChatOperationStepState.active,
+          detail: '正在接续实时通道',
+        );
+        _updateOperation(
+          'task',
+          stepState: ChatOperationStepState.active,
+          detail: '正在读取已有回复',
+        );
+        _listenEvents(
+          taskId,
+          agentMsgId,
+          sentAt,
+          fastActiveRecovery: fastActiveRecovery,
+        );
+        final sessionId = state.currentSessionId;
+        if (sessionId != null) {
+          unawaited(
+            _hydrateSessionSnapshots(
+              sessionId: sessionId,
+              loadVersion: loadVersion,
+              taskIds: [taskId],
+            ),
           );
         }
-        _updateMessage(
-          completedMessageId,
-          (m) => _applyCompletedTaskSnapshot(m, task, snapshot),
-        );
-        _closeStreamingAgentMessagesForTask(taskId);
-        _cancelEventSub();
-        state = state.copyWith(
-          sending: false,
-          taskActive: false,
-          clearApproval: true,
-          clearQuestion: true,
+        _logChatDiag(
+          'resume_live_subscription_started',
+          taskId: taskId,
+          data: {
+            'elapsed_ms': DateTime.now()
+                .difference(recoveryStartedAt)
+                .inMilliseconds,
+            'fast': fastActiveRecovery,
+          },
         );
         return;
       }
-      if (task.status == TaskStatus.failed) {
-        final snapshot = await _readTaskEventSnapshot(taskId);
-        _updateMessage(agentMsgId, (m) {
-          _applyHistorySnapshotToMessage(m, snapshot, finalizeTools: true);
-          m.statusHint = '';
-          m.imageGeneration = null;
-          m.finalDeliveryPhase = FinalDeliveryPhase.idle;
-          m.errorDetail = _taskErrorDetail(task, snapshot);
-          m.state = MessageState.failed;
-          if (m.content.isEmpty) {
-            m.content = formatChatTaskError(
-              task.error?.isNotEmpty == true ? task.error! : '任务执行失败',
-            );
-            if (m.blocks.isEmpty) {
-              _appendTextBlock(m, m.content);
-            }
-          }
-        });
-        _cancelEventSub();
-        state = state.copyWith(
-          sending: false,
-          taskActive: false,
-          clearApproval: true,
-          clearQuestion: true,
-        );
-        return;
-      }
-      final snapshot = await _readTaskEventSnapshot(taskId);
+
+      replySyncProgress = ReplySyncProgress('读取历史回复');
+      final loadedSnapshot = await _readTaskEventSnapshot(taskId).timeout(
+        recoveryHistoryTimeout,
+        onTimeout: () => const TaskEventSnapshot(complete: false),
+      );
+      if (!isCurrent()) return;
+      final snapshot = loadedSnapshot.complete
+          ? loadedSnapshot
+          : const TaskEventSnapshot();
       var recoveredMessageId = agentMsgId;
       final restoredTaskRounds = snapshot.appliedInputs.isNotEmpty;
       if (restoredTaskRounds) {
@@ -4519,20 +5392,72 @@ class ChatNotifier extends StateNotifier<ChatState> {
         });
       }
       _updateMessage(recoveredMessageId, (m) {
+        m.streamRecovery = StreamRecovery.following;
         if (m.state != MessageState.failed) {
           m.state = MessageState.streaming;
         }
       });
-      await Future<void>.delayed(const Duration(milliseconds: 600));
-      if (_currentTaskId == taskId) {
-        _listenEvents(taskId, recoveredMessageId, sentAt);
+      if (isCurrent()) {
+        _updateMessage(recoveredMessageId, (m) {
+          m.historyDetails = loadedSnapshot.complete
+              ? HistoryDetailsState.none
+              : HistoryDetailsState.partial;
+        });
+        replySyncProgress?.finish(
+          loadedSnapshot.complete ? '已有回复已恢复' : '历史回复尚未补齐',
+        );
+        _updateOperation(
+          'opencode',
+          stepState: ChatOperationStepState.active,
+          detail: '正在接续实时通道',
+        );
+        _updateOperation(
+          'task',
+          stepState: loadedSnapshot.complete
+              ? ChatOperationStepState.done
+              : ChatOperationStepState.failed,
+          detail: loadedSnapshot.complete ? '已有回复已恢复' : '历史回复尚未补齐，可重试',
+        );
+        _listenEvents(
+          taskId,
+          recoveredMessageId,
+          sentAt,
+          fastActiveRecovery: fastActiveRecovery,
+        );
       }
-    } catch (_) {
+    } catch (error) {
+      if (!isCurrent()) return;
+      replySyncProgress?.finish('连接恢复中，正在重试');
+      _updateOperation(
+        'opencode',
+        stepState: ChatOperationStepState.failed,
+        detail: 'Agent 状态暂不可确认',
+      );
+      _updateOperation(
+        'task',
+        stepState: ChatOperationStepState.active,
+        detail: '正在重试连接',
+        title: '回复连接重试中',
+      );
+      _logChatDiag(
+        'resume_retry',
+        taskId: taskId,
+        data: {'error': error.toString()},
+      );
       _updateMessage(agentMsgId, (m) {
         if (m.state != MessageState.failed) {
           m.state = MessageState.streaming;
+          m.streamRecovery = StreamRecovery.reconnecting;
         }
       });
+      // The old subscription was released in the background. A failed HTTP
+      // probe must still reconnect and restart bounded terminal polling.
+      _listenEvents(
+        taskId,
+        agentMsgId,
+        sentAt,
+        fastActiveRecovery: fastActiveRecovery,
+      );
     }
   }
 
@@ -4689,6 +5614,24 @@ class ChatNotifier extends StateNotifier<ChatState> {
         result.add(block);
       }
     }
+    final renderedText = result
+        .where((b) => b.type == ChatMessageBlockType.text)
+        .map((b) => b.text)
+        .join();
+    if (renderedText.isNotEmpty &&
+        fallbackContent.startsWith(renderedText) &&
+        fallbackContent.length > renderedText.length) {
+      final suffix = fallbackContent.substring(renderedText.length);
+      if (result.last.type == ChatMessageBlockType.text) {
+        result[result.length - 1] = result.last.copyWith(
+          text: '${result.last.text}$suffix',
+        );
+      } else {
+        result.add(
+          ChatMessageBlock.text(id: 'text_recovered_tail', text: suffix),
+        );
+      }
+    }
     if (!_blocksHaveVisibleText(result) && fallbackContent.trim().isNotEmpty) {
       result.add(
         ChatMessageBlock.text(id: 'text_content', text: fallbackContent),
@@ -4751,11 +5694,26 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     if (taskId == null) {
       _pendingCancelBeforeTaskCreated = true;
+      _markCurrentStreamingMessageStopping();
+      _beginOperation('正在停止任务', const [
+        ChatOperationStep(
+          key: 'phone',
+          label: '手机',
+          detail: '等待任务创建后发送',
+          state: ChatOperationStepState.active,
+        ),
+        ChatOperationStep(key: 'server', label: '服务端', detail: '等待任务编号'),
+        ChatOperationStep(
+          key: 'opencode',
+          label: 'OpenCode',
+          detail: '等待 Agent 接收',
+        ),
+        ChatOperationStep(key: 'task', label: '任务', detail: '等待停止'),
+      ]);
       await AppLogService.log(
         'chat_cancel_queued',
         data: {'agent_id': agentId, 'project_id': projectId},
       );
-      _markCurrentStreamingMessageStopping();
       return;
     }
     await _requestTaskCancel(taskId);
@@ -4766,27 +5724,80 @@ class ChatNotifier extends StateNotifier<ChatState> {
       _markCurrentStreamingMessageStopping();
       return;
     }
+    _markCurrentStreamingMessageStopping();
+    _beginOperation('正在停止任务', const [
+      ChatOperationStep(
+        key: 'phone',
+        label: '手机',
+        detail: '发送停止指令',
+        state: ChatOperationStepState.active,
+      ),
+      ChatOperationStep(key: 'server', label: '服务端', detail: '等待接收'),
+      ChatOperationStep(
+        key: 'opencode',
+        label: 'OpenCode',
+        detail: '等待 Agent 接收',
+      ),
+      ChatOperationStep(key: 'task', label: '任务', detail: '等待停止'),
+    ]);
     try {
-      await AppLogService.log(
-        'chat_cancel_requested',
-        data: {'agent_id': agentId, 'project_id': projectId, 'task_id': taskId},
+      unawaited(
+        AppLogService.log(
+          'chat_cancel_requested',
+          data: {
+            'agent_id': agentId,
+            'project_id': projectId,
+            'task_id': taskId,
+          },
+        ),
       );
       await _repo.cancelTask(taskId);
+      _updateOperation(
+        'phone',
+        stepState: ChatOperationStepState.done,
+        detail: '停止指令已发出',
+      );
+      _updateOperation(
+        'server',
+        stepState: ChatOperationStepState.active,
+        detail: '服务端已接收，等待 Agent',
+      );
     } catch (e) {
       _cancelRequestedTaskIds.remove(taskId);
-      await AppLogService.log(
-        'chat_cancel_failed',
-        level: 'error',
-        data: {
-          'agent_id': agentId,
-          'project_id': projectId,
-          'task_id': taskId,
-          'error': e.toString(),
-        },
+      if (_disposed || _currentTaskId != taskId) return;
+      unawaited(
+        AppLogService.log(
+          'chat_cancel_failed',
+          level: 'error',
+          data: {
+            'agent_id': agentId,
+            'project_id': projectId,
+            'task_id': taskId,
+            'error': e.toString(),
+          },
+        ),
       );
-      state = state.copyWith(error: '取消任务失败: $e');
+      final messages = state.messages
+          .map((message) {
+            if (message.taskId != taskId || message.statusHint != '正在停止') {
+              return message;
+            }
+            return message.copyForUpdate()..statusHint = '';
+          })
+          .toList(growable: false);
+      state = state.copyWith(
+        messages: messages,
+        cancelRequested: false,
+        error: '取消任务失败: $e',
+      );
+      _updateOperation(
+        'phone',
+        stepState: ChatOperationStepState.failed,
+        detail: '发送失败',
+        title: '停止失败',
+        autoClear: true,
+      );
     }
-    _markCurrentStreamingMessageStopping();
   }
 
   void _markCurrentStreamingMessageStopping() {
@@ -4794,7 +5805,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     for (int i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role == MessageRole.agent &&
           msgs[i].state == MessageState.streaming) {
-        msgs[i].statusHint = '正在停止';
+        msgs[i] = msgs[i].copyForUpdate()..statusHint = '正在停止';
         break;
       }
     }
@@ -4876,7 +5887,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
   }
 
-  Future<void> resumeActiveTaskIfNeeded() async {
+  Future<void> resumeActiveTaskIfNeeded({
+    bool fastActiveRecovery = false,
+  }) async {
+    if (!_detailsEnabled) return;
     String? taskId = _currentTaskId;
     String? agentMsgId;
     DateTime? sentAt;
@@ -4895,78 +5909,58 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     if (taskId == null || agentMsgId == null || sentAt == null) return;
 
-    try {
-      final task = await _repo.getTask(taskId);
-      if (!_isTaskActive(task.status)) {
-        if (task.status == TaskStatus.completed) {
-          final snapshot = await _readTaskEventSnapshot(taskId);
-          _updateMessage(
-            agentMsgId,
-            (m) => _applyCompletedTaskSnapshot(m, task, snapshot),
-          );
-          _closeStreamingAgentMessagesForTask(taskId);
-          state = state.copyWith(
-            sending: false,
-            taskActive: false,
-            clearApproval: true,
-            clearQuestion: true,
-          );
-        } else if (task.status == TaskStatus.failed ||
-            task.status == TaskStatus.cancelling ||
-            task.status == TaskStatus.cancelled) {
-          final snapshot = await _readTaskEventSnapshot(taskId);
-          _updateMessage(agentMsgId, (m) {
-            _applyHistorySnapshotToMessage(m, snapshot, finalizeTools: true);
-            m.statusHint = '';
-            m.finalDeliveryPhase = FinalDeliveryPhase.idle;
-            m.errorDetail = _taskErrorDetail(task, snapshot);
-            m.state = task.status == TaskStatus.cancelled
-                ? MessageState.done
-                : MessageState.failed;
-            if (m.content.isEmpty) {
-              m.content = task.status == TaskStatus.cancelled
-                  ? '已停止'
-                  : formatChatTaskError(
-                      task.error?.isNotEmpty == true ? task.error! : '任务执行失败',
-                    );
-              if (m.blocks.isEmpty) {
-                _appendTextBlock(m, m.content);
-              }
-            }
-          });
-          state = state.copyWith(
-            sending: false,
-            taskActive: false,
-            clearApproval: true,
-            clearQuestion: true,
-          );
-        }
-        _cancelEventSub();
-        return;
+    _updateMessage(agentMsgId, (message) {
+      if (message.state == MessageState.streaming) {
+        message.streamRecovery = StreamRecovery.syncing;
       }
-    } catch (_) {}
+    });
 
     _currentTaskId = taskId;
-    await _recoverTaskAfterStreamBreak(taskId, agentMsgId, sentAt);
+    await _recoverTaskAfterStreamBreak(
+      taskId,
+      agentMsgId,
+      sentAt,
+      fastActiveRecovery: fastActiveRecovery,
+    );
   }
 
   /// Reconcile after the app returns from background. Android may suspend the
   /// SSE socket without delivering an error, so one resume callback is not
   /// enough to establish the task terminal state.
   Future<void> reconcileAfterResume() async {
-    if (_resumeReconciliationInFlight) return;
-    _resumeReconciliationInFlight = true;
+    if (_disposed) return;
+    _appInBackground = false;
+    if (!_pageVisible || _resumeReconciliationToken != null) return;
+    final token = Object();
+    _resumeReconciliationToken = token;
+    _armResumeRecoveryWatchdog(token);
     // 回到前台：先解除后台标记并重同步发送队列。
     // 后台期间的长连接断开属于预期行为，这里主动重建订阅并清除残留状态，
     // 避免空队列被渲染成「队列状态异常」。
     _appInBackground = false;
     try {
-      await _resyncQueueAfterResume();
+      // Queue cancellation can wait on a suspended socket. Task reconciliation
+      // must proceed independently so a completed task is never held by it.
+      unawaited(_resyncQueueAfterResume());
       for (var attempt = 0; attempt < 3; attempt++) {
+        if (!_detailsEnabled || !identical(_resumeReconciliationToken, token)) {
+          return;
+        }
         if (!state.messages.any(_messageNeedsCatchUp)) {
           return;
         }
-        await resumeActiveTaskIfNeeded();
+        final previousLiveVersion = _liveVersion;
+        // A live task does not need a complete Agent history before the SSE
+        // subscription is restored. The history endpoint can page through
+        // hundreds of records while the task is still running, which makes
+        // the foreground resume indicator appear stuck. Let the live stream
+        // catch up first and hydrate details in the background.
+        await resumeActiveTaskIfNeeded(fastActiveRecovery: true);
+        if (!_detailsEnabled ||
+            !identical(_resumeReconciliationToken, token) ||
+            (_eventSub != null && _liveVersion != previousLiveVersion)) {
+          return;
+        }
         if (!state.messages.any(_messageNeedsCatchUp)) {
           return;
         }
@@ -4983,7 +5977,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
         await loadSession(sessionId);
       }
     } finally {
-      _resumeReconciliationInFlight = false;
+      if (identical(_resumeReconciliationToken, token)) {
+        _resumeReconciliationToken = null;
+        _resumeRecoveryWatchdog?.cancel();
+        _resumeRecoveryWatchdog = null;
+      }
     }
   }
 
@@ -5004,103 +6002,68 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final interval = terminalReconcileInterval;
     if (interval <= Duration.zero) return;
     _terminalReconcileTimer = Timer.periodic(interval, (_) {
-      if (_disposed || _currentTaskId != taskId) return;
+      if (!_detailsEnabled || _currentTaskId != taskId) return;
       unawaited(_reconcileLiveTaskIfTerminal(taskId));
     });
   }
 
   Future<void> _reconcileLiveTaskIfTerminal(String taskId) async {
-    if (_disposed || _currentTaskId != taskId) return;
-    final TaskModel task;
+    if (!_detailsEnabled ||
+        _currentTaskId != taskId ||
+        _terminalProbeToken != null) {
+      return;
+    }
+    final token = Object();
+    _terminalProbeToken = token;
+    final liveVersion = _liveVersion;
+    final loadVersion = _sessionLoadVersion;
     try {
-      task = await _repo.getTask(taskId);
-    } catch (_) {
-      return;
-    }
-    if (_disposed || _currentTaskId != taskId) return;
-    if (_isTaskActive(task.status) ||
-        (task.status != TaskStatus.completed &&
-            task.status != TaskStatus.failed &&
-            task.status != TaskStatus.cancelling &&
-            task.status != TaskStatus.cancelled)) {
-      return;
-    }
-
-    var agentMsgId = _activeTaskAgentMessageIds[taskId];
-    if (agentMsgId == null || _messageById(agentMsgId) == null) {
-      for (var i = state.messages.length - 1; i >= 0; i--) {
-        final message = state.messages[i];
-        if (message.role == MessageRole.agent && message.taskId == taskId) {
-          agentMsgId = message.id;
-          break;
-        }
+      final task = await _repo.getTask(taskId).timeout(recoveryStatusTimeout);
+      if (!_detailsEnabled ||
+          _currentTaskId != taskId ||
+          liveVersion != _liveVersion ||
+          loadVersion != _sessionLoadVersion) {
+        return;
       }
-    }
-    if (agentMsgId != null) {
-      if (task.status == TaskStatus.completed) {
-        final snapshot = await _readTaskEventSnapshot(taskId);
-        if (_disposed || _currentTaskId != taskId) return;
-        var completedMessageId = agentMsgId;
-        if (snapshot.appliedInputs.isNotEmpty) {
-          completedMessageId = _restoreTaskRoundMessages(
-            taskId,
-            agentMsgId,
-            snapshot,
-          );
-        }
-        _updateMessage(
-          completedMessageId,
-          (message) => _applyCompletedTaskSnapshot(message, task, snapshot),
-        );
-        _closeStreamingAgentMessagesForTask(taskId);
-      } else {
-        final snapshot = await _readTaskEventSnapshot(taskId);
-        if (_disposed || _currentTaskId != taskId) return;
-        final failed =
-            task.status == TaskStatus.failed ||
-            task.status == TaskStatus.cancelling;
-        _updateMessage(agentMsgId, (message) {
-          _applyHistorySnapshotToMessage(
-            message,
-            snapshot,
-            finalizeTools: true,
-          );
-          message.statusHint = '';
-          message.imageGeneration = null;
-          message.finalDeliveryPhase = FinalDeliveryPhase.idle;
-          message.errorDetail = _taskErrorDetail(task, snapshot);
-          message.state = failed ? MessageState.failed : MessageState.done;
-          if (message.content.isEmpty) {
-            message.content = failed
-                ? formatChatTaskError(
-                    task.error?.isNotEmpty == true ? task.error! : '任务执行失败',
-                  )
-                : '已停止';
-            if (message.blocks.isEmpty) {
-              _appendTextBlock(message, message.content);
-            }
+      if (task.status != TaskStatus.completed &&
+          task.status != TaskStatus.failed &&
+          task.status != TaskStatus.cancelled) {
+        return;
+      }
+      var agentMsgId = _activeTaskAgentMessageIds[taskId];
+      if (agentMsgId == null || _messageById(agentMsgId) == null) {
+        for (final message in state.messages.reversed) {
+          if (message.role == MessageRole.agent && message.taskId == taskId) {
+            agentMsgId = message.id;
+            break;
           }
-        });
-        _closeStreamingAgentMessagesForTask(
-          taskId,
-          endState: failed ? MessageState.failed : MessageState.done,
+        }
+      }
+      if (agentMsgId != null) _finishRecoveredTask(task, agentMsgId);
+    } catch (error) {
+      if (_detailsEnabled &&
+          _currentTaskId == taskId &&
+          liveVersion == _liveVersion) {
+        _logChatDiag(
+          'terminal_probe_retry',
+          taskId: taskId,
+          data: {'error': error.toString()},
         );
       }
+    } finally {
+      if (identical(_terminalProbeToken, token)) _terminalProbeToken = null;
     }
-    if (_currentTaskId != taskId) return;
-    _cancelEventSub();
-    state = state.copyWith(
-      sending: false,
-      taskActive: false,
-      clearApproval: true,
-      clearQuestion: true,
-      cancelRequested: false,
-    );
   }
 
   void _cancelEventSub({bool clearPendingCancel = true}) {
+    _flushEventDeltas?.call();
+    _flushEventDeltas = null;
+    _liveVersion++;
+    _terminalProbeToken = null;
     _terminalReconcileTimer?.cancel();
     _terminalReconcileTimer = null;
+    _resumeRecoveryWatchdog?.cancel();
+    _resumeRecoveryWatchdog = null;
     _eventSub?.cancel();
     _eventSub = null;
     _currentTaskId = null;
@@ -5123,9 +6086,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
   @override
   void dispose() {
     _disposed = true;
+    _operationClearTimer?.cancel();
+    _operationClearTimer = null;
     _cancelEventSub();
     _cancelQueueSub();
-    unawaited(_localStore.close());
+    unawaited(_eventWriter.close());
     super.dispose();
   }
 }
@@ -5141,6 +6106,7 @@ final chatProvider =
         repo: ref.watch(chatRepositoryProvider),
         agentId: args.$1,
         projectId: args.$2,
+        initiallyVisible: false,
       ),
     );
 
@@ -5191,7 +6157,7 @@ String _taskEventKey(Map<String, dynamic> event) {
     tool['output']?.toString() ?? '',
     tool['error']?.toString() ?? '',
   ].join('\u{1e}');
-  return [
+  final fallback = [
     type,
     sentAt,
     sessionId,
@@ -5201,6 +6167,7 @@ String _taskEventKey(Map<String, dynamic> event) {
     metadata,
     toolKey,
   ].join('\u{1f}');
+  return 'hash:${sha256.convert(utf8.encode(fallback))}';
 }
 
 String _inputRoundAgentMessageId(

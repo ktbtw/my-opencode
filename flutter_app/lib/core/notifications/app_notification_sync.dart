@@ -60,11 +60,9 @@ class ApiAppNotificationRemoteGateway implements AppNotificationRemoteGateway {
   Future<AppNotificationRemoteChange> upsert(
     AppNotificationRecord record,
   ) async {
-    final json = await ApiClient.post(
-      '/api/notifications/sync',
-      {'record': record.toJson()},
-      timeout: _syncRequestTimeout,
-    );
+    final json = await ApiClient.post('/api/notifications/sync', {
+      'record': record.toJson(),
+    }, timeout: _syncRequestTimeout);
     return AppNotificationRemoteChange.fromJson(
       (json['change'] as Map).cast<String, dynamic>(),
     );
@@ -100,20 +98,16 @@ class ApiAppNotificationRemoteGateway implements AppNotificationRemoteGateway {
 
   @override
   Future<void> markRead(List<String> operationIds) async {
-    await ApiClient.post(
-      '/api/notifications/read',
-      {'operation_ids': operationIds},
-      timeout: _syncRequestTimeout,
-    );
+    await ApiClient.post('/api/notifications/read', {
+      'operation_ids': operationIds,
+    }, timeout: _syncRequestTimeout);
   }
 
   @override
   Future<void> dismiss(List<String> operationIds) async {
-    await ApiClient.post(
-      '/api/notifications/dismiss',
-      {'operation_ids': operationIds},
-      timeout: _syncRequestTimeout,
-    );
+    await ApiClient.post('/api/notifications/dismiss', {
+      'operation_ids': operationIds,
+    }, timeout: _syncRequestTimeout);
   }
 }
 
@@ -143,6 +137,7 @@ class AppNotificationSyncService {
   final Set<String> _pendingRead = {};
   final Set<String> _pendingDismiss = {};
   Timer? _pushTimer;
+  Timer? _retryTimer;
   Future<void> _syncTail = Future.value();
   void Function(AppNotificationRemoteChange change)? _onChange;
   String _identity = '';
@@ -165,8 +160,7 @@ class AppNotificationSyncService {
 
   void enableSSE() {
     if (_disposed || !_started) return;
-    // Native Android service owns the only live background SSE connection.
-    // Foreground Flutter refreshes from the durable REST feed instead.
+    // Shared foreground events provide live updates; REST catches up on resume.
     unawaited(syncNow());
   }
 
@@ -189,7 +183,14 @@ class AppNotificationSyncService {
   void queueRead(Iterable<String> operationIds) {
     if (_disposed || !_prepareQueueIdentity()) return;
     _pendingRead.addAll(operationIds.where((id) => id.isNotEmpty));
-    _schedulePush();
+    for (final id in _pendingRead) {
+      final pending = _pendingUpserts[id];
+      if (pending != null) {
+        _pendingUpserts[id] = pending.copyWith(unread: false);
+      }
+    }
+    // Read receipts should reach other devices immediately, not wait for progress debounce.
+    unawaited(syncNow());
   }
 
   void queueDismiss(Iterable<String> operationIds) {
@@ -214,14 +215,24 @@ class AppNotificationSyncService {
   }
 
   Future<void> _syncOnce() async {
-    if (!AppStorage.initialized || !AppStorage.isLoggedIn()) return;
+    if (_disposed || !AppStorage.initialized || !AppStorage.isLoggedIn()) {
+      return;
+    }
     _loadCursorForCurrentIdentity();
-
+    final identity = _identity;
     try {
-      await _pushPending();
-      await _pullChanges();
+      await _pushPending(identity);
+      if (!_isCurrent(identity)) return;
+      await _pullChanges(identity);
+      _retryTimer?.cancel();
     } catch (_) {
-      // Pending state remains queued and retry will happen
+      if (_isCurrent(identity)) {
+        _retryTimer?.cancel();
+        _retryTimer = Timer(
+          const Duration(seconds: 5),
+          () => unawaited(syncNow()),
+        );
+      }
     }
   }
 
@@ -246,32 +257,56 @@ class AppNotificationSyncService {
     _pendingDismiss.clear();
   }
 
-  Future<void> _pushPending() async {
+  bool _isCurrent(String identity) =>
+      !_disposed &&
+      AppStorage.isLoggedIn() &&
+      identity == _identity &&
+      identity == _currentIdentity();
+
+  Future<void> _pushPending(String identity) async {
+    Object? pushError;
     final upserts = Map<String, AppNotificationRecord>.from(_pendingUpserts);
     for (final entry in upserts.entries) {
-      await gateway.upsert(entry.value);
+      if (!_isCurrent(identity)) return;
+      try {
+        await gateway.upsert(
+          _pendingRead.contains(entry.key)
+              ? entry.value.copyWith(unread: false)
+              : entry.value,
+        );
+      } catch (error) {
+        pushError = error;
+        continue;
+      }
+      if (!_isCurrent(identity)) return;
       final pending = _pendingUpserts[entry.key];
       if (pending?.updatedAt == entry.value.updatedAt) {
         _pendingUpserts.remove(entry.key);
       }
     }
 
+    if (!_isCurrent(identity)) return;
     final read = _pendingRead.toList(growable: false);
     if (read.isNotEmpty) {
       await gateway.markRead(read);
+      if (!_isCurrent(identity)) return;
       _pendingRead.removeAll(read);
     }
 
     final dismiss = _pendingDismiss.toList(growable: false);
     if (dismiss.isNotEmpty) {
       await gateway.dismiss(dismiss);
+      if (!_isCurrent(identity)) return;
       _pendingDismiss.removeAll(dismiss);
     }
+    if (pushError != null) throw pushError;
   }
 
-  Future<void> _pullChanges() async {
+  Future<void> _pullChanges(String identity) async {
     for (var pageIndex = 0; pageIndex < 5; pageIndex++) {
+      if (!_isCurrent(identity)) return;
       final page = await gateway.list(after: _cursor);
+      if (!_isCurrent(identity)) return;
       final latestByOperation = <String, AppNotificationRemoteChange>{};
       for (final change in page.items) {
         final existing = latestByOperation[change.operationId];
@@ -286,6 +321,7 @@ class AppNotificationSyncService {
         final remote = change.record;
         if (pending != null &&
             remote != null &&
+            remote.unread &&
             !remote.updatedAt.isAfter(pending.updatedAt)) {
           continue;
         }
@@ -316,6 +352,7 @@ class AppNotificationSyncService {
   void dispose() {
     _disposed = true;
     _pushTimer?.cancel();
+    _retryTimer?.cancel();
     _clearPending();
   }
 }

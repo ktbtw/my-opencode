@@ -1940,6 +1940,7 @@ func (a *API) TaskEventPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) TaskAgentHistory(w http.ResponseWriter, r *http.Request) {
+	startedAt := time.Now()
 	operator, ok := a.currentOperator(r)
 	if !ok {
 		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -1958,10 +1959,13 @@ func (a *API) TaskAgentHistory(w http.ResponseWriter, r *http.Request) {
 	cursor := strings.TrimSpace(r.URL.Query().Get("cursor"))
 	includeChildren := r.URL.Query().Get("include_children") != "0"
 	writeHistory := func(source, errorCode, nextCursor string, events []model.Event, hasMore, complete bool) {
+		if !hasMore {
+			events = a.restoreArchivedContextUsage(taskID, events)
+		}
 		if events == nil {
 			events = []model.Event{}
 		}
-		log.Printf("[history] task_id=%s source=%s error_code=%s events=%d has_more=%v", taskID, source, errorCode, len(events), hasMore)
+		log.Printf("[history] task_id=%s status=%s source=%s error_code=%s events=%d has_more=%v elapsed_ms=%d", taskID, task.Status, source, errorCode, len(events), hasMore, time.Since(startedAt).Milliseconds())
 		write(w, http.StatusOK, map[string]any{
 			"task_id":     taskID,
 			"task_status": task.Status,
@@ -2028,7 +2032,10 @@ func (a *API) TaskAgentHistory(w http.ResponseWriter, r *http.Request) {
 			errorCode = "agent_offline"
 		}
 	}
-	writeHistory(source, errorCode, nextCursor, page.Items, page.HasMore, !page.HasMore)
+	// The archive normally omits high-frequency text deltas. Reaching its
+	// final page proves only that archive rows are exhausted, not that the
+	// Agent's reply body has been recovered.
+	writeHistory(source, errorCode, nextCursor, page.Items, page.HasMore, !page.HasMore && task.SessionID == "")
 }
 
 func historyHasTerminal(events []model.Event) bool {

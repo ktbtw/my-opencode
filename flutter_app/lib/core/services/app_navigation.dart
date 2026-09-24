@@ -7,3 +7,5 @@ final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>(
 BuildContext? get appNavigatorContext =>
     appNavigatorKey.currentContext ??
     appNavigatorKey.currentState?.overlay?.context;
+
+final appPageRouteObserver = RouteObserver<PageRoute<dynamic>>();

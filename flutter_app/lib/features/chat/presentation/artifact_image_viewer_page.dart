@@ -10,6 +10,7 @@ import '../data/chat_model.dart';
 import 'artifact_download_notification.dart';
 
 class ArtifactImageViewerPage extends ConsumerStatefulWidget {
+  final String? project;
   final String taskId;
   final AiArtifact artifact;
   final Uint8List imageBytes;
@@ -17,6 +18,7 @@ class ArtifactImageViewerPage extends ConsumerStatefulWidget {
 
   const ArtifactImageViewerPage({
     super.key,
+    this.project,
     required this.taskId,
     required this.artifact,
     required this.imageBytes,
@@ -41,6 +43,7 @@ class _ArtifactImageViewerPageState
         notifications: ref.read(appNotificationControllerProvider.notifier),
         taskId: widget.taskId,
         artifact: widget.artifact,
+        project: widget.project,
       );
     } catch (_) {
       // The shared download helper has already published the failure.

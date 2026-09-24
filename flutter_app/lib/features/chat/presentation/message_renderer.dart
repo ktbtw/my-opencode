@@ -13,7 +13,12 @@ import 'renderer_web.dart'
     as renderer_platform;
 
 // ─── 顶层入口：根据设置决定渲染方式 ──────────────────────────────
-class MessageRenderer extends StatelessWidget {
+class MessageRenderer extends StatefulWidget {
+  /// Parsing a very large reply into one Markdown syntax tree can allocate
+  /// several orders of magnitude more memory than the source text. The full
+  /// source remains visible; only its presentation falls back to plain text.
+  static const largeBodyMarkdownThreshold = 64 * 1024;
+
   final String content;
   final bool isUser;
   final AppSettings settings;
@@ -26,7 +31,38 @@ class MessageRenderer extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  State<MessageRenderer> createState() => _MessageRendererState();
+}
+
+class _MessageRendererState extends State<MessageRenderer> {
+  Widget? _rendered;
+
+  @override
+  void didUpdateWidget(covariant MessageRenderer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final before = oldWidget.settings;
+    final after = widget.settings;
+    if (oldWidget.content != widget.content ||
+        oldWidget.isUser != widget.isUser ||
+        before.markdownRender != after.markdownRender ||
+        before.latexRender != after.latexRender ||
+        before.mermaidRender != after.mermaidRender ||
+        before.htmlPreview != after.htmlPreview) {
+      _rendered = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _rendered ??= _buildContent();
+
+  Widget _buildContent() {
+    final content = widget.content;
+    final settings = widget.settings;
+    final isUser = widget.isUser;
+
+    if (content.length > MessageRenderer.largeBodyMarkdownThreshold) {
+      return _LargeBodyRenderer(content: content, isUser: isUser);
+    }
     if (isUser || !settings.markdownRender) {
       return DefaultSelectionStyle(
         selectionColor: AppColors.textSelection,
@@ -51,8 +87,108 @@ class MessageRenderer extends StatelessWidget {
   }
 }
 
+/// A page based viewer keeps every character available without asking the
+/// engine to shape a million character paragraph in one frame.
+class _LargeBodyRenderer extends StatefulWidget {
+  final String content;
+  final bool isUser;
+
+  const _LargeBodyRenderer({required this.content, required this.isUser});
+
+  @override
+  State<_LargeBodyRenderer> createState() => _LargeBodyRendererState();
+}
+
+class _LargeBodyRendererState extends State<_LargeBodyRenderer> {
+  static const _pageChars = 32 * 1024;
+  late List<String> _pages;
+  var _page = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pages = _split(widget.content);
+  }
+
+  @override
+  void didUpdateWidget(covariant _LargeBodyRenderer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.content != widget.content) {
+      _pages = _split(widget.content);
+      _page = 0;
+    }
+  }
+
+  List<String> _split(String value) {
+    if (value.isEmpty) return const [''];
+    final pages = <String>[];
+    var start = 0;
+    while (start < value.length) {
+      var end = (start + _pageChars).clamp(0, value.length) as int;
+      if (end < value.length) {
+        final lineBreak = value.lastIndexOf('\n', end);
+        if (lineBreak > start) end = lineBreak + 1;
+      }
+      pages.add(value.substring(start, end));
+      start = end;
+    }
+    return pages;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = widget.isUser ? Colors.white : AppColors.textPrimary;
+    final pageCount = _pages.length;
+    return DefaultSelectionStyle(
+      selectionColor: AppColors.textSelection,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SelectableText(
+            _pages[_page],
+            style: TextStyle(fontSize: 14, height: 1.55, color: textColor),
+          ),
+          if (pageCount > 1) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  '正文分片 ${_page + 1} / $pageCount',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: '上一段',
+                  onPressed: _page == 0
+                      ? null
+                      : () => setState(() => _page -= 1),
+                  icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  tooltip: '下一段',
+                  onPressed: _page + 1 >= pageCount
+                      ? null
+                      : () => setState(() => _page += 1),
+                  icon: const Icon(Icons.chevron_right_rounded, size: 20),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ─── Markdown 渲染器 ─────────────────────────────────────────────
 class _MarkdownRenderer extends StatelessWidget {
+  static final _narrowStyle = _buildStyleSheet(isNarrow: true);
+  static final _wideStyle = _buildStyleSheet(isNarrow: false);
   final String content;
   final AppSettings settings;
 
@@ -67,10 +203,15 @@ class _MarkdownRenderer extends StatelessWidget {
             constraints.maxWidth < AppBreakpoints.sm;
 
         return MarkdownBody(
+          key: ValueKey((
+            settings.latexRender,
+            settings.mermaidRender,
+            settings.htmlPreview,
+          )),
           data: content,
           selectable: false,
           extensionSet: md.ExtensionSet.gitHubFlavored,
-          styleSheet: _buildStyleSheet(isNarrow: isNarrow),
+          styleSheet: isNarrow ? _narrowStyle : _wideStyle,
           builders: {'code': _CodeBlockBuilder(settings: settings)},
           onTapLink: (text, href, title) {
             if (href != null) renderer_platform.openUrl(href);
@@ -80,7 +221,7 @@ class _MarkdownRenderer extends StatelessWidget {
     );
   }
 
-  MarkdownStyleSheet _buildStyleSheet({required bool isNarrow}) {
+  static MarkdownStyleSheet _buildStyleSheet({required bool isNarrow}) {
     return MarkdownStyleSheet(
       p: const TextStyle(
         fontSize: 14,

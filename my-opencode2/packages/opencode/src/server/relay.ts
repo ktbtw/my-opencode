@@ -1,3 +1,4 @@
+import { RelayDeltaBatcher } from "./relay-delta-batcher"
 import os from "node:os"
 import path from "node:path"
 import { createReadStream, readFileSync } from "node:fs"
@@ -15,7 +16,7 @@ import { Session } from "@/session/session"
 import { Todo } from "@/session/todo"
 import { MessageV2 } from "@/session/message-v2"
 import { buildSessionHistory } from "./session-history"
-import { readSessionDisplayLog, recordTaskDisplayEvent } from "./session-display-log"
+import { readTaskDisplayPage, readSessionDisplayLog, recordTaskDisplayEvent } from "./session-display-log"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionCompaction } from "@/session/compaction"
 import { SessionStatus } from "@/session/status"
@@ -185,6 +186,7 @@ type State = {
   task?: Task
   detachedTasks?: Map<string, Task>
   outbox?: PendingEnvelope[]
+  deltaBatcher?: RelayDeltaBatcher
   connectedOnce?: boolean
   displayRoot?: string
   curator?: {
@@ -639,7 +641,14 @@ Rules:
     state.outbox.push(envelope)
   }
 
-  function sendState(state: State, type: string, payload: Record<string, unknown>, requestID = id(type)) {
+  function sendState(state: State, type: string, payload: Record<string, unknown>, requestID = id(type)): boolean {
+    state.deltaBatcher ??= new RelayDeltaBatcher((envelope) =>
+      deliverState(state, envelope.type, envelope.payload, envelope.requestID),
+    )
+    return state.deltaBatcher.send({ type, payload, requestID })
+  }
+
+  function deliverState(state: State, type: string, payload: Record<string, unknown>, requestID: string): boolean {
     const task = state.task
     if (task && TERMINAL_TASK_ENVELOPES.has(type) && task.id === payload.task_id) {
       if (!task.finalizationCommitted) settleSubagentsOnTerminal(state, task, type)
@@ -893,6 +902,10 @@ Rules:
       .replace(/<thinking>[\s\S]*$/gi, "")
       .replace(/<think>[\s\S]*$/gi, "")
       .replace(/<\/?(?:thinking|think)>/gi, "")
+  }
+
+  function finalTaskResult(latestRoundResult: string, visibleText: string) {
+    return clean(latestRoundResult.trim() || visibleText.trim()).trim()
   }
 
   const GOAL_OPTIMIZE_SYSTEM_PROMPT = [
@@ -2004,6 +2017,7 @@ Rules:
     relayGoal,
     deliveryRequired,
     clean,
+    finalTaskResult,
     parts,
     createCompletionGuardState,
     beginCompletionRound,
@@ -4345,6 +4359,11 @@ Rules:
       return
     }
     try {
+      const recordedPage = readTaskDisplayPage(cfg.project.root, sessionID, payload.task_id ?? "", payload.cursor, payload.limit)
+      if (recordedPage) {
+        respond(recordedPage)
+        return
+      }
       const page = await runEffect(
         cfg.project.root,
         Effect.gen(function* () {
@@ -5100,7 +5119,7 @@ Rules:
           completion_guard_reason: guardDecision.reason,
         })
         commitTaskDeltaRound(state, task, latestRoundResult)
-        const finalResult = clean((task.visibleText ?? "").trim() || latestRoundResult)
+        const finalResult = finalTaskResult(latestRoundResult, task.visibleText ?? "")
         if (shouldSendGoalCompleted) {
           sendTaskGoal(state, task, "completed", {
             metadata: finalResult ? { summary: finalResult } : undefined,
@@ -5356,7 +5375,10 @@ Rules:
     try {
       await state.wait
     } finally {
-      if (state.ws === ws) state.ws = undefined
+      if (state.ws === ws) {
+        state.ws = undefined
+        state.deltaBatcher?.flush()
+      }
       if (state.beat) {
         clearInterval(state.beat)
         state.beat = undefined
@@ -5383,6 +5405,7 @@ Rules:
 
     return {
       async stop() {
+        state.deltaBatcher?.flush()
         state.stop = true
         const curator = state.curator
         if (curator) await cancelProjectMemory(state, value)

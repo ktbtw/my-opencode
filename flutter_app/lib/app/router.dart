@@ -23,6 +23,7 @@ import '../../features/onboarding/presentation/mobile_startup_page.dart';
 
 final appRouter = GoRouter(
   navigatorKey: appNavigatorKey,
+  observers: [appPageRouteObserver],
   initialLocation: '/startup',
   redirect: (context, state) {
     final isLoggedIn = AppStorage.isLoggedIn();

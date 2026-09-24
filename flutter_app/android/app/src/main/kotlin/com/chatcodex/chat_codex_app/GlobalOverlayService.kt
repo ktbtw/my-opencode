@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.RippleDrawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -283,7 +284,7 @@ class GlobalOverlayService : Service() {
     private var renderedConversationKey = ""
     private var bubbleContainer: FrameLayout? = null
     private var bubbleBrand: BrandMarkView? = null
-    private var bubbleSummary: CompletionTickerView? = null
+    private var bubbleSummary: TextView? = null
     private var closeConfirmationDialog: AlertDialog? = null
     @Volatile private var stopping = false
     private var modelPickerPopup: PopupWindow? = null
@@ -499,7 +500,7 @@ class GlobalOverlayService : Service() {
             })
         } else {
             val bubble = buildBubble()
-            container.addView(bubble, FrameLayout.LayoutParams(dp(48), dp(48)).apply {
+            container.addView(bubble, FrameLayout.LayoutParams(dp(116), dp(48)).apply {
                 gravity = Gravity.END or Gravity.CENTER_VERTICAL
                 rightMargin = dp(6)
             })
@@ -520,7 +521,7 @@ class GlobalOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
         }
-        val contentWidth = if (expanded) panelWidthPx + dp(8) else dp(54)
+        val contentWidth = if (expanded) panelWidthPx + dp(8) else dp(122)
         val contentHeight = if (expanded) panelHeightPx else dp(48)
         val maxX = (resources.displayMetrics.widthPixels - contentWidth).coerceAtLeast(0)
         val maxY = (resources.displayMetrics.heightPixels - contentHeight).coerceAtLeast(0)
@@ -553,6 +554,20 @@ class GlobalOverlayService : Service() {
         windowParams = params
         root = container
         runCatching { windowManager.addView(container, params) }
+        // Animate only the newly opened surface, never the streaming content.
+        val surface = container.getChildAt(0)
+        surface?.apply {
+            pivotX = if (params.x > resources.displayMetrics.widthPixels / 2) {
+                (if (expanded) panelWidthPx else dp(116)).toFloat()
+            } else 0f
+            pivotY = 0f
+            alpha = 0f
+            scaleX = if (expanded) .94f else .88f
+            scaleY = scaleX
+            animate().alpha(1f).scaleX(1f).scaleY(1f)
+                .setDuration(if (expanded) 260L else 200L)
+                .setInterpolator(DecelerateInterpolator(1.6f)).start()
+        }
     }
 
     private fun restoreOverlayGeometry() {
@@ -581,8 +596,10 @@ class GlobalOverlayService : Service() {
 
     private fun buildBubble(): View {
         val wrapper = FrameLayout(this).apply {
-            setPadding(dp(3), dp(3), dp(3), dp(3))
-            elevation = 0f
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            elevation = dp(3).toFloat()
+            clipToOutline = true
+            isFocusable = true
             contentDescription = "全局助手，长按关闭"
             setOnClickListener {
                 if (!expanded) {
@@ -619,16 +636,20 @@ class GlobalOverlayService : Service() {
         }
         bubbleContainer = wrapper
         bubbleBrand = BrandMarkView(this).also {
-            wrapper.addView(it, FrameLayout.LayoutParams(dp(38), dp(29)).apply {
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                topMargin = dp(2)
+            wrapper.addView(it, FrameLayout.LayoutParams(dp(28), dp(28)).apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
             })
         }
-        bubbleSummary = CompletionTickerView(this).apply {
-            contentDescription = "Agent 状态或完成消息"
-        }.also { wrapper.addView(it, FrameLayout.LayoutParams(dp(36), dp(11)).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            bottomMargin = dp(3)
+        bubbleSummary = TextView(this).apply {
+            textSize = 12f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            includeFontPadding = false
+            gravity = Gravity.CENTER_VERTICAL
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }.also { wrapper.addView(it, FrameLayout.LayoutParams(-1, -1).apply {
+            leftMargin = dp(36)
         }) }
         return wrapper
     }
@@ -638,45 +659,34 @@ class GlobalOverlayService : Service() {
         val pendingQuestionCount = pendingQuestionsByTaskId.size
         val hasQuestion = pendingQuestionCount > 0
         val hasMessage = completion != null && !hasQuestion
+        val busy = agents.count { it.online && it.busy }
         val stateColor = when {
-            hasQuestion -> 0xFFB45309.toInt()
-            currentCompletion != null || completions.isNotEmpty() -> 0xFF15803D.toInt()
-            deferredCompletions.isNotEmpty() -> 0xFFB45309.toInt()
-            !streamConnected -> 0xFF64748B.toInt()
-            agents.any { it.online && it.busy } -> 0xFF2563EB.toInt()
-            else -> 0xFF64748B.toInt()
+            hasQuestion -> 0xFF94651D.toInt()
+            hasMessage -> 0xFF287850.toInt()
+            !streamConnected -> 0xFF778294.toInt()
+            busy > 0 -> 0xFF3666B9.toInt()
+            else -> 0xFF28374D.toInt()
         }
         val stateLabel = when {
-            hasQuestion -> "需回答"
-            currentCompletion != null || completions.isNotEmpty() -> "完成"
-            deferredCompletions.isNotEmpty() -> "待处理"
+            hasQuestion -> "$pendingQuestionCount 待回答"
+            hasMessage -> "新回复"
             !streamConnected -> "连接中"
-            agents.any { it.online && it.busy } -> "工作中"
-            else -> "空闲"
+            busy > 0 -> "$busy 工作中"
+            else -> "助手"
         }
-        val online = agents.count { it.online }
-        val busy = agents.count { it.online && it.busy }
         bubbleContainer?.apply {
-            background = roundedBackground(
-                if (hasMessage) 0xFF102A43.toInt() else if (hasQuestion) 0xFFFFFBEB.toInt() else 0xFFF8FBFF.toInt(),
-                if (hasMessage) 0xFF22C55E.toInt() else if (hasQuestion) 0xFFF59E0B.toInt() else 0xFF78A8EE.toInt(),
-                26,
-            )
+            background = touchSurface(0xFFF7FAFF.toInt(), 24)
+            contentDescription = "全局助手，$stateLabel，点击展开，长按关闭"
         }
-        bubbleBrand?.accentColor = if (hasMessage) 0xFF86EFAC.toInt() else 0xFF2F6BF2.toInt()
-        val bubbleText = if (hasQuestion) {
-                "$pendingQuestionCount 个 Agent 等待回答"
-            } else if (hasMessage) {
-                val pending = completions.size + deferredCompletions.size + if (currentCompletion == null) 0 else 1
-                "$pending 条 · ${completion?.result?.ifBlank { completion.summary }?.ifBlank { completion.title }.orEmpty()}"
-            } else {
-                if (online == 0) stateLabel else "$stateLabel $busy/$online"
+        bubbleBrand?.accentColor = stateColor
+        bubbleSummary?.apply {
+            setTextColor(stateColor)
+            if (text.toString() != stateLabel) {
+                text = stateLabel
+                alpha = .4f
+                animate().alpha(1f).setDuration(180L).start()
             }
-        bubbleSummary?.setTickerText(
-            bubbleText,
-            if (hasQuestion) 0xFFFFF7ED.toInt() else if (hasMessage) 0xFFE7FFF0.toInt() else stateColor,
-            scroll = hasMessage || hasQuestion,
-        )
+        }
         GlobalOverlayEventBridge.emit(statusSnapshot())
     }
 
@@ -704,8 +714,10 @@ class GlobalOverlayService : Service() {
     private fun buildPanel(): LinearLayout {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(10))
-            background = roundedBackground(0xFFF7FAFF.toInt(), 0xFFD0DDEF.toInt(), 18)
+            setPadding(dp(16), dp(14), dp(16), dp(8))
+            background = roundedBackground(0xFFFAFBFD.toInt(), 0xFFE4E8EF.toInt(), 24)
+            elevation = dp(4).toFloat()
+            clipToOutline = true
         }
         panelView = panel
         populatePanel(panel)
@@ -731,38 +743,52 @@ class GlobalOverlayService : Service() {
         }
         conversationKey = ""
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(TextView(this).apply {
-            text = "⋮⋮"
-            gravity = Gravity.CENTER
-            textSize = 18f
-            setTextColor(0xFF94A3B8.toInt())
-            contentDescription = "移动面板"
+        header.addView(BrandMarkView(this).apply {
+            accentColor = 0xFFE2E8F0.toInt()
+            background = roundedBackground(0xFF202734.toInt(), 12)
+            contentDescription = "移动全局助手面板"
             setOnTouchListener(DragTouchListener())
-        }, LinearLayout.LayoutParams(dp(28), dp(40)))
-        header.addView(TextView(this).apply {
-            text = "Agent 工作台"
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF0F1729.toInt())
+        }, LinearLayout.LayoutParams(dp(38), dp(38)))
+        header.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, 0, 0)
+            contentDescription = "Agent 工作台，拖动移动面板"
             setOnTouchListener(DragTouchListener())
-        }, LinearLayout.LayoutParams(0, dp(40), 1f))
-        header.addView(TextView(this).apply {
-            text = "收起"
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(0xFF2563EB.toInt())
-            background = roundedBackground(0xFFEFF6FF.toInt(), 0xFFBFDBFE.toInt(), 10)
-            setOnClickListener { expanded = false; renderOverlay() }
-        }, LinearLayout.LayoutParams(dp(56), dp(32)))
+            addView(TextView(this@GlobalOverlayService).apply {
+                text = "Agent 工作台"
+                textSize = 17f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(0xFF202734.toInt())
+                includeFontPadding = false
+            })
+            addView(TextView(this@GlobalOverlayService).apply {
+                text = if (streamConnected) "实时连接 · 随时继续对话" else "正在重新连接…"
+                textSize = 11f
+                setTextColor(0xFF778294.toInt())
+                setPadding(0, dp(4), 0, 0)
+            })
+        }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        header.addView(menuIcon(R.drawable.ic_overlay_collapse, "收起悬浮面板") {
+            expanded = false
+            renderOverlay()
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
         panel.addView(header)
-        panel.addView(TextView(this).apply {
-            val onlineAgents = agents.filter { it.online }
-            val devices = onlineAgents.map { it.machineId }.distinct().size
-            val connection = if (streamConnected) "实时连接" else "正在重连"
-            text = "$devices 台设备  ·  ${onlineAgents.count { it.busy }} 个工作中  ·  $connection"
-            textSize = 11f
-            setTextColor(0xFF7B8DA6.toInt())
-            setPadding(0, 0, 0, dp(10))
+        panel.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(16), 0, dp(12))
+            addView(TextView(this@GlobalOverlayService).apply {
+                text = "在线项目"
+                textSize = 12f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(0xFF687589.toInt())
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(TextView(this@GlobalOverlayService).apply {
+                val online = agents.filter { it.online }
+                text = "${online.size} 个在线  /  ${online.count { it.busy }} 个工作中"
+                textSize = 11f
+                setTextColor(0xFF778294.toInt())
+            })
         })
         if (showQueuePrompt && currentCompletion == null && completions.isEmpty() && deferredCompletions.isNotEmpty()) {
             panel.addView(buildQueuePrompt())
@@ -779,7 +805,7 @@ class GlobalOverlayService : Service() {
                 setPadding(0, dp(12), 0, dp(12))
             })
         } else {
-            onlineAgents.take(6).forEach { list.addView(buildAgentRow(it)) }
+            onlineAgents.forEach { list.addView(buildAgentRow(it)) }
         }
         scroll.addView(list)
         panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -791,51 +817,34 @@ class GlobalOverlayService : Service() {
         ensureModelsLoaded(agent)
         ensureSessionsLoaded(agent)
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(ImageButton(this).apply {
-            setImageResource(R.drawable.ic_overlay_back)
-            background = ColorDrawable(Color.TRANSPARENT)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            contentDescription = "返回 Agent 列表"
-            setOnClickListener {
-                conversationKey = ""
-                refreshOverlayContent()
-            }
-        }, LinearLayout.LayoutParams(dp(36), dp(42)))
-        header.addView(ImageButton(this).apply {
-            contentDescription = "历史会话"
-            setImageResource(R.drawable.ic_overlay_history)
-            background = ColorDrawable(Color.TRANSPARENT)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            setOnClickListener {
-                sessionPanelKey = agent.key
-                updatePanelContent()
-            }
-        }, LinearLayout.LayoutParams(dp(36), dp(42)))
+        header.addView(menuIcon(R.drawable.ic_overlay_back, "返回 Agent 列表") {
+            conversationKey = ""
+            refreshOverlayContent()
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
         header.addView(TextView(this).apply {
             text = agent.name.ifBlank { "Agent" }
-            textSize = 17f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF0F1729.toInt())
+            textSize = 16f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(0xFF202734.toInt())
             includeFontPadding = false
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(6), 0)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
+            contentDescription = "${agent.name}，拖动移动面板"
             setOnTouchListener(DragTouchListener())
-        }, LinearLayout.LayoutParams(0, dp(42), 1f))
-        header.addView(ImageButton(this).apply {
-            contentDescription = "收起悬浮面板"
-            setImageResource(R.drawable.ic_overlay_collapse)
-            background = ColorDrawable(Color.TRANSPARENT)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            setOnClickListener { expanded = false; renderOverlay() }
-        }, LinearLayout.LayoutParams(dp(36), dp(42)))
-        header.addView(ImageButton(this).apply {
-            contentDescription = "新建对话"
-            setImageResource(R.drawable.ic_overlay_new)
-            background = ColorDrawable(Color.TRANSPARENT)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            setOnClickListener { startNewConversation(agent) }
-        }, LinearLayout.LayoutParams(dp(36), dp(42)))
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        header.addView(menuIcon(R.drawable.ic_overlay_history, "历史会话") {
+            sessionPanelKey = agent.key
+            updatePanelContent()
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).also { it.leftMargin = dp(4) })
+        header.addView(menuIcon(R.drawable.ic_overlay_new, "新建对话") {
+            startNewConversation(agent)
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).also { it.leftMargin = dp(4) })
+        header.addView(menuIcon(R.drawable.ic_overlay_collapse, "收起悬浮面板") {
+            expanded = false
+            renderOverlay()
+        }, LinearLayout.LayoutParams(dp(44), dp(44)).also { it.leftMargin = dp(4) })
         panel.addView(header)
         panel.addView(TextView(this).apply {
             text = "${agent.deviceName}  ·  ${agentStatusLabel(agent)}"
@@ -860,7 +869,7 @@ class GlobalOverlayService : Service() {
         val messageArea = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = roundedBackground(Color.WHITE, 0xFFE1E9F3.toInt(), 10)
+            background = roundedBackground(Color.WHITE, 16)
             addView(TextView(this@GlobalOverlayService).apply {
                 text = "最近回复"
                 textSize = 11f
@@ -1156,49 +1165,83 @@ class GlobalOverlayService : Service() {
     }
 
     private fun buildAgentRow(agent: AgentState): View {
+        val selected = agent.key == selectedKey
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(8), dp(10), dp(8))
-            background = roundedBackground(
-                if (agent.key == selectedKey) 0xFFEFF6FF.toInt() else Color.WHITE,
-                if (agent.key == selectedKey) 0xFF2563EB.toInt() else 0xFFE8EFF8.toInt(),
-                10,
-            )
+            setPadding(dp(12), dp(12), dp(10), dp(12))
+            background = touchSurface(if (selected) 0xFFEDF3FF.toInt() else Color.WHITE, 16)
+            isFocusable = true
+            contentDescription = "${agent.name}，${agent.deviceName}，${agentStatusLabel(agent)}，打开对话"
             setOnClickListener {
                 selectedKey = agent.key
                 conversationKey = agent.key
                 updatePanelContent()
             }
         }
-        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
+        row.addView(TextView(this).apply {
+            text = agent.name.ifBlank { "A" }.take(1)
+            textSize = 17f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(if (selected) 0xFF3666B9.toInt() else 0xFF687589.toInt())
+            background = roundedBackground(if (selected) 0xFFDDE9FF.toInt() else 0xFFF0F3F7.toInt(), 12)
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        val info = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), 0, dp(6), 0)
+        }
         info.addView(TextView(this).apply {
             text = agent.name.ifBlank { "Agent" }
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF0F1729.toInt())
-        })
-        info.addView(TextView(this).apply {
-            text = "${agent.deviceName}  ·  ${agent.projectRoot.ifBlank { "未绑定项目" }}"
-            textSize = 11f
-            setTextColor(0xFF4A5D7A.toInt())
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextColor(0xFF202734.toInt())
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         })
-        row.addView(info, LinearLayout.LayoutParams(0, -1, 1f))
-        val status = TextView(this).apply {
-            text = agentStatusLabel(agent)
-            gravity = Gravity.CENTER
-            textSize = 10f
-            typeface = Typeface.DEFAULT_BOLD
+        info.addView(TextView(this).apply {
+            text = agent.deviceName.ifBlank { "在线设备" }
+            textSize = 11f
+            setTextColor(0xFF778294.toInt())
+            setPadding(0, dp(4), 0, 0)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        row.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(TextView(this).apply {
+            text = "• ${agentStatusLabel(agent)}"
+            gravity = Gravity.CENTER_VERTICAL
+            textSize = 11f
             setTextColor(agentStatusColor(agent))
-            background = roundedBackground(agentStatusBackground(agent), agentStatusColor(agent), 9)
-        }
-        row.addView(status, LinearLayout.LayoutParams(dp(52), dp(28)))
+        }, LinearLayout.LayoutParams(-2, -2))
+        row.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_overlay_back)
+            rotation = 180f
+            setColorFilter(0xFF9AA5B5.toInt())
+        }, LinearLayout.LayoutParams(dp(16), dp(16)).also { it.leftMargin = dp(6) })
         return row.apply {
-            layoutParams = LinearLayout.LayoutParams(-1, dp(64)).also { it.bottomMargin = dp(7) }
+            layoutParams = LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) }
         }
     }
+
+    private fun touchSurface(fill: Int, radius: Int, dark: Boolean = false): RippleDrawable =
+        RippleDrawable(
+            ColorStateList.valueOf(if (dark) 0x24FFFFFF else 0x143666B9),
+            roundedBackground(fill, radius),
+            roundedBackground(Color.WHITE, radius),
+        )
+
+    private fun menuIcon(icon: Int, label: String, action: () -> Unit): ImageButton =
+        ImageButton(this).apply {
+            setImageResource(icon)
+            setColorFilter(0xFF59677B.toInt())
+            background = touchSurface(0xFFF0F3F7.toInt(), 12)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            contentDescription = label
+            setOnClickListener { action() }
+        }
 
     private fun buildModelSelector(agent: AgentState): View {
         val models = modelsByMachineId[agent.machineId]
@@ -1738,7 +1781,12 @@ class GlobalOverlayService : Service() {
     }
 
     private fun buildResizeHandle(): View {
-        val row = LinearLayout(this).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL }
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        row.addView(TextView(this).apply {
+            text = "拖动顶部移动 · 右下角调整大小"
+            textSize = 10f
+            setTextColor(0xFF778294.toInt())
+        }, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(ResizeHandleView(this).apply {
             contentDescription = "调整面板大小"
             setOnTouchListener(ResizeTouchListener())
@@ -2480,6 +2528,30 @@ class GlobalOverlayService : Service() {
         if (!backgroundNotificationEnabled) return
         val version = change.optLong("version")
         if (version <= notificationCursor) return
+        val operationId = change.optString("operation_id")
+        val record = change.optJSONObject("record")
+        if (pendingNotificationChanges.any { (pendingVersion, pending) ->
+                pendingVersion > version && pending.optString("operation_id") == operationId
+            }) return
+        // A read receipt must overtake blocked delivery, including offline retries.
+        // Do not advance the cursor past unrelated pending notifications.
+        if (change.optBoolean("deleted") || record?.optBoolean("unread", true) == false) {
+            pendingNotificationChanges.entries.removeAll { it.value.optString("operation_id") == operationId }
+            val taskId = record?.optJSONObject("metadata")?.optString("task_id")
+                .orEmpty().ifBlank { operationId.removePrefix("chat-task:") }
+            if (operationId.startsWith("chat-task:") && taskId.isNotBlank()) {
+                getSystemService(NotificationManager::class.java).cancel(taskId.hashCode())
+            }
+            persistPendingNotificationChanges()
+            if (pendingNotificationChanges.isEmpty()) {
+                notificationDeliveryBlocked = false
+                recordNotificationCursor(version)
+            } else {
+                pendingNotificationChanges[version] = change
+                persistPendingNotificationChanges()
+            }
+            return
+        }
         if (notificationDeliveryBlocked) {
             pendingNotificationChanges[version] = change
             persistPendingNotificationChanges()
@@ -2487,8 +2559,6 @@ class GlobalOverlayService : Service() {
             Log.w(TAG, "notification delivery blocked; queued change version=$version")
             return
         }
-        val operationId = change.optString("operation_id")
-        val record = change.optJSONObject("record")
         if (operationId.startsWith("chat-task:")) {
             val metadata = record?.optJSONObject("metadata") ?: JSONObject()
             val taskId = metadata.optString("task_id").ifBlank { operationId.removePrefix("chat-task:") }
@@ -2554,7 +2624,6 @@ class GlobalOverlayService : Service() {
         persistPendingNotificationChanges()
         for ((_, change) in pending) {
             applyNotificationUpdate(change)
-            if (notificationDeliveryBlocked) break
         }
         if (pendingNotificationChanges.isNotEmpty()) {
             persistPendingNotificationChanges()
@@ -3320,124 +3389,25 @@ class GlobalOverlayService : Service() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private inner class BrandMarkView(context: Context) : View(context) {
-        var accentColor: Int = 0xFF2F6BF2.toInt()
-            set(value) {
-                field = value
-                invalidate()
-            }
+        var accentColor: Int = 0xFFE2E8F0.toInt()
+            set(value) { if (field != value) { field = value; invalidate() } }
         private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeCap = Paint.Cap.SQUARE
-            strokeJoin = Paint.Join.MITER
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
         }
+        private val chevron = Path()
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             markPaint.color = accentColor
-            markPaint.strokeWidth = dp(3).toFloat()
-            val left = width * 0.28f
-            val right = width * 0.70f
-            val middle = height * 0.42f
-            val upper = height * 0.25f
-            val lower = height * 0.59f
-            canvas.drawPath(Path().apply {
-                moveTo(left, upper)
-                lineTo(right, middle)
-                lineTo(left, lower)
-            }, markPaint)
-            markPaint.strokeWidth = dp(2).toFloat()
-            canvas.drawLine(width * 0.28f, height * 0.76f, width * 0.72f, height * 0.76f, markPaint)
-        }
-    }
-
-    private inner class CompletionTickerView(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Typeface.DEFAULT_BOLD
-            textAlign = Paint.Align.LEFT
-        }
-        private var tickerText = ""
-        private var tickerColor = 0xFF64748B.toInt()
-        private var shouldScroll = false
-        private var offset = 0f
-        private var segmentWidth = 0f
-        private var lastFrameNanos = 0L
-        private var animationScheduled = false
-        private val tick = object : Runnable {
-            override fun run() {
-                animationScheduled = false
-                if (!isAttachedToWindow || !shouldScroll) return
-                if (segmentWidth <= 0f) {
-                    scheduleNextFrame()
-                    return
-                }
-                if (segmentWidth <= width) return
-                val now = System.nanoTime()
-                val elapsedSeconds = if (lastFrameNanos == 0L) 0f else {
-                    ((now - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
-                }
-                lastFrameNanos = now
-                offset -= dp(24) * elapsedSeconds
-                if (offset <= -segmentWidth) offset += segmentWidth
-                postInvalidateOnAnimation()
-                scheduleNextFrame()
-            }
-        }
-
-        private fun scheduleNextFrame() {
-            if (animationScheduled || !isAttachedToWindow || !shouldScroll) return
-            animationScheduled = true
-            postOnAnimation(tick)
-        }
-
-        fun setTickerText(value: String, color: Int, scroll: Boolean) {
-            val changed = tickerText != value || tickerColor != color || shouldScroll != scroll
-            tickerText = value
-            tickerColor = color
-            shouldScroll = scroll
-            if (changed) {
-                offset = 0f
-                lastFrameNanos = 0L
-                segmentWidth = 0f
-            }
-            removeCallbacks(tick)
-            animationScheduled = false
-            if (scroll) scheduleNextFrame()
-            postInvalidateOnAnimation()
-        }
-
-        override fun onAttachedToWindow() {
-            super.onAttachedToWindow()
-            lastFrameNanos = 0L
-            scheduleNextFrame()
-        }
-
-        override fun onDetachedFromWindow() {
-            removeCallbacks(tick)
-            animationScheduled = false
-            lastFrameNanos = 0L
-            super.onDetachedFromWindow()
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            if (tickerText.isBlank()) return
-            paint.color = tickerColor
-            paint.textSize = dp(6).toFloat()
-            val metrics = paint.fontMetrics
-            val baseline = height / 2f - (metrics.ascent + metrics.descent) / 2f
-            val separator = "   ·   "
-            val segment = if (shouldScroll) "$tickerText$separator" else tickerText
-            segmentWidth = paint.measureText(segment)
-            canvas.save()
-            canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
-            if (shouldScroll && segmentWidth > width) {
-                canvas.drawText(segment, offset, baseline, paint)
-                canvas.drawText(segment, offset + segmentWidth, baseline, paint)
-            } else {
-                val x = (width - paint.measureText(tickerText)) / 2f
-                canvas.drawText(tickerText, x.coerceAtLeast(0f), baseline, paint)
-            }
-            canvas.restore()
+            markPaint.strokeWidth = resources.displayMetrics.density * 1.8f
+            chevron.reset()
+            chevron.moveTo(width * .25f, height * .32f)
+            chevron.lineTo(width * .44f, height * .50f)
+            chevron.lineTo(width * .25f, height * .68f)
+            canvas.drawPath(chevron, markPaint)
+            canvas.drawLine(width * .53f, height * .68f, width * .75f, height * .68f, markPaint)
         }
     }
 

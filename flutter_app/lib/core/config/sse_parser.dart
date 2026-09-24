@@ -45,10 +45,7 @@ class SseDataParser {
     if (payload == null) {
       return events.map((event) => event.data).toList(growable: false);
     }
-    return [
-      ...events.map((event) => event.data),
-      payload,
-    ];
+    return [...events.map((event) => event.data), payload];
   }
 
   /// 关闭并返回剩余事件，保留事件类型。
@@ -59,25 +56,24 @@ class SseDataParser {
     if (remaining.isEmpty) return events;
     final payload = _payloadFromLine(remaining);
     if (payload == null) return events;
-    return [
-      ...events,
-      SseEvent(type: _pendingEventType, data: payload),
-    ];
+    return [...events, SseEvent(type: _pendingEventType, data: payload)];
   }
 
   List<SseEvent> _drainCompleteLines() {
     final events = <SseEvent>[];
+    final value = _buffer.toString();
+    var start = 0;
     while (true) {
-      final value = _buffer.toString();
-      final index = value.indexOf('\n');
+      final index = value.indexOf('\n', start);
       if (index < 0) break;
-      final line = value.substring(0, index);
-      _buffer
-        ..clear()
-        ..write(value.substring(index + 1));
+      final line = value.substring(start, index);
+      start = index + 1;
       final parsed = _parseLine(line);
       if (parsed != null) events.add(parsed);
     }
+    _buffer
+      ..clear()
+      ..write(value.substring(start));
     return events;
   }
 

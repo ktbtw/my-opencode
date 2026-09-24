@@ -247,6 +247,10 @@ FROM app_notifications WHERE operator_id=? AND operation_id=? FOR UPDATE`, opera
 				Deleted: currentDeleted, UpdatedAt: currentUpdatedAt,
 			}, nil
 		}
+		if !deleted {
+			record = preserveAppNotificationRead(currentRecord, record)
+			recordValue = []byte(record)
+		}
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO app_notification_changes
 (operator_id, operation_id, record_json, deleted, updated_at) VALUES (?, ?, ?, ?, ?)`,

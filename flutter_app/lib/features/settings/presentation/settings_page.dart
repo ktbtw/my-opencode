@@ -358,6 +358,13 @@ class SettingsPage extends ConsumerWidget {
         children: [
           _SectionHeader(title: '消息渲染'),
           _SettingsTile(
+            icon: Icons.view_stream_outlined,
+            title: '连续回复',
+            subtitle: '后台任务结果融入同一条回复，关闭后保留分段气泡',
+            value: settings.continuousReply,
+            onChanged: (_) => notifier.toggle('continuousReply'),
+          ),
+          _SettingsTile(
             icon: Icons.text_snippet_outlined,
             title: 'Markdown 渲染',
             subtitle: '将消息中的 Markdown 语法渲染为富文本',
@@ -396,21 +403,21 @@ class SettingsPage extends ConsumerWidget {
           _SettingsTile(
             icon: Icons.timer_outlined,
             title: '显示首字耗时',
-            subtitle: '在消息底部显示从发送到收到首个字符的时间',
+            subtitle: '显示任务提交到首段正文的耗时，重连不重新计时',
             value: settings.showFirstTokenTime,
             onChanged: (_) => notifier.toggle('showFirstTokenTime'),
           ),
           _SettingsTile(
             icon: Icons.token_outlined,
             title: '显示 Token 消耗',
-            subtitle: '在消息底部显示本次请求消耗的 Token 数',
+            subtitle: '显示模型上报的总 Token，多次模型调用累加',
             value: settings.showTokenCount,
             onChanged: (_) => notifier.toggle('showTokenCount'),
           ),
           _SettingsTile(
             icon: Icons.text_fields_outlined,
             title: '显示字数统计',
-            subtitle: '在消息底部显示消息字数',
+            subtitle: '统计正文原文字符，不含空白、思考和工具输出',
             value: settings.showWordCount,
             onChanged: (_) => notifier.toggle('showWordCount'),
           ),
@@ -566,10 +573,7 @@ class SettingsPage extends ConsumerWidget {
                       message: '已启用后台通知，App 后台时会收到任务完成提醒',
                     );
                   } else {
-                    showAppFeedback(
-                      context,
-                      message: '已关闭后台通知',
-                    );
+                    showAppFeedback(context, message: '已关闭后台通知');
                   }
                 } catch (e) {
                   if (!context.mounted) return;

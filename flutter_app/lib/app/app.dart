@@ -5,10 +5,12 @@ import 'dart:async';
 import '../core/services/push_service.dart';
 import '../core/services/global_overlay_service.dart';
 import '../core/notifications/app_notification_host.dart';
+import '../core/notifications/app_notification_controller.dart';
 import '../core/storage/app_storage.dart';
 import '../core/theme/app_theme.dart';
 import '../features/devices/application/device_operation_notification_coordinator.dart';
 import 'router.dart';
+import '../features/devices/presentation/device_live_updates.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,6 +65,11 @@ class _ChatCodexAppState extends ConsumerState<ChatCodexApp> {
 
   void _openNotificationTarget(PushLaunchPayload payload) {
     if (payload.type != 'task_completed' || payload.agentId == null) return;
+    if (payload.taskId?.isNotEmpty == true) {
+      ref
+          .read(appNotificationControllerProvider.notifier)
+          .markRead('chat-task:${payload.taskId}', synchronizeIfMissing: true);
+    }
     final query = <String, String>{
       'agentId': payload.agentId!,
       if (payload.machineId?.isNotEmpty == true)
@@ -88,6 +95,7 @@ class _ChatCodexAppState extends ConsumerState<ChatCodexApp> {
   @override
   Widget build(BuildContext context) {
     ref.watch(deviceOperationNotificationCoordinatorProvider);
+    ref.watch(deviceLiveUpdatesProvider);
     return MaterialApp.router(
       title: 'Chat Codex',
       theme: AppTheme.light,

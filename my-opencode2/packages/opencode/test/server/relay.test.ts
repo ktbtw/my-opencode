@@ -63,6 +63,15 @@ test("project memory candidate parser accepts one JSON object and rejects surrou
   expect(() => Relay.parseProjectMemoryBatch("[]")).toThrow("curator returned invalid JSON")
 })
 
+test("task completion prefers the final assistant round over accumulated stream text", () => {
+  expect(Relay.testInternals.finalTaskResult("最终面向用户的结论", "前几轮过程文本最终面向用户的结论")).toBe(
+    "最终面向用户的结论",
+  )
+  expect(Relay.testInternals.finalTaskResult("", "仅有流式正文")).toBe("仅有流式正文")
+  const longReply = "继续分析。先做更严谨的结构检测。\n" + "正文内容。".repeat(5_000)
+  expect(Relay.testInternals.finalTaskResult(longReply, "")).toBe(longReply)
+})
+
 test("project memory candidate parser rejects string artifact and source references", () => {
   const candidate = {
     subject_key: "project:memory",

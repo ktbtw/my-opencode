@@ -55,11 +55,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 30));
 
     // 空队列不应出现错误提示，否则会渲染成「队列状态异常」。
-    expect(
-      notifier.state.queueError,
-      isNull,
-      reason: '后台断连不应产生用户可见的队列错误',
-    );
+    expect(notifier.state.queueError, isNull, reason: '后台断连不应产生用户可见的队列错误');
     expect(notifier.state.queue.queuedItems, isEmpty);
   });
 
@@ -88,11 +84,7 @@ void main() {
     await notifier.reconcileAfterResume();
     await _eventually(() => notifier.state.queueError == null);
 
-    expect(
-      notifier.state.queueError,
-      isNull,
-      reason: '回到前台后不应残留队列错误',
-    );
+    expect(notifier.state.queueError, isNull, reason: '回到前台后不应残留队列错误');
     expect(notifier.state.queueLoading, isFalse);
   });
 
@@ -126,11 +118,7 @@ void main() {
     repository.queueEvents.addError(StateError('connection lost'));
     await _eventually(() => notifier.state.queueError != null);
 
-    expect(
-      notifier.state.queueError,
-      isNotNull,
-      reason: '前台且有待发送消息时应提示断连',
-    );
+    expect(notifier.state.queueError, isNotNull, reason: '前台且有待发送消息时应提示断连');
   });
 
   test('回到前台后队列断连仍能自动重连', () async {
@@ -235,6 +223,7 @@ class _FakeChatRepository extends ChatRepository {
     return const Stream<Map<String, dynamic>>.empty();
   }
 
+  @override
   Future<void> dispose() async {
     await queueEvents.close();
   }

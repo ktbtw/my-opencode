@@ -63,6 +63,7 @@ func (m *Memory) UpsertAppNotification(
 			m.mu.Unlock()
 			return &out, nil
 		}
+		record = preserveAppNotificationRead(current.Record, record)
 	}
 	m.appNotificationVersions[operatorID]++
 	change := model.AppNotificationChange{
@@ -314,4 +315,24 @@ func uniqueAppNotificationIDs(values []string) []string {
 		}
 	}
 	return out
+}
+
+// Read is monotonic for one notification instance. Progress or a repeated
+// completion from another device must not turn the same notice unread again.
+func preserveAppNotificationRead(current, incoming json.RawMessage) json.RawMessage {
+	var old, next map[string]any
+	if json.Unmarshal(current, &old) != nil || json.Unmarshal(incoming, &next) != nil {
+		return incoming
+	}
+	oldID, _ := old["id"].(string)
+	nextID, _ := next["id"].(string)
+	if oldID == "" || oldID != nextID || old["unread"] != false {
+		return incoming
+	}
+	next["unread"] = false
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return incoming
+	}
+	return encoded
 }

@@ -20,6 +20,8 @@ class MainActivity : FlutterActivity() {
         fun isAppForeground(): Boolean = appForeground
     }
 
+    private val artifactDirectory by lazy { ArtifactDirectoryBridge(this) }
+
     private val channelName = "chat_codex/push_service"
     private val tag = "JPushMainActivity"
     private var launchPayload: Map<String, String> = notificationPayload(intent)
@@ -45,6 +47,8 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chat_codex/artifact_directory")
+            .setMethodCallHandler(artifactDirectory::handle)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
             when (call.method) {
                 "initialize" -> {
@@ -131,6 +135,17 @@ class MainActivity : FlutterActivity() {
                 notificationSink = null
             }
         })
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!artifactDirectory.onActivityResult(requestCode, resultCode, data)) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
+    override fun onDestroy() {
+        artifactDirectory.dispose()
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

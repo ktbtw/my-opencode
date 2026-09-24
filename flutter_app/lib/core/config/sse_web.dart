@@ -9,13 +9,20 @@ Stream<String> sseStream(Uri uri, Map<String, String> headers) {
 }
 
 /// 保留 `event:` 类型的事件流。需要区分事件类型的调用方使用这个。
-Stream<SseEvent> sseEventStream(Uri uri, Map<String, String> headers) {
+Stream<SseEvent> sseEventStream(
+  Uri uri,
+  Map<String, String> headers, {
+  void Function()? onConnected,
+  void Function()? onActivity,
+}) {
   final controller = StreamController<SseEvent>();
   final xhr = html.HttpRequest();
   xhr.open('GET', uri.toString(), async: true);
   headers.forEach((k, v) => xhr.setRequestHeader(k, v));
 
   int processedLength = 0;
+  bool connected = false;
+  bool cancelled = false;
   final parser = SseDataParser();
 
   void emitPayloads(List<SseEvent> payloads) {
@@ -25,8 +32,10 @@ Stream<SseEvent> sseEventStream(Uri uri, Map<String, String> headers) {
   }
 
   void processNewData({bool flush = false}) {
+    if (cancelled || controller.isClosed) return;
     final text = xhr.responseText;
     if (text != null && text.length > processedLength) {
+      onActivity?.call();
       final newData = text.substring(processedLength);
       processedLength = text.length;
       emitPayloads(parser.addChunkEvents(newData));
@@ -39,6 +48,12 @@ Stream<SseEvent> sseEventStream(Uri uri, Map<String, String> headers) {
   });
 
   xhr.onReadyStateChange.listen((_) {
+    if (cancelled || controller.isClosed) return;
+    final status = xhr.status ?? 0;
+    if (!connected && xhr.readyState >= 2 && status >= 200 && status < 300) {
+      connected = true;
+      onConnected?.call();
+    }
     if (xhr.readyState == 4) {
       final status = xhr.status ?? 0;
       if (status < 200 || status >= 300) {
@@ -61,6 +76,9 @@ Stream<SseEvent> sseEventStream(Uri uri, Map<String, String> headers) {
   });
 
   xhr.send();
-  controller.onCancel = () => xhr.abort();
+  controller.onCancel = () {
+    cancelled = true;
+    xhr.abort();
+  };
   return controller.stream;
 }

@@ -13,6 +13,19 @@ class CachedChatTask {
   });
 }
 
+class LocalChatEvent {
+  final String identity;
+  final String taskId;
+  final String eventKey;
+  final Map<String, dynamic> payload;
+  const LocalChatEvent(this.identity, this.taskId, this.eventKey, this.payload);
+}
+
+/// Optional batch capability; small in-memory stores can use recordEvent.
+abstract interface class BulkLocalChatStore {
+  Future<void> recordEvents(List<LocalChatEvent> events);
+}
+
 abstract class LocalChatStore {
   Future<void> init();
 

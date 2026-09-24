@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/chat_repository.dart';
+import 'chat_provider.dart' show chatRepositoryProvider;
+import '../../../core/services/app_foreground.dart';
 import '../data/subagent_models.dart';
 import '../data/subagent_repository.dart';
 
@@ -34,6 +36,9 @@ class SubagentTreeNotifier extends StateNotifier<SubagentTreeState> {
   final ChatRepository _chatRepository;
   StreamSubscription<Map<String, dynamic>>? _events;
   bool _disposed = false;
+  Timer? _refreshTimer;
+  bool _refreshing = false;
+  bool _refreshAgain = false;
 
   SubagentTreeNotifier({
     required this.taskId,
@@ -44,23 +49,52 @@ class SubagentTreeNotifier extends StateNotifier<SubagentTreeState> {
        super(const SubagentTreeState());
 
   Future<void> start() async {
+    if (_disposed) return;
+    _events ??= _chatRepository
+        .watchTaskSignals(taskId)
+        .listen(
+          (event) {
+            final type = event['type'] as String? ?? '';
+            if (type.startsWith('subagent_')) _scheduleRefresh();
+          },
+          onError: (Object error) {
+            if (!_disposed) state = state.copyWith(error: error.toString());
+          },
+        );
+    // Subscribe before the snapshot so changes during GET trigger another read.
     await refresh();
-    _events ??= _chatRepository.watchTaskEvents(taskId).listen((event) {
-      final type = event['type'] as String? ?? '';
-      if (type.startsWith('subagent_')) unawaited(refresh(silent: true));
+  }
+
+  void _scheduleRefresh() {
+    if (_disposed) return;
+    _refreshTimer ??= Timer(const Duration(milliseconds: 150), () {
+      _refreshTimer = null;
+      unawaited(refresh(silent: true));
     });
   }
 
   Future<void> refresh({bool silent = false}) async {
+    if (_disposed) return;
+    if (_refreshing) {
+      _refreshAgain = true;
+      return;
+    }
+    _refreshing = true;
     if (!silent) state = state.copyWith(loading: true, error: '');
     try {
       final snapshot = await _repository.getTree(taskId);
       if (!_disposed) {
-        state = state.copyWith(snapshot: snapshot, loading: false);
+        state = state.copyWith(snapshot: snapshot, loading: false, error: '');
       }
     } catch (error) {
       if (!_disposed) {
         state = state.copyWith(loading: false, error: error.toString());
+      }
+    } finally {
+      _refreshing = false;
+      if (_refreshAgain && !_disposed) {
+        _refreshAgain = false;
+        _scheduleRefresh();
       }
     }
   }
@@ -87,6 +121,7 @@ class SubagentTreeNotifier extends StateNotifier<SubagentTreeState> {
   void dispose() {
     _disposed = true;
     _events?.cancel();
+    _refreshTimer?.cancel();
     super.dispose();
   }
 }
@@ -98,8 +133,8 @@ final subagentTreeProvider = StateNotifierProvider.autoDispose
       final notifier = SubagentTreeNotifier(
         taskId: taskId,
         repository: ref.watch(subagentRepositoryProvider),
-        chatRepository: ChatRepository(),
+        chatRepository: ref.watch(chatRepositoryProvider),
       );
-      unawaited(notifier.start());
+      if (ref.watch(appForegroundProvider)) unawaited(notifier.start());
       return notifier;
     });

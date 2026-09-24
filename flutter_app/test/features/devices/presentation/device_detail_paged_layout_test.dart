@@ -2,6 +2,7 @@ import 'package:chat_codex_app/core/storage/app_storage.dart';
 import 'package:chat_codex_app/features/devices/data/device_model.dart';
 import 'package:chat_codex_app/features/devices/presentation/device_detail_page.dart';
 import 'package:chat_codex_app/features/devices/presentation/device_provider.dart';
+import 'package:chat_codex_app/features/devices/presentation/device_metrics_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,6 +58,10 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          // Layout assertions use fixture state, not a live SSE connection.
+          deviceMetricsLiveProvider(
+            'machine-a',
+          ).overrideWith((ref) => const Stream.empty()),
           deviceDetailProvider(
             'machine-a',
           ).overrideWith((ref) async => device()),
@@ -175,6 +180,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          deviceMetricsLiveProvider(
+            'machine-a',
+          ).overrideWith((ref) => const Stream.empty()),
           deviceDetailProvider('machine-a').overrideWith(
             (ref) async => DeviceModel.fromJson({
               'machine_id': 'machine-a',

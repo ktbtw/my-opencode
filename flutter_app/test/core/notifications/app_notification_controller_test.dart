@@ -7,6 +7,171 @@ import 'package:chat_codex_app/core/notifications/app_notification_sync.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'late saved history preserves a manual collapse and hidden operation',
+    () async {
+      final record = _record(
+        'semantic-preflight:late',
+        AppNotificationStatus.running,
+        DateTime.utc(2026),
+      );
+      final repository = _DelayedMemoryRepository(
+        AppNotificationSnapshot(active: [record]),
+      );
+      final controller = _controller(repository);
+      final loading = controller.hydrate();
+      controller.upsert(record);
+      controller.hideOperation(record.operationId);
+      controller.collapse();
+      repository.release();
+      await loading;
+      expect(controller.state.active, isEmpty);
+      expect(controller.state.collapsed, isTrue);
+      controller.applyRemoteChange(
+        AppNotificationRemoteChange(
+          version: 1,
+          operationId: record.operationId,
+          record: record,
+        ),
+      );
+      expect(controller.state.active, isEmpty);
+      controller.dispose();
+    },
+  );
+
+  test(
+    'repeated start cannot reopen an explicitly hidden running operation',
+    () async {
+      final controller = _controller(_MemoryRepository());
+      await controller.hydrate();
+      controller.start(
+        operationId: 'semantic-preflight:job',
+        title: '正在切换 Agent 助手',
+        message: '开始',
+      );
+      controller.hideOperation('semantic-preflight:job');
+      controller.start(
+        operationId: 'semantic-preflight:job',
+        title: '正在切换 Agent 助手',
+        message: '同步进度',
+      );
+      expect(controller.state.active, isEmpty);
+      controller.dispose();
+    },
+  );
+
+  test(
+    'terminal result releases the hidden suppression so a reused id alerts again',
+    () async {
+      final controller = _controller(_MemoryRepository());
+      await controller.hydrate();
+
+      // A device Agent switch reuses one stable operation id on every tap.
+      const operationId = 'agent:enabled:machine-1:agent-1';
+      controller.start(
+        operationId: operationId,
+        title: '正在启用 Agent',
+        message: '正在同步运行状态',
+        scope: AppNotificationScope.synced,
+      );
+
+      // The user hides the banner while the request is still in flight.
+      controller.hideOperation(operationId);
+      expect(controller.state.active, isEmpty);
+
+      // The request finishes afterwards.
+      controller.succeed(operationId, title: 'Agent 已启用', message: '状态已同步');
+
+      // Tapping the same switch again must surface a fresh notification.
+      controller.start(
+        operationId: operationId,
+        title: '正在停用 Agent',
+        message: '正在同步运行状态',
+        scope: AppNotificationScope.synced,
+      );
+      expect(controller.state.active, isNotEmpty);
+      expect(controller.state.active.first.operationId, operationId);
+      controller.dispose();
+    },
+  );
+
+  test(
+    'remote read survives late progress and new instances alert independently',
+    () async {
+      final controller = _controller(_MemoryRepository());
+      await controller.hydrate();
+      final original = controller.start(
+        operationId: 'shared',
+        title: '任务',
+        message: '执行中',
+        scope: AppNotificationScope.synced,
+      );
+      void remote(int version, AppNotificationRecord record) =>
+          controller.applyRemoteChange(
+            AppNotificationRemoteChange(
+              version: version,
+              operationId: 'shared',
+              record: record,
+            ),
+          );
+      remote(2, original.copyWith(unread: false));
+      remote(1, original);
+      controller.update(operationId: 'shared', progress: 0.8);
+      remote(
+        3,
+        original.copyWith(
+          updatedAt: original.updatedAt.add(const Duration(seconds: 1)),
+        ),
+      );
+      expect(controller.state.active.single.unread, isFalse);
+      controller.succeed('shared');
+      await Future<void>.delayed(const Duration(milliseconds: 35));
+      expect(controller.state.recent.single.unread, isFalse);
+      remote(
+        4,
+        original.copyWith(
+          id: 'new-instance',
+          updatedAt: original.updatedAt.add(const Duration(seconds: 2)),
+        ),
+      );
+      expect(controller.state.active.single.id, 'new-instance');
+      expect(controller.state.active.single.unread, isTrue);
+      controller.dispose();
+    },
+  );
+
+  test(
+    'system click before hydration consumes read receipt without hiding a new run',
+    () async {
+      final timestamp = DateTime.utc(2026);
+      final original = AppNotificationRecord(
+        id: 'one',
+        operationId: 'shared',
+        title: '任务',
+        message: '',
+        status: AppNotificationStatus.running,
+        scope: AppNotificationScope.synced,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      );
+      final controller = _controller(
+        _MemoryRepository(AppNotificationSnapshot(active: [original])),
+      );
+      controller.markRead('shared', synchronizeIfMissing: true);
+      await controller.hydrate();
+      expect(controller.state.active.single.unread, isFalse);
+      controller.succeed('shared');
+      controller.start(
+        operationId: 'shared',
+        title: '再次运行',
+        message: '',
+        scope: AppNotificationScope.synced,
+      );
+      expect(controller.state.active.single.unread, isTrue);
+      controller.dispose();
+    },
+  );
+
   test('stable operation ID updates one active notification', () async {
     final repository = _MemoryRepository();
     final controller = _controller(repository);

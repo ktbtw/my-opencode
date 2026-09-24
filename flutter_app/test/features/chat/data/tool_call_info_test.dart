@@ -3,23 +3,26 @@ import 'package:chat_codex_app/features/chat/data/chat_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('sameIdentity does not collapse parallel tools that share a call id', () {
-    const first = ToolCallInfo(
-      id: 'prt_1',
-      callId: 'call_shared',
-      tool: 'read',
-      status: 'running',
-    );
-    const second = ToolCallInfo(
-      id: 'prt_2',
-      callId: 'call_shared',
-      tool: 'read',
-      status: 'running',
-    );
+  test(
+    'sameIdentity does not collapse parallel tools that share a call id',
+    () {
+      const first = ToolCallInfo(
+        id: 'prt_1',
+        callId: 'call_shared',
+        tool: 'read',
+        status: 'running',
+      );
+      const second = ToolCallInfo(
+        id: 'prt_2',
+        callId: 'call_shared',
+        tool: 'read',
+        status: 'running',
+      );
 
-    expect(first.sameIdentity(second), isFalse);
-    expect(second.sameIdentity(first), isFalse);
-  });
+      expect(first.sameIdentity(second), isFalse);
+      expect(second.sameIdentity(first), isFalse);
+    },
+  );
 
   test('coalescedWith never regresses completed back to running', () {
     const completed = ToolCallInfo(
@@ -86,11 +89,7 @@ void main() {
 
   test('snapshotFromTaskEvents keeps text-tool insertion order', () {
     final snapshot = ChatRepository().snapshotFromTaskEvents('task-1', [
-      {
-        'type': 'delta',
-        'field': 'text',
-        'content': '先核对上限。',
-      },
+      {'type': 'delta', 'field': 'text', 'content': '先核对上限。'},
       {
         'type': 'tool_updated',
         'tool': {
@@ -100,11 +99,7 @@ void main() {
           'status': 'completed',
         },
       },
-      {
-        'type': 'delta',
-        'field': 'text',
-        'content': '再推测试包。',
-      },
+      {'type': 'delta', 'field': 'text', 'content': '再推测试包。'},
       {
         'type': 'tool_updated',
         'tool': {
@@ -114,11 +109,7 @@ void main() {
           'status': 'completed',
         },
       },
-      {
-        'type': 'delta',
-        'field': 'text',
-        'content': '测试包已写上。',
-      },
+      {'type': 'delta', 'field': 'text', 'content': '测试包已写上。'},
     ]);
 
     expect(snapshot.blocks, hasLength(5));
@@ -127,5 +118,15 @@ void main() {
     expect(snapshot.blocks[2].text, '再推测试包。');
     expect(snapshot.blocks[3].tool?.id, 'prt_b');
     expect(snapshot.blocks[4].text, '测试包已写上。');
+  });
+
+  test('snapshotFromTaskEvents preserves long reasoning history', () {
+    final reasoning = '思考' * 100000;
+    final snapshot = ChatRepository().snapshotFromTaskEvents('large-task', [
+      {'type': 'delta', 'field': 'reasoning', 'content': reasoning},
+    ]);
+
+    expect(snapshot.reasoning, reasoning);
+    expect(snapshot.complete, isTrue);
   });
 }

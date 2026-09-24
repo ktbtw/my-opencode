@@ -396,6 +396,8 @@ func (a *App) requestSessionHistory(
 	requestID string,
 	payload model.SessionHistoryRequestPayload,
 ) (model.SessionHistoryResultPayload, error) {
+	startedAt := time.Now()
+	log.Printf("[history.request] start task_id=%s agent_id=%s request_id=%s cursor=%t limit=%d", payload.TaskID, agentID, requestID, strings.TrimSpace(payload.Cursor) != "", payload.Limit)
 	resultCh := a.registerSessionHistoryRequest(requestID)
 	defer a.unregisterSessionHistoryRequest(requestID)
 	if err := a.broker.DispatchForOperator(ctx, operatorID, agentID, model.Envelope{
@@ -404,17 +406,21 @@ func (a *App) requestSessionHistory(
 		SentAt:    time.Now().UTC().Format(time.RFC3339),
 		Payload:   payload,
 	}); err != nil {
+		log.Printf("[history.request] dispatch_failed task_id=%s agent_id=%s elapsed_ms=%d err=%v", payload.TaskID, agentID, time.Since(startedAt).Milliseconds(), err)
 		return model.SessionHistoryResultPayload{}, err
 	}
 	select {
 	case <-ctx.Done():
+		log.Printf("[history.request] canceled task_id=%s agent_id=%s elapsed_ms=%d err=%v", payload.TaskID, agentID, time.Since(startedAt).Milliseconds(), ctx.Err())
 		return model.SessionHistoryResultPayload{}, ctx.Err()
 	case <-time.After(sessionHistoryRequestTimeout):
+		log.Printf("[history.request] timeout task_id=%s agent_id=%s elapsed_ms=%d", payload.TaskID, agentID, time.Since(startedAt).Milliseconds())
 		return model.SessionHistoryResultPayload{}, fmt.Errorf("session history timeout")
 	case result := <-resultCh:
 		if result.Source == "" {
 			result.Source = "agent_local"
 		}
+		log.Printf("[history.request] done task_id=%s agent_id=%s elapsed_ms=%d events=%d has_more=%v source=%s", payload.TaskID, agentID, time.Since(startedAt).Milliseconds(), len(result.Events), result.HasMore, result.Source)
 		return result, nil
 	}
 }
@@ -634,7 +640,16 @@ func (a *App) shouldIgnoreTaskEvent(taskID, eventType string) bool {
 
 	switch task.Status {
 	case model.TaskCancelling:
-		return eventType != "task.failed" && eventType != "task.cancelled"
+		// While cancelling, only real terminal events are accepted. A late
+		// task.completed is the authoritative outcome of work the agent already
+		// finished; dropping it would throw away the real result and mislabel
+		// the task as failed.
+		switch eventType {
+		case "task.failed", "task.cancelled", "task.completed":
+			return false
+		default:
+			return true
+		}
 	case model.TaskCompleted, model.TaskFailed, model.TaskCancelled:
 		return true
 	default:
@@ -1035,10 +1050,16 @@ func (a *App) cleanStuckTasks() {
 		}
 
 		// 第二阶段：取消请求发出后仍未收口的任务，最终标记为失败并补发终态事件。
+		// 起算点用「取消请求时刻」，不能用 UpdatedAt：子代理事件会持续刷新
+		// UpdatedAt，用它会永远等不到 grace 到期，任务永久卡在 cancelling。
 		cancelling, _ := a.store.ListTasks(model.TaskFilter{Status: model.TaskCancelling, Limit: 100})
 		finalizeCutoff := time.Now().Add(-a.taskCancelGrace)
 		for _, t := range cancelling {
-			if t.UpdatedAt.Before(finalizeCutoff) {
+			observed := t.UpdatedAt
+			if requestedAt := metadataTime(t.Metadata, model.TaskMetaCancelRequestedAt); !requestedAt.IsZero() {
+				observed = requestedAt
+			}
+			if observed.Before(finalizeCutoff) {
 				a.finalizeTaskFailure(
 					t,
 					fmt.Sprintf("任务超时自动终止（取消请求发出后 %s 未完成）", a.taskCancelGrace),
@@ -1486,6 +1507,7 @@ func (a *App) Router() http.Handler {
 	r.Post("/api/tasks/{taskID}/question", h.AnswerTaskQuestion)
 	r.Post("/api/tasks/{taskID}/cancel", h.CancelTask)
 	r.Get("/api/models", h.ListModels)
+	r.Get("/api/agents/{agentID}/connection-latency", h.AgentLinkLatency)
 	r.Get("/api/agents/{agentID}/settings", h.GetDeviceSettings)
 	r.Post("/api/agents/{agentID}/settings", h.UpdateDeviceSettings)
 	r.Get("/api/cli/version", h.CliVersion)
@@ -1826,20 +1848,24 @@ func (a *App) device(w http.ResponseWriter, r *http.Request) {
 	a.resumeGoalTaskAfterReconnect(operator.ID, agentID, hello)
 	a.resumeDetachedSubagentsAfterReconnect(operator.ID, agentID, hello)
 
-	for {
-		_, buf, err := c.Read(ctx)
-		if err != nil {
-			log.Printf("[ws.device] read failed %s agent_id=%s close_status=%v err=%v", meta.fields(), device.ID, wsCloseStatus(err), err)
-			return
-		}
+	var lastSlowHandlingLog time.Time
+	err = consumeDeviceMessages(ctx, c, func(buf []byte) error {
 		if err := a.handle(device, buf); err != nil {
 			log.Printf("[ws.device] handle failed %s agent_id=%s err=%v", meta.fields(), device.ID, err)
 			fail := fmt.Sprintf(`{"type":"error","payload":{"error":%q}}`, err.Error())
-			if writeErr := c.Write(ctx, websocket.MessageText, []byte(fail)); writeErr != nil {
-				log.Printf("[ws.device] error reply failed %s agent_id=%s close_status=%v err=%v", meta.fields(), device.ID, wsCloseStatus(writeErr), writeErr)
-				return
-			}
+			writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return c.Write(writeCtx, websocket.MessageText, []byte(fail))
 		}
+		return nil
+	}, func(wait, processing time.Duration, pending int) {
+		if (wait >= 250*time.Millisecond || processing >= 250*time.Millisecond) && time.Since(lastSlowHandlingLog) >= 5*time.Second {
+			lastSlowHandlingLog = time.Now()
+			logDeviceHandling(device.ID, wait, processing, pending)
+		}
+	})
+	if err != nil {
+		log.Printf("[ws.device] read stopped %s agent_id=%s close_status=%v err=%v", meta.fields(), device.ID, wsCloseStatus(err), err)
 	}
 }
 
@@ -1853,7 +1879,9 @@ func (a *App) handle(device *broker.Device, buf []byte) error {
 	if device != nil {
 		agentID = device.ID
 	}
-	log.Printf("[handle] agentID=%s type=%s", agentID, env.Type)
+	if env.Type != "task.delta" {
+		log.Printf("[handle] agentID=%s type=%s", agentID, env.Type)
+	}
 
 	body, err := json.Marshal(env.Payload)
 	if err != nil {

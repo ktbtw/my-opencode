@@ -1613,7 +1613,8 @@ func TestTaskAgentHistoryUsesAgentThenFallsBackToMysql(t *testing.T) {
 			t.Fatalf("unexpected payload: %s", rr.Body.String())
 		}
 		events := payload["events"].([]any)
-		if len(events) != 1 || events[0].(map[string]any)["content"] != "from-agent" {
+		if len(events) != 2 || events[0].(map[string]any)["content"] != "from-agent" ||
+			events[1].(map[string]any)["metadata"].(map[string]any)["stage"] != "reply_timing_ready" {
 			t.Fatalf("expected agent events, got %s", rr.Body.String())
 		}
 	})
@@ -1639,6 +1640,9 @@ func TestTaskAgentHistoryUsesAgentThenFallsBackToMysql(t *testing.T) {
 		}
 		if !strings.Contains(rr.Body.String(), `"source":"mysql_legacy"`) || !strings.Contains(rr.Body.String(), "mysql") {
 			t.Fatalf("expected empty agent history to fall back to mysql, got %s", rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), `"complete":false`) {
+			t.Fatalf("sparse archive must not claim the Agent body was restored: %s", rr.Body.String())
 		}
 	})
 

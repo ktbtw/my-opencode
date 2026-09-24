@@ -158,3 +158,48 @@ func TestAppNotificationRejectsOlderRecord(t *testing.T) {
 		t.Fatalf("older record published a synthetic change: observed=%d", observed)
 	}
 }
+
+func TestAppNotificationReadSurvivesConcurrentProgressAndNewRunIsUnread(t *testing.T) {
+	storage := NewMemory(nil)
+	ctx := context.Background()
+	record := json.RawMessage(`{"operation_id":"task:1","id":"run-1","unread":true}`)
+	for _, operator := range []int64{1, 2} {
+		if _, err := storage.UpsertAppNotification(ctx, operator, "task:1", record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var group sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if _, err := storage.UpsertAppNotification(ctx, 1, "task:1", record); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	if _, err := storage.MarkAppNotificationsRead(ctx, 1, []string{"task:1"}); err != nil {
+		t.Fatal(err)
+	}
+	group.Wait()
+	assertUnread := func(operator int64, want bool) {
+		t.Helper()
+		page, err := storage.ListAppNotificationChanges(ctx, operator, 0, 100)
+		if err != nil || len(page.Items) != 1 {
+			t.Fatalf("page=%+v err=%v", page, err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(page.Items[0].Record, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["unread"] != want {
+			t.Fatalf("operator=%d record=%s want unread=%v", operator, page.Items[0].Record, want)
+		}
+	}
+	assertUnread(1, false)
+	assertUnread(2, true)
+	if _, err := storage.UpsertAppNotification(ctx, 1, "task:1", json.RawMessage(`{"operation_id":"task:1","id":"run-2","unread":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	assertUnread(1, true)
+}

@@ -4,13 +4,22 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'local_chat_store.dart';
 
-class _SqliteLocalChatStore implements LocalChatStore {
+class _SqliteLocalChatStore implements LocalChatStore, BulkLocalChatStore {
+  static const _maxCachedEventsPerTask = 2000;
   Database? _database;
 
   Database get _db => _database!;
 
+  Future<void>? _initializing;
+
   @override
-  Future<void> init() async {
+  Future<void> init() =>
+      _initializing ??= _initialize().catchError((Object error) {
+        _initializing = null;
+        throw error;
+      });
+
+  Future<void> _initialize() async {
     if (_database != null) return;
     final directory = await getApplicationSupportDirectory();
     _database = sqlite3.open(
@@ -159,6 +168,32 @@ class _SqliteLocalChatStore implements LocalChatStore {
   }
 
   @override
+  Future<void> recordEvents(List<LocalChatEvent> events) async {
+    _db.execute('BEGIN TRANSACTION');
+    final statement = _db.prepare(
+      'INSERT OR IGNORE INTO task_events'
+      '(identity, task_id, event_key, payload, created_at) VALUES (?, ?, ?, ?, ?)',
+    );
+    try {
+      for (final event in events) {
+        statement.execute([
+          event.identity,
+          event.taskId,
+          event.eventKey,
+          jsonEncode(event.payload),
+          DateTime.now().millisecondsSinceEpoch,
+        ]);
+      }
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    } finally {
+      statement.dispose();
+    }
+  }
+
+  @override
   Future<bool> recordEvent({
     required String identity,
     required String taskId,
@@ -198,11 +233,12 @@ class _SqliteLocalChatStore implements LocalChatStore {
       '''
       SELECT payload FROM task_events
       WHERE identity = ? AND task_id = ?
-      ORDER BY created_at ASC, rowid ASC
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT ?
     ''',
-      [identity, taskId],
+      [identity, taskId, _maxCachedEventsPerTask],
     );
-    return rows
+    final events = rows
         .map((row) {
           final payload = jsonDecode(row['payload'] as String);
           if (payload is Map<String, dynamic>) return payload;
@@ -210,7 +246,8 @@ class _SqliteLocalChatStore implements LocalChatStore {
           return <String, dynamic>{};
         })
         .where((event) => event.isNotEmpty)
-        .toList(growable: false);
+        .toList(growable: true);
+    return events.reversed.toList(growable: false);
   }
 
   @override

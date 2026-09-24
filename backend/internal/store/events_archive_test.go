@@ -233,7 +233,7 @@ func TestAddEventCanSkipHighFrequencyArchiveWrites(t *testing.T) {
 	close(archive.releaseFirst)
 	memory := NewMemory(archive)
 	task := memory.CreateTask("agent", "machine", "project", "/tmp", "session", nil, nil, 1)
-	memory.AddEvent(task.ID, model.Event{TaskID: task.ID, Type: "delta", Content: "skip-me", SentAt: time.Now().UTC()})
+	memory.AddEvent(task.ID, model.Event{TaskID: task.ID, Type: "delta", Field: "reasoning", Content: "skip-me", SentAt: time.Now().UTC()})
 	memory.AddEvent(task.ID, model.Event{TaskID: task.ID, Type: "progress", Content: "skip-progress", SentAt: time.Now().UTC()})
 	memory.AddEvent(task.ID, model.Event{TaskID: task.ID, Type: "completed", Content: "keep-me", SentAt: time.Now().UTC()})
 	archive.mu.Lock()
@@ -778,4 +778,20 @@ func (a *pageArchive) AppendEventWithID(event *model.Event) error {
 		event.ID = 99
 	}
 	return nil
+}
+
+func TestCatchUpLargeArchiveNeverDisplacesLatestLiveBody(t *testing.T) {
+	stamp := time.Unix(100, 0).UTC()
+	archive := &catchUpPageArchive{}
+	memory := NewMemory(archive)
+	task := memory.CreateTask("agent", "machine", "project", "/tmp", "session", nil, nil, 1)
+	archive.taskID = task.ID
+	for i := 1; i <= taskEventCatchUpLimit; i++ {
+		archive.events = append(archive.events, model.Event{TaskID: task.ID, Type: "tool_updated", ID: int64(i), Sequence: int64(i), SentAt: stamp.Add(time.Duration(i) * time.Second)})
+	}
+	memory.events[task.ID] = []model.Event{{TaskID: task.ID, Type: "delta", Field: "text", Content: "latest body", ID: 9000, Sequence: 9000, SentAt: stamp.Add(9000 * time.Second)}}
+	events := memory.CatchUpEvents(task.ID, nil, 0, 0)
+	if len(events) != taskEventCatchUpLimit || events[len(events)-1].Content != "latest body" {
+		t.Fatalf("live body was displaced by archive prefix: count=%d last=%+v", len(events), events[len(events)-1])
+	}
 }

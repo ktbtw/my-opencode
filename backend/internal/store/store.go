@@ -68,6 +68,7 @@ func archiveHighFreqEvent(eventType string) bool {
 }
 
 type Memory struct {
+	replyTimings              map[string]replyTiming
 	mu                        sync.RWMutex
 	tasks                     map[string]*model.Task
 	events                    map[string][]model.Event
@@ -153,6 +154,7 @@ func NewMemory(archive TaskArchive) *Memory {
 		archive = noopArchive{}
 	}
 	return &Memory{
+		replyTimings:            map[string]replyTiming{},
 		tasks:                   map[string]*model.Task{},
 		events:                  map[string][]model.Event{},
 		subagentEvents:          map[string][]model.Event{},
@@ -227,6 +229,7 @@ func (m *Memory) CreateTask(agentID, machineID, projectID, projectRoot, sessionI
 	}
 	m.tasks[id] = task
 	m.events[id] = []model.Event{}
+	m.replyTimings[id] = replyTiming{startedAt: now}
 	// A newly-created task has no archived events. Mark its sequence as known
 	// so the first event does not issue a database count/scan query.
 	m.eventSequences[id] = 0
@@ -444,6 +447,13 @@ func (m *Memory) MarkCancelling(id, sessionID, msg string) (*model.Task, bool) {
 		out := clone(task)
 		m.mu.Unlock()
 		return out, false
+	case model.TaskCancelling:
+		// Already cancelling: stay idempotent. Repeated or concurrent stop
+		// requests must not append duplicate "cancelling" events or re-dispatch
+		// task.cancel to the agent.
+		out := clone(task)
+		m.mu.Unlock()
+		return out, false
 	}
 	task.Status = model.TaskCancelling
 	task.Error = msg
@@ -451,6 +461,11 @@ func (m *Memory) MarkCancelling(id, sessionID, msg string) (*model.Task, bool) {
 	task.Approval = nil
 	task.Question = nil
 	task.UpdatedAt = time.Now().UTC()
+	if task.Metadata == nil {
+		task.Metadata = map[string]string{}
+	}
+	// The cancel grace is measured from the request, never from UpdatedAt.
+	task.Metadata[model.TaskMetaCancelRequestedAt] = task.UpdatedAt.Format(time.RFC3339Nano)
 	out := clone(task)
 	m.mu.Unlock()
 	m.persistTask(out)
@@ -525,6 +540,7 @@ func (m *Memory) AddEvent(id string, evt model.Event) {
 	writeLock.Lock()
 
 	m.mu.Lock()
+	m.measureReplyLocked(id, &evt)
 	if evt.Sequence <= 0 {
 		nextSequence := m.eventSequences[id]
 		_, sequenceKnown := m.eventSequences[id]
@@ -552,15 +568,29 @@ func (m *Memory) AddEvent(id string, evt model.Event) {
 		task.UpdatedAt = time.Now().UTC()
 	}
 	m.mu.Unlock()
-	if !archiveHighFreqEvent(evt.Type) {
+	archived := evt
+	archiveEvent := archiveHighFreqEvent(evt.Type)
+	if !archiveEvent && replyStatisticsEvent(evt) {
+		archiveEvent = true
+		if evt.Type == "delta" {
+			// Persist a timing-only progress event, never a partial body that a
+			// database history fallback could mistake for a full reply.
+			meta := statisticsMetadata(evt.Metadata)
+			meta["source"] = "llm_usage"
+			meta["stage"] = "reply_timing_ready"
+			archived.Type, archived.Content, archived.Field, archived.Metadata = "progress", "", "", meta
+		}
+	}
+	if !archiveEvent {
 		if evt.ID <= 0 {
 			evt.ID = evt.Sequence
 		}
 	} else if appender, ok := m.archive.(TaskEventAppenderWithID); ok {
-		if err := appender.AppendEventWithID(&evt); err != nil {
+		if err := appender.AppendEventWithID(&archived); err != nil {
 			log.Printf("append event archive failed: %v", err)
 		}
-	} else if err := m.archive.AppendEvent(evt); err != nil {
+		evt.ID, evt.SentAt = archived.ID, archived.SentAt
+	} else if err := m.archive.AppendEvent(archived); err != nil {
 		log.Printf("append event archive failed: %v", err)
 	}
 	if evt.ID <= 0 {
@@ -596,6 +626,9 @@ func (m *Memory) AddEvent(id string, evt model.Event) {
 	// here made memory grow with the number of completed tasks; later history
 	// reads use the archive directly.
 	if terminal {
+		m.mu.Lock()
+		delete(m.replyTimings, id)
+		m.mu.Unlock()
 		_, durable := m.archive.(TaskEventPageReader)
 		_, ephemeral := m.archive.(noopArchive)
 		if durable || ephemeral {
@@ -1036,7 +1069,10 @@ func (m *Memory) CatchUpEvents(id string, after *EventCursor, afterSequence int6
 	}
 	merged := mergeCatchUpEvents(archived, live)
 	if len(merged) > limit {
-		return merged[:limit]
+		// This is the bounded live catch-up window, not a history page. Keep
+		// the newest events; the old prefix can otherwise evict every live
+		// text delta behind thousands of durable tool/progress records.
+		return merged[len(merged)-limit:]
 	}
 	return merged
 }

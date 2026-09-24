@@ -1,3 +1,4 @@
+import '../../project_settings/project_settings_provider.dart';
 import 'package:dio/dio.dart';
 import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -59,20 +60,28 @@ class ArtifactDownloadService {
 
   static Future<String?> download({
     required String taskId,
+    String? project,
     required AiArtifact artifact,
     void Function(int received, int total)? onReceiveProgress,
   }) async {
+    final identity = AppStorage.storageIdentity;
+    final prefs = await SharedPreferences.getInstance();
+    final directory = project == null
+        ? null
+        : ProjectSettings.read(prefs, identity, project).downloadDirectory;
+    final preferredDirectory =
+        directory ?? prefs.getString(AppSettings.downloadDirectoryKey);
     final bytes = await fetchBytes(
       taskId: taskId,
       artifact: artifact,
       onReceiveProgress: onReceiveProgress,
     );
-    final prefs = await SharedPreferences.getInstance();
+    if (AppStorage.storageIdentity != identity) throw StateError('账号已切换，请重新下载');
     return saveArtifactBytes(
       bytes,
       filename: artifact.filename,
       mimeType: artifact.mimeType,
-      preferredDirectory: prefs.getString(AppSettings.downloadDirectoryKey),
+      preferredDirectory: preferredDirectory,
     );
   }
 }

@@ -569,7 +569,15 @@ void main() {
           .where((message) => message.role == MessageRole.agent)
           .single;
       expect(agentMessage.content, '前半段正文后半段正文');
-      expect(agentMessage.thinkingContent, '前半段思考后半段思考');
+      // The completed body is immediate; reasoning/tool details hydrate later.
+      await pumpEventQueue(times: 30);
+      expect(
+        notifier.state.messages
+            .where((m) => m.role == MessageRole.agent)
+            .single
+            .thinkingContent,
+        '前半段思考后半段思考',
+      );
       expect(agentMessage.state, MessageState.done);
       expect(notifier.state.sending, isFalse);
 
@@ -609,7 +617,7 @@ void main() {
   );
 
   test(
-    'Resume reconciliation reloads the session after transient task reads',
+    'Resume reconciliation retries transient task reads without reloading the session',
     () async {
       await _initTestAppLog();
 
@@ -620,12 +628,18 @@ void main() {
         projectId: 'project_test',
       );
 
+      notifier.terminalReconcileInterval = const Duration(milliseconds: 20);
+      addTearDown(notifier.dispose);
       await notifier.sendMessage('开始');
       repo.taskStatus = TaskStatus.completed;
       repo.taskResult = '恢复后的最终结果';
       repo.snapshotOverride = const TaskEventSnapshot(text: '恢复后的最终结果');
 
       await notifier.reconcileAfterResume();
+      final deadline = DateTime.now().add(const Duration(seconds: 1));
+      while (notifier.state.taskActive && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
 
       final agentMessage = notifier.state.messages
           .where((message) => message.role == MessageRole.agent)
@@ -803,7 +817,7 @@ void main() {
     for (final event in events) {
       repo.emit(event);
     }
-    await pumpEventQueue(times: 20);
+    await Future<void>.delayed(const Duration(milliseconds: 70));
 
     final agentMessages = notifier.state.messages
         .where((message) => message.role == MessageRole.agent)
@@ -895,6 +909,13 @@ void main() {
 
       expect(repo.requests, hasLength(1));
       expect(repo.requests.first.limit, 6);
+      expect(repo.snapshotRequests, ['task_7']);
+      expect(
+        notifier.state.messages
+            .firstWhere((m) => m.id == 'agent_task_3')
+            .historyDetails,
+        HistoryDetailsState.deferred,
+      );
       expect(notifier.state.hasEarlierHistory, isTrue);
       expect(notifier.state.messages.where((m) => m.role == MessageRole.user), [
         isA<ChatMessage>().having((m) => m.content, 'content', 'message 3'),
@@ -907,6 +928,16 @@ void main() {
       final addedMessages = await notifier.loadEarlierSessionHistory();
 
       expect(addedMessages, 6);
+      expect(repo.snapshotRequests, ['task_7']);
+      await notifier.retryHistoryDetails('task_1');
+      expect(repo.snapshotRequests, ['task_7', 'task_1']);
+      expect(
+        notifier.state.messages
+            .firstWhere((m) => m.id == 'agent_task_1')
+            .historyDetails,
+        HistoryDetailsState.none,
+      );
+      expect(notifier.state.taskActive, isFalse);
       expect(repo.requests, hasLength(2));
       expect(repo.requests.last.beforeTaskId, 'task_3');
       expect(notifier.state.hasEarlierHistory, isFalse);
@@ -969,33 +1000,29 @@ void main() {
     },
   );
 
-  test(
-    'Earlier history stays in its transaction until snapshot hydration finishes',
-    () async {
-      await _initTestAppLog();
-      final repo = _FakeDelayedPagedHistoryRepo();
-      final notifier = ChatNotifier(
-        repo: repo,
-        agentId: 'agent_test',
-        projectId: 'project_test',
-      );
+  test('Earlier history returns without waiting for tool snapshots', () async {
+    await _initTestAppLog();
+    final repo = _FakeDelayedPagedHistoryRepo();
+    final notifier = ChatNotifier(
+      repo: repo,
+      agentId: 'agent_test',
+      projectId: 'project_test',
+    );
 
-      final sessionLoad = notifier.loadSession('session_page');
-      await Future<void>.delayed(Duration.zero);
-      repo.completeSnapshots();
-      await sessionLoad;
+    final sessionLoad = notifier.loadSession('session_page');
+    await Future<void>.delayed(Duration.zero);
+    repo.completeSnapshots();
+    await sessionLoad;
 
-      repo.resetSnapshots();
-      final earlier = notifier.loadEarlierSessionHistory();
-      await Future<void>.delayed(Duration.zero);
+    repo.resetSnapshots();
+    final earlier = notifier.loadEarlierSessionHistory();
+    await Future<void>.delayed(Duration.zero);
 
-      expect(notifier.state.loadingEarlierHistory, isTrue);
-      repo.completeSnapshots();
-
-      expect(await earlier, 6);
-      expect(notifier.state.loadingEarlierHistory, isFalse);
-    },
-  );
+    expect(await earlier.timeout(const Duration(seconds: 1)), 6);
+    expect(repo.snapshotRequests, ['task_7']);
+    repo.completeSnapshots();
+    expect(notifier.state.loadingEarlierHistory, isFalse);
+  });
 
   test('Initial session load waits for snapshot hydration', () async {
     await _initTestAppLog();
@@ -1238,6 +1265,7 @@ Map<String, dynamic> _goalTaskJson(TaskModel task) => {
 
 class _FakePagedHistoryRepo extends ChatRepository {
   final requests = <_HistoryRequest>[];
+  final snapshotRequests = <String>[];
   late final List<TaskModel> _tasks = [
     for (var i = 7; i >= 0; i--)
       TaskModel(
@@ -1291,16 +1319,24 @@ class _FakePagedHistoryRepo extends ChatRepository {
   )).map(_goalTaskJson).toList(growable: false);
 
   @override
-  Future<TaskEventSnapshot> getTaskEventSnapshot(String taskId) async =>
-      const TaskEventSnapshot();
+  Future<TaskModel> getTask(String taskId) async =>
+      _tasks.firstWhere((task) => task.taskId == taskId);
+
+  @override
+  Future<TaskEventSnapshot> getTaskEventSnapshot(String taskId) async {
+    snapshotRequests.add(taskId);
+    return const TaskEventSnapshot();
+  }
 }
 
 class _FakeDelayedPagedHistoryRepo extends _FakePagedHistoryRepo {
   Completer<TaskEventSnapshot> _snapshotGate = Completer<TaskEventSnapshot>();
 
   @override
-  Future<TaskEventSnapshot> getTaskEventSnapshot(String taskId) =>
-      _snapshotGate.future;
+  Future<TaskEventSnapshot> getTaskEventSnapshot(String taskId) {
+    snapshotRequests.add(taskId);
+    return _snapshotGate.future;
+  }
 
   void completeSnapshots() {
     if (!_snapshotGate.isCompleted) {

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../../../core/config/api_client.dart';
 import '../../../core/config/sse_parser.dart';
+import '../../../core/services/shared_streams.dart';
+import '../../../core/services/connection_telemetry.dart';
 import '../../../shared/grok_context_limit.dart';
 import 'chat_model.dart';
 
@@ -10,10 +12,31 @@ void _chatDiag(String stage, [Map<String, Object?> data = const {}]) {
   debugPrint('[ChatDiag] $stage $data');
 }
 
-const _taskEventSnapshotIdleTimeout = Duration(seconds: 20);
 const compactionStatusHint = '正在压缩上下文';
 
 class ChatRepository {
+  static const _maxHistoryEvents = 1200;
+  static const _maxHistoryBytes = 8 * 1024 * 1024;
+  @visibleForTesting
+  Duration taskSnapshotDeadline = const Duration(seconds: 25);
+
+  final _snapshotReads = <String, Future<TaskEventSnapshot>>{};
+
+  final _taskStreams = SharedStreams<Map<String, dynamic>>();
+  final _queueStreams = SharedStreams<ChatQueueSnapshot>();
+  final _taskConnections = <String, ConnectionTelemetry>{};
+  ConnectionTelemetry? taskConnection(String taskId) =>
+      _taskConnections[taskId];
+
+  void dispose() {
+    _snapshotReads.clear();
+    _taskStreams.dispose();
+    _queueStreams.dispose();
+    _lastTaskEventSequences.clear();
+    _lastTaskEventCursors.clear();
+    _taskConnections.clear();
+  }
+
   static const modelLatencyTestSessionPrefix = 'model_test_';
   static const _modelLatencyPrompt = '请只回复“连接正常”，并保持流式输出。';
   final Map<String, int> _lastTaskEventSequences = {};
@@ -91,18 +114,21 @@ class ChatRepository {
     return ChatQueueSnapshot.fromJson(data);
   }
 
-  Stream<ChatQueueSnapshot> watchChatQueue(String sessionId) async* {
-    await for (final raw in ApiClient.sse(
-      '/api/sessions/${Uri.encodeComponent(sessionId)}/queue/events',
-    )) {
-      if (raw.isEmpty) continue;
-      try {
-        yield ChatQueueSnapshot.fromJson(
-          jsonDecode(raw) as Map<String, dynamic>,
-        );
-      } catch (_) {}
-    }
-  }
+  Stream<ChatQueueSnapshot> watchChatQueue(String sessionId) =>
+      _queueStreams.watch(sessionId, () => _watchChatQueue(sessionId));
+
+  Stream<ChatQueueSnapshot> _watchChatQueue(String sessionId) =>
+      ApiClient.sse(
+        '/api/sessions/${Uri.encodeComponent(sessionId)}/queue/events',
+      ).where((raw) => raw.isNotEmpty).expand((raw) {
+        try {
+          return [
+            ChatQueueSnapshot.fromJson(jsonDecode(raw) as Map<String, dynamic>),
+          ];
+        } catch (_) {
+          return <ChatQueueSnapshot>[];
+        }
+      });
 
   Future<ChatQueueItem> createChatQueueItem({
     required String sessionId,
@@ -212,7 +238,10 @@ class ChatRepository {
   };
 
   Future<TaskModel> getTask(String taskId) async {
-    final data = await ApiClient.get('/api/tasks/$taskId');
+    final data = await ApiClient.get(
+      '/api/tasks/$taskId',
+      timeout: const Duration(seconds: 6),
+    );
     return TaskModel.fromJson(data);
   }
 
@@ -463,8 +492,103 @@ class ChatRepository {
     });
   }
 
-  Stream<Map<String, dynamic>> watchTaskEvents(String taskId) async* {
-    yield* _watchTaskEventsInternal(taskId);
+  /// Signals consumers fetch their own snapshot after subscribing. They share
+  /// transport with the conversation without replaying every text delta.
+  Stream<Map<String, dynamic>> watchTaskSignals(String taskId) =>
+      _taskStreams.watch(taskId, () => _watchTaskEventsInternal(taskId));
+
+  Stream<Map<String, dynamic>> watchTaskEvents(String taskId) {
+    late StreamController<Map<String, dynamic>> controller;
+    StreamSubscription<Map<String, dynamic>>? live;
+    StreamSubscription<Map<String, dynamic>>? history;
+    final pending = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    var catchingUp = false;
+    var closed = false;
+    var liveDone = false;
+    var pendingBytes = 0;
+
+    String key(Map<String, dynamic> event) =>
+        '${event['id'] ?? event['sequence']}|${event['sent_at']}';
+    void stop() {
+      closed = true;
+      pending.clear();
+      seen.clear();
+      unawaited(live?.cancel());
+      unawaited(history?.cancel());
+    }
+
+    controller = StreamController<Map<String, dynamic>>(
+      onListen: () {
+        catchingUp = _taskStreams.contains(taskId);
+        // Attach first: events arriving during the HTTP snapshot are buffered.
+        live = watchTaskSignals(taskId).listen(
+          (event) {
+            if (closed) return;
+            if (!catchingUp) {
+              controller.add(event);
+              return;
+            }
+            pendingBytes += jsonEncode(event).length * 2;
+            if (pending.length >= 4096 || pendingBytes > 4 * 1024 * 1024) {
+              controller.addError(StateError('Task catch-up buffer exceeded'));
+              stop();
+              unawaited(controller.close());
+              return;
+            }
+            pending.add(event);
+          },
+          onError: controller.addError,
+          onDone: () {
+            liveDone = true;
+            if (!catchingUp && !closed) unawaited(controller.close());
+          },
+        );
+        if (!catchingUp) return;
+        history =
+            _watchPagedTaskEvents(
+              taskId,
+              '/api/tasks/${Uri.encodeComponent(taskId)}/event-pages',
+              source: 'shared-stream-catch-up',
+            ).listen(
+              (event) {
+                if (closed) return;
+                // Retain only keys overlapping the bounded live buffer. Historical
+                // events need no unbounded replay cache in the subscription manager.
+                if (pending.any((item) => key(item) == key(event))) {
+                  seen.add(key(event));
+                }
+                controller.add(event);
+              },
+              onError: (Object error, StackTrace stack) {
+                if (closed) return;
+                controller.addError(error, stack);
+                stop();
+                unawaited(controller.close());
+              },
+              onDone: () {
+                if (closed) return;
+                catchingUp = false;
+                for (final event in pending) {
+                  if (!seen.contains(key(event))) controller.add(event);
+                }
+                pending.clear();
+                seen.clear();
+                if (liveDone) unawaited(controller.close());
+              },
+            );
+      },
+      onCancel: () async {
+        closed = true;
+        pending.clear();
+        seen.clear();
+        await Future.wait([
+          if (live != null) live!.cancel(),
+          if (history != null) history!.cancel(),
+        ]);
+      },
+    );
+    return controller.stream;
   }
 
   /// Historical snapshot stream. Kept as a separate overridable method so
@@ -493,7 +617,7 @@ class ChatRepository {
         'error': error.toString(),
         'yielded': yielded,
       });
-      if (yielded) return;
+      if (yielded) rethrow;
       await for (final event in _watchPagedTaskEvents(
         taskId,
         '/api/tasks/${Uri.encodeComponent(taskId)}/event-pages',
@@ -510,7 +634,7 @@ class ChatRepository {
         'error': error.toString(),
         'yielded': yielded,
       });
-      if (yielded) return;
+      if (yielded) rethrow;
       await for (final event in _watchPagedTaskEvents(
         taskId,
         '/api/tasks/${Uri.encodeComponent(taskId)}/event-pages',
@@ -529,6 +653,7 @@ class ChatRepository {
     String? cursor;
     var pageIndex = 0;
     var total = 0;
+    String? historySource;
     final startedAt = DateTime.now();
     while (true) {
       pageIndex += 1;
@@ -539,7 +664,15 @@ class ChatRepository {
           if (cursor != null && cursor.isNotEmpty) 'cursor': cursor,
         },
       ).query;
-      final page = await ApiClient.get('$path?$query');
+      final page = await ApiClient.get(
+        '$path?$query',
+        timeout: const Duration(seconds: 18),
+      );
+      final currentSource = page['source']?.toString();
+      if (historySource != null && currentSource != historySource) {
+        throw const FormatException('History source changed during pagination');
+      }
+      historySource = currentSource;
       final events = (page['events'] as List<dynamic>? ?? const [])
           .whereType<Map>()
           .map((event) => Map<String, dynamic>.from(event))
@@ -556,9 +689,17 @@ class ChatRepository {
         'elapsed_ms': DateTime.now().difference(startedAt).inMilliseconds,
       });
       for (final event in events) {
-        yield event;
+        yield {
+          ...event,
+          if (page['source'] == 'agent_local') '_reconstructed_history': true,
+        };
       }
-      if (page['has_more'] != true) return;
+      if (page['has_more'] != true) {
+        if (page['complete'] == false) {
+          throw const FormatException('History is incomplete');
+        }
+        return;
+      }
       final nextCursor = page['next_cursor']?.toString() ?? '';
       if (nextCursor.isEmpty || nextCursor == cursor) {
         throw const FormatException('Invalid task event page cursor');
@@ -567,85 +708,145 @@ class ChatRepository {
     }
   }
 
-  Stream<Map<String, dynamic>> _watchTaskEventsInternal(String taskId) async* {
-    while (true) {
+  Stream<Map<String, dynamic>> _watchTaskEventsInternal(String taskId) {
+    // A new shared source may belong to a rebuilt conversation. Its body and
+    // dedupe state were reset; a cursor retained from an older source would
+    // skip all existing output. Reconnects within this source still resume.
+    _lastTaskEventSequences.remove(taskId);
+    _lastTaskEventCursors.remove(taskId);
+    final telemetry = ConnectionTelemetry();
+    _taskConnections[taskId] = telemetry;
+    var cancelled = false;
+    StreamSubscription<SseEvent>? subscription;
+    Timer? reconnect;
+    late final StreamController<Map<String, dynamic>> controller;
+    late void Function() connect;
+
+    void retry(String reason, [Object? error]) {
+      if (cancelled) return;
+      telemetry.disconnected(retry: true);
+      _chatDiag('sse_reconnect', {
+        'task_id': taskId,
+        'reason': reason,
+        if (error != null) 'error': error.toString(),
+        'wait_ms': 1000,
+      });
+      reconnect?.cancel();
+      reconnect = Timer(const Duration(seconds: 1), connect);
+    }
+
+    connect = () {
+      if (cancelled) return;
+      telemetry.connecting();
       final lastSequence = _lastTaskEventSequences[taskId];
       final lastCursor = _lastTaskEventCursors[taskId];
+      final startedAt = DateTime.now();
+      var first = true;
       var terminal = false;
-      final connectStartedAt = DateTime.now();
+      var decodeFailures = 0;
       _chatDiag('sse_connect', {
         'task_id': taskId,
         'last_event_id': lastSequence,
         'has_cursor': lastCursor != null && lastCursor.isNotEmpty,
       });
-      try {
-        var first = true;
-        var decodeFailures = 0;
-        await for (final raw in ApiClient.sse(
-          '/api/tasks/${Uri.encodeComponent(taskId)}/events',
-          extraHeaders: {
-            if (lastSequence != null && lastSequence > 0)
-              'Last-Event-ID': '$lastSequence',
-            if (lastCursor != null && lastCursor.isNotEmpty)
-              'X-Task-Event-Cursor': lastCursor,
-          },
-        )) {
-          if (raw.isEmpty) continue;
-          try {
-            final json = jsonDecode(raw) as Map<String, dynamic>;
-            _rememberTaskEventCursor(taskId, json);
-            if (first) {
-              first = false;
-              _chatDiag('sse_first_frame', {
-                'task_id': taskId,
-                'type': json['type'],
-                'wait_ms': DateTime.now()
-                    .difference(connectStartedAt)
-                    .inMilliseconds,
-                'sequence': json['sequence'],
-              });
-            }
-            yield json;
-            final type = json['type']?.toString();
-            terminal =
-                type == 'completed' || type == 'failed' || type == 'cancelled';
-          } catch (error) {
-            decodeFailures += 1;
-            _chatDiag('sse_decode_failed', {
-              'task_id': taskId,
-              'count': decodeFailures,
-              'error': error.toString(),
-              'raw_len': raw.length,
-            });
-          }
+      subscription =
+          ApiClient.sseEvents(
+            '/api/tasks/${Uri.encodeComponent(taskId)}/events',
+            onConnected: () {
+              telemetry.activity();
+              if (!cancelled) {
+                controller.add({'type': 'connection_ready', 'task_id': taskId});
+              }
+            },
+            onActivity: telemetry.activity,
+            extraHeaders: {
+              if (lastSequence != null && lastSequence > 0)
+                'Last-Event-ID': '$lastSequence',
+              if (lastCursor != null && lastCursor.isNotEmpty)
+                'X-Task-Event-Cursor': lastCursor,
+            },
+          ).listen(
+            (frame) {
+              final raw = frame.data;
+              if (cancelled || raw.isEmpty) return;
+              try {
+                final event = jsonDecode(raw) as Map<String, dynamic>;
+                telemetry.activity();
+                if (event['type'] == 'delta' && event['field'] == 'text') {
+                  telemetry.output(event['content'] as String? ?? '');
+                }
+                _rememberTaskEventCursor(taskId, event);
+                if (first) {
+                  first = false;
+                  _chatDiag('sse_first_frame', {
+                    'task_id': taskId,
+                    'type': event['type'],
+                    'wait_ms': DateTime.now()
+                        .difference(startedAt)
+                        .inMilliseconds,
+                    'sequence': event['sequence'],
+                  });
+                }
+                controller.add(event);
+                terminal = _isTaskEventTerminal(event['type']?.toString());
+              } catch (error) {
+                _chatDiag('sse_decode_failed', {
+                  'task_id': taskId,
+                  'count': ++decodeFailures,
+                  'error': error.toString(),
+                  'raw_len': raw.length,
+                });
+              }
+            },
+            onError: (Object error, StackTrace stack) {
+              if (cancelled) return;
+              telemetry.disconnected(retry: true);
+              if (error is SseHttpException) {
+                controller.addError(error, stack);
+                unawaited(controller.close());
+                return;
+              }
+              retry('error', error);
+            },
+            onDone: () async {
+              if (cancelled) return;
+              telemetry.disconnected();
+              if (terminal) {
+                unawaited(controller.close());
+                return;
+              }
+              try {
+                final synthetic = _syntheticTerminalEvent(
+                  await getTask(taskId),
+                );
+                if (cancelled) return;
+                if (synthetic != null) {
+                  controller.add(synthetic);
+                  unawaited(controller.close());
+                  return;
+                }
+              } catch (_) {}
+              retry('stream_ended');
+            },
+            cancelOnError: true,
+          );
+      if (controller.isPaused) subscription?.pause();
+    };
+    controller = StreamController<Map<String, dynamic>>(
+      onListen: connect,
+      onPause: () => subscription?.pause(),
+      onResume: () => subscription?.resume(),
+      onCancel: () async {
+        cancelled = true;
+        telemetry.disconnected();
+        if (identical(_taskConnections[taskId], telemetry)) {
+          _taskConnections.remove(taskId);
         }
-        if (terminal) return;
-        try {
-          final synthetic = _syntheticTerminalEvent(await getTask(taskId));
-          if (synthetic != null) {
-            yield synthetic;
-            return;
-          }
-        } catch (_) {}
-        _chatDiag('sse_reconnect', {
-          'task_id': taskId,
-          'reason': 'stream_ended',
-          'terminal': terminal,
-          'wait_ms': 1000,
-        });
-        await Future<void>.delayed(const Duration(seconds: 1));
-      } on SseHttpException {
-        rethrow;
-      } catch (error) {
-        _chatDiag('sse_reconnect', {
-          'task_id': taskId,
-          'reason': 'error',
-          'error': error.toString(),
-          'wait_ms': 1000,
-        });
-        await Future<void>.delayed(const Duration(seconds: 1));
-      }
-    }
+        reconnect?.cancel();
+        await subscription?.cancel();
+      },
+    );
+    return controller.stream;
   }
 
   void _rememberTaskEventCursor(String taskId, Map<String, dynamic> event) {
@@ -675,28 +876,86 @@ class ChatRepository {
     }
   }
 
-  Future<TaskEventSnapshot> getTaskEventSnapshot(String taskId) async {
+  Future<TaskEventSnapshot> getTaskEventSnapshot(String taskId) {
+    final active = _snapshotReads[taskId];
+    if (active != null) return active;
+    late final Future<TaskEventSnapshot> pending;
+    pending = _collectTaskEventSnapshot(taskId).whenComplete(() {
+      if (identical(_snapshotReads[taskId], pending)) {
+        _snapshotReads.remove(taskId);
+      }
+    });
+    _snapshotReads[taskId] = pending;
+    return pending;
+  }
+
+  Future<TaskEventSnapshot> _collectTaskEventSnapshot(String taskId) async {
     final events = <Map<String, dynamic>>[];
     final startedAt = DateTime.now();
     var timedOut = false;
-    try {
-      await for (final event in _watchTaskSnapshotEvents(taskId).timeout(
-        _taskEventSnapshotIdleTimeout,
-        onTimeout: (sink) {
-          timedOut = true;
-          sink.close();
-        },
-      )) {
-        events.add(event);
-      }
-    } catch (error) {
-      _chatDiag('history_snapshot_error', {
-        'task_id': taskId,
-        'error': error.toString(),
-        'events': events.length,
-      });
+    var readFailed = false;
+    var truncated = false;
+    var eventBytes = 0;
+    final finished = Completer<void>();
+    StreamSubscription<Map<String, dynamic>>? subscription;
+    void finish() {
+      if (!finished.isCompleted) finished.complete();
     }
-    final snapshot = snapshotFromTaskEvents(taskId, events);
+
+    // A Stream.timeout followed by await-for still awaits async* cancellation.
+    // That cancellation may be waiting for an HTTP response which never comes.
+    // Complete the result independently and ignore every late event.
+    final deadline = Timer(taskSnapshotDeadline, () {
+      timedOut = true;
+      finish();
+    });
+    try {
+      subscription = _watchTaskSnapshotEvents(taskId).listen(
+        (event) {
+          if (finished.isCompleted) return;
+          final weight = _historyEventWeight(event);
+          if (events.length >= _maxHistoryEvents ||
+              eventBytes + weight > _maxHistoryBytes) {
+            truncated = true;
+            finish();
+            unawaited(subscription?.cancel());
+            return;
+          }
+          eventBytes += weight;
+          events.add(event);
+        },
+        onError: (Object error, StackTrace stack) {
+          if (finished.isCompleted) return;
+          readFailed = true;
+          _chatDiag('history_snapshot_error', {
+            'task_id': taskId,
+            'error': error.toString(),
+            'events': events.length,
+          });
+          finish();
+        },
+        onDone: finish,
+      );
+      await finished.future;
+    } finally {
+      deadline.cancel();
+      final cancellation = subscription?.cancel();
+      if (cancellation != null) {
+        unawaited(
+          cancellation.catchError((Object error) {
+            _chatDiag('history_cancel_error', {
+              'task_id': taskId,
+              'error': error.toString(),
+            });
+          }),
+        );
+      }
+    }
+    final snapshot = snapshotFromTaskEvents(
+      taskId,
+      events,
+      complete: !timedOut && !readFailed && !truncated,
+    );
     final counts = <String, int>{};
     for (final event in events) {
       final type = event['type']?.toString() ?? 'unknown';
@@ -720,15 +979,27 @@ class ChatRepository {
       'tool_blocks': toolBlocks,
       'text_len': snapshot.text.length,
       'timed_out': timedOut,
+      'truncated': truncated,
       'elapsed_ms': DateTime.now().difference(startedAt).inMilliseconds,
     });
     return snapshot;
   }
 
+  int _historyEventWeight(Map<String, dynamic> event) {
+    var total = 64 + (event['content']?.toString().length ?? 0);
+    final tool = event['tool'];
+    if (tool is Map) {
+      total += tool['output']?.toString().length ?? 0;
+      total += tool['error']?.toString().length ?? 0;
+    }
+    return total;
+  }
+
   TaskEventSnapshot snapshotFromTaskEvents(
     String taskId,
-    Iterable<Map<String, dynamic>> events,
-  ) {
+    Iterable<Map<String, dynamic>> events, {
+    bool complete = true,
+  }) {
     final text = StringBuffer();
     final reasoning = StringBuffer();
     String statusHint = '';
@@ -742,10 +1013,12 @@ class ChatRepository {
     final planKeys = <String>{};
     final rounds = <_TaskEventRoundBuilder>[];
     final appliedInputs = <TaskInputAppliedInfo>[];
+    final supplementalStatistics = <Map<String, dynamic>>[];
     // 任务是否已结束(completed/failed/cancelled)。任务结束后,残留在
     // running/pending 的工具(如执行较慢、completed 事件晚于任务终态的 read)
     // 应被视为已完成,避免历史会话里出现"工具一直调用中"的假状态。
     var sawTerminal = false;
+    var sawTextDelta = false;
 
     _TaskEventRoundBuilder currentRound(Map<String, dynamic> event) {
       if (rounds.isEmpty) {
@@ -809,19 +1082,39 @@ class ChatRepository {
 
     for (final event in events) {
       final type = event['type'] as String?;
+      final rawMetadata = _asMap(event['metadata']);
+      if (type == 'progress' && rawMetadata['_archived_statistics'] == true) {
+        supplementalStatistics.add(event);
+        final usage = ContextUsageInfo.fromProgressEvent(event);
+        if (usage != null) contextUsage = contextUsage?.merge(usage) ?? usage;
+        continue;
+      }
       switch (type) {
         case 'delta':
           final content = event['content'] as String? ?? '';
           if (content.isEmpty) continue;
           final field = event['field'] as String? ?? 'text';
           if (field == 'reasoning') {
+            final round = currentRound(event);
             reasoning.write(content);
-            currentRound(event).reasoning.write(content);
+            round.reasoning.write(content);
           } else {
+            sawTextDelta = true;
             text.write(content);
             _appendTextBlock(blocks, content);
             statusHint = '';
             final round = currentRound(event);
+            if (event['_reconstructed_history'] != true) {
+              round.statistics = round.statistics
+                  .recordFirstText(
+                    DateTime.tryParse(
+                      (event['_first_delta_sent_at'] ?? event['sent_at'])
+                              ?.toString() ??
+                          '',
+                    ),
+                  )
+                  .recordUsage(rawMetadata);
+            }
             round.text.write(content);
             round.appendTextBlock(content);
             round.statusHint = '';
@@ -844,7 +1137,9 @@ class ChatRepository {
           final usage = ContextUsageInfo.fromProgressEvent(event);
           if (usage != null) {
             contextUsage = contextUsage?.merge(usage) ?? usage;
-            currentRound(event).recordUsage(usage);
+          }
+          if (rawMetadata['source'] == 'llm_usage') {
+            currentRound(event).recordUsage(rawMetadata);
           }
           break;
         case 'compaction_started':
@@ -962,12 +1257,19 @@ class ChatRepository {
           if (type == 'completed') {
             final metadata = _asMap(event['metadata']);
             final usage = ContextUsageInfo.fromUsageMetadata(
-              _asMap(metadata['usage']),
+              _asMap(event['usage']).isNotEmpty
+                  ? _asMap(event['usage'])
+                  : _asMap(metadata['usage']),
               updatedAt: _parseEventSentAt(event),
             );
             if (usage != null) {
               contextUsage = contextUsage?.merge(usage) ?? usage;
-              currentRound(event).recordUsage(usage);
+              supplementalStatistics.add({
+                ...event,
+                'metadata': _asMap(event['usage']).isNotEmpty
+                    ? _asMap(event['usage'])
+                    : _asMap(metadata['usage']),
+              });
             }
           }
           break;
@@ -992,6 +1294,48 @@ class ChatRepository {
         sawTerminal = true;
       }
     }
+    // Archive supplements arrive after reconstructed text to preserve its
+    // ordering. Attribute them to their original reply, never the last bubble.
+    final orderedStatistics = [
+      ...supplementalStatistics.where(
+        (e) => _asMap(e['metadata'])['reply_round_index'] != null,
+      ),
+      ...supplementalStatistics.where(
+        (e) => _asMap(e['metadata'])['reply_round_index'] == null,
+      ),
+    ];
+    for (final event in orderedStatistics) {
+      final metadata = _asMap(event['metadata']);
+      if (rounds.isEmpty) currentRound(event);
+      final requestId = metadata['message_id']?.toString();
+      var index = requestId == null
+          ? -1
+          : rounds.indexWhere(
+              (r) => r.statistics.requests.containsKey(requestId),
+            );
+      final recordedIndex = (metadata['reply_round_index'] as num?)?.toInt();
+      if (index < 0 &&
+          recordedIndex != null &&
+          recordedIndex >= 0 &&
+          recordedIndex < rounds.length) {
+        index = recordedIndex;
+      }
+      if (index < 0) {
+        final at =
+            DateTime.tryParse(
+              metadata['reply_round_started_at']?.toString() ?? '',
+            ) ??
+            _parseEventSentAt(event);
+        index = 0;
+        for (var i = 1; i < rounds.length; i++) {
+          if (rounds[i].startedAt != null &&
+              !rounds[i].startedAt!.isAfter(at)) {
+            index = i;
+          }
+        }
+      }
+      rounds[index].recordUsage(metadata);
+    }
     // 任务已终态:把残留 running/pending 的工具回填为 completed,修复
     // "对话已完成但工具显示一直调用中"的历史快照问题。
     if (sawTerminal) {
@@ -1013,6 +1357,8 @@ class ChatRepository {
       }
     }
     return TaskEventSnapshot(
+      complete: complete,
+      preservesToolPositions: toolCalls.isEmpty || sawTextDelta,
       text: text.toString(),
       reasoning: reasoning.toString(),
       statusHint: statusHint,
@@ -1026,6 +1372,10 @@ class ChatRepository {
           .where((round) => appliedInputs.isNotEmpty || round.hasOutput)
           .toList(growable: false),
       contextUsage: contextUsage,
+      statistics: rounds.fold<ReplyStatistics>(
+        const ReplyStatistics(),
+        (stats, round) => stats.merge(round.statistics),
+      ),
       appliedInputs: List<TaskInputAppliedInfo>.unmodifiable(appliedInputs),
       finalDeliveryPhase: sawTerminal
           ? FinalDeliveryPhase.idle
@@ -1348,7 +1698,7 @@ class _TaskEventRoundBuilder {
   final List<ChatMessageBlock> blocks = [];
   String errorDetail = '';
   DateTime? startedAt;
-  int? tokenCount;
+  ReplyStatistics statistics = const ReplyStatistics();
 
   _TaskEventRoundBuilder({this.startedAt});
 
@@ -1399,10 +1749,8 @@ class _TaskEventRoundBuilder {
     blocks.add(ChatMessageBlock.tool(id: 'tool_$suffix', tool: tool));
   }
 
-  void recordUsage(ContextUsageInfo usage) {
-    final generated = (usage.outputTokens ?? 0) + (usage.reasoningTokens ?? 0);
-    if (generated <= 0 || (tokenCount ?? 0) >= generated) return;
-    tokenCount = generated;
+  void recordUsage(Map<String, dynamic> usage) {
+    statistics = statistics.recordUsage(usage);
   }
 
   // 任务终态后,把本轮残留 running/pending 的工具回填为 completed。
@@ -1433,7 +1781,8 @@ class _TaskEventRoundBuilder {
       blocks: List<ChatMessageBlock>.unmodifiable(blocks),
       errorDetail: errorDetail,
       startedAt: startedAt,
-      tokenCount: tokenCount,
+      tokenCount: statistics.totalTokens,
+      statistics: statistics,
     );
   }
 }

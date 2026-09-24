@@ -1,6 +1,7 @@
+import '../../project_settings/project_settings_provider.dart';
+import '../../project_settings/presentation/project_settings_page.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ import '../../../core/notifications/app_notification_controller.dart';
 import '../../../core/notifications/app_notification_feedback.dart';
 import '../../../core/notifications/app_notification_model.dart';
 import '../../../core/services/global_overlay_service.dart';
+import '../../../core/services/app_navigation.dart';
 import '../data/artifact_download_service.dart';
 import '../data/attachment_upload.dart';
 import '../data/clipboard_attachments.dart';
@@ -36,7 +38,11 @@ import 'artifact_image_viewer_page.dart';
 import 'artifact_download_notification.dart';
 import 'chat_target_picker.dart';
 import 'message_renderer.dart';
+import 'reply_display_group.dart';
 import 'widgets/subagent_invocation_card.dart';
+import 'widgets/agent_activity_indicator.dart';
+import 'widgets/chat_connection_status.dart';
+import 'widgets/chat_operation_strip.dart';
 import 'widgets/subagent_task_sheet.dart';
 import 'widgets/subagent_task_tree.dart';
 
@@ -135,6 +141,7 @@ bool _sameMessageSurface(ChatMessage a, ChatMessage b) {
       a.content == b.content &&
       a.thinkingContent == b.thinkingContent &&
       a.statusHint == b.statusHint &&
+      a.streamRecovery == b.streamRecovery &&
       a.finalDeliveryPhase == b.finalDeliveryPhase &&
       a.imageGeneration?.modelName == b.imageGeneration?.modelName &&
       _sameGoalProgressSurface(a.goalProgress, b.goalProgress) &&
@@ -422,7 +429,7 @@ class ChatPage extends ConsumerStatefulWidget {
 }
 
 class _ChatPageState extends ConsumerState<ChatPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RouteAware {
   static final RegExp _inlineTextToken = RegExp(r'\[Text \d+字\]');
   final _inputCtrl = _CommandHighlightTextEditingController();
   final _scrollCtrl = ScrollController();
@@ -431,6 +438,42 @@ class _ChatPageState extends ConsumerState<ChatPage>
   int _initialViewportGeneration = 0;
   int _historyViewportGeneration = 0;
   bool _sessionPanelOpen = false;
+  bool _routeVisible = true;
+  ChatNotifier? _visibleNotifier;
+  PageRoute<dynamic>? _observedRoute;
+  String? _syncedGoalTerminalKey;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute && route != _observedRoute) {
+      appPageRouteObserver.unsubscribe(this);
+      _observedRoute = route;
+      appPageRouteObserver.subscribe(this, route);
+    }
+  }
+
+  void _setRouteVisible(bool visible) {
+    _routeVisible = visible;
+    if (!visible) _visibleNotifier?.setPageVisible(false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _routeVisible != visible) return;
+      setState(() {});
+      if (visible) {
+        _visibleNotifier = ref.read(chatProvider(_chatKey).notifier);
+        _visibleNotifier!.setPageVisible(true);
+      }
+    });
+  }
+
+  @override
+  void didPushNext() => _setRouteVisible(false);
+  @override
+  void didPopNext() => _setRouteVisible(true);
+  @override
+  void didPop() => _setRouteVisible(false);
+
   bool _subagentPanelOpen = false;
   String? _selectedSubagentTaskId;
   bool _autoLoadingEarlierHistory = false;
@@ -441,6 +484,27 @@ class _ChatPageState extends ConsumerState<ChatPage>
   bool _compactionConfigSaving = false;
 
   (String, String) get _chatKey => (widget.agentId, widget.projectId);
+  String get _projectSettingsKey => projectSettingsScope(
+    machineId: widget.machineId,
+    projectId: widget.projectId,
+    projectRoot: widget.projectRoot,
+    projectScopeId: widget.projectScopeId,
+  );
+
+  void _openProjectSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProjectSettingsPage(
+          project: _projectSettingsKey,
+          projectName: projectDirectoryLabel(
+            widget.projectRoot,
+            widget.projectId,
+          ),
+        ),
+      ),
+    );
+  }
+
   (String, String) get _sessionListKey => (widget.agentId, widget.projectId);
   String get _modelsKey => widget.machineId.trim();
 
@@ -461,6 +525,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
     // 通知状态不能在 widget 构建期（含 initState）写入，延后到首帧之后
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _visibleNotifier = ref.read(chatProvider(_chatKey).notifier);
+      _visibleNotifier!.setPageVisible(_routeVisible);
       ref
           .read(appNotificationControllerProvider.notifier)
           .setForegroundChat(
@@ -474,6 +540,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
     WidgetsBinding.instance.addObserver(this);
     // 进入页面时自动加载最近一条会话
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
       ref.read(settingsProvider.notifier).loadGlobalPrompt();
       ref.read(selectedVariantProvider(widget.agentId).notifier).init();
       ref.read(projectPromptProvider(widget.agentId).notifier).init();
@@ -748,6 +815,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
   @override
   void dispose() {
+    appPageRouteObserver.unsubscribe(this);
+    _visibleNotifier?.setPageVisible(false);
     // dispose 同样不允许同步写 provider，捕获引用后异步清理
     final notifications = ref.read(appNotificationControllerProvider.notifier);
     final chatContext = AppNotificationChatContext(
@@ -773,9 +842,13 @@ class _ChatPageState extends ConsumerState<ChatPage>
         oldWidget.projectId == widget.projectId) {
       return;
     }
+    _syncedGoalTerminalKey = null;
+    _visibleNotifier?.setPageVisible(false);
     // didUpdateWidget 处于构建期，写入通知 provider 需要延后一帧
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _visibleNotifier = ref.read(chatProvider(_chatKey).notifier);
+      _visibleNotifier!.setPageVisible(_routeVisible);
       unawaited(_positionLatestMessage());
       unawaited(_loadCompactionConfig());
       final notifications = ref.read(
@@ -808,8 +881,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
     // 进入后台：长连接会被系统挂起，期间的断开按预期行为处理，
     // 不产生用户可见的队列错误提示。
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden) {
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
       notifier.markAppBackgrounded();
     }
   }
@@ -991,6 +1064,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
 
   Future<void> _syncGoalTerminalStatus(GoalProgressEntry? latest) async {
     if (latest == null || !latest.isTerminal) return;
+    final key = '${latest.type}:${latest.iteration}:${latest.summary}';
+    if (_syncedGoalTerminalKey == key) return;
+    _syncedGoalTerminalKey = key;
     final notifier = ref.read(goalSettingsProvider(_chatKey).notifier);
     final settings = ref.read(goalSettingsProvider(_chatKey));
     final targetStatus = switch (latest.type) {
@@ -1182,7 +1258,12 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final limit = model?.contextLimit;
     final contextTokens = usage?.knownContextTokens ?? 0;
     if (limit == null || limit <= 0 || contextTokens <= 0) return;
-    final effectiveThreshold = usage?.compactionThresholdTokens ?? 0;
+    final effectiveThreshold =
+        ContextUsageInfo.withModelLimit(
+          usage,
+          limit,
+        )?.compactionThresholdTokens ??
+        0;
     String? message;
     if (contextTokens >= limit) {
       message = '当前上下文已超过 ${model!.modelID} 的完整额度，发送前建议先压缩上下文';
@@ -1416,7 +1497,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       )) {
         _scrollToBottom(animated: false);
       } else if (_shouldAutoScroll(previous, next)) {
-        _scrollToBottom();
+        _scrollToBottom(animated: !next.taskActive);
       }
       final previousGoal = previous == null
           ? const _GoalProgressSummary()
@@ -1429,274 +1510,310 @@ class _ChatPageState extends ConsumerState<ChatPage>
       unawaited(_syncGoalTerminalStatus(nextGoal.latest));
     });
 
-    return PopScope(
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) _refreshDeviceStatus();
-      },
-      child: Scaffold(
-        body: SafeArea(
-          child: AttachmentDropTarget(
-            enabled: isAttachmentDropSupported(isMobile: isMobile),
-            onDrop: _handleDroppedFiles,
-            child: PageBackground(
-              child: Column(
-                children: [
-                  _buildContextBar(context, chat),
-                  Expanded(
-                    child: Row(
-                      children: [
-                        // 左侧历史会话栏（桌面常驻，移动抽屉）
-                        if (!isMobile && _sessionPanelOpen)
-                          _SessionSidebar(
-                            agentId: widget.agentId,
-                            projectId: widget.projectId,
-                            currentSessionId: chat.currentSessionId,
-                            onSelect: (sid) async {
-                              _clearSelectedSubagentTask();
-                              final generation = ++_initialViewportGeneration;
-                              _positioningInitialViewport = true;
-                              _cancelPendingBottomScrolls();
-                              try {
-                                await ref
-                                    .read(chatProvider(_chatKey).notifier)
-                                    .loadSession(sid);
-                                if (mounted &&
-                                    generation == _initialViewportGeneration) {
-                                  await _stabilizeToBottom();
-                                }
-                              } finally {
-                                if (mounted &&
-                                    generation == _initialViewportGeneration) {
-                                  _positioningInitialViewport = false;
-                                }
-                              }
-                            },
-                            onNew: () {
-                              _clearSelectedSubagentTask();
-                              _initialViewportGeneration++;
-                              _positioningInitialViewport = false;
-                              _cancelPendingBottomScrolls();
-                              ref
-                                  .read(chatProvider(_chatKey).notifier)
-                                  .newSession();
-                              ref.invalidate(
-                                sessionListProvider(_sessionListKey),
-                              );
-                            },
-                          ),
-                        if (!isMobile && _sessionPanelOpen)
-                          Container(width: 1, color: AppColors.border),
-                        // 中央消息区 + 输入区
-                        Expanded(
-                          child: Column(
-                            children: [
-                              Expanded(
-                                child: _MessageArea(
-                                  messages: chat.messages,
-                                  scrollController: _scrollCtrl,
-                                  loadingEarlierHistory:
-                                      chat.loadingEarlierHistory,
-                                  hasEarlierHistory: chat.hasEarlierHistory,
-                                  onResend: _resend,
-                                  onUserScroll: _handleUserScroll,
-                                ),
-                              ),
-                              if (chat.pendingApproval != null)
-                                _ApprovalBanner(
-                                  approval: chat.pendingApproval!,
-                                  onApprove: (reply) {
-                                    ref
-                                        .read(chatProvider(_chatKey).notifier)
-                                        .submitApproval(reply);
-                                  },
-                                ),
-                              if (chat.pendingQuestion != null)
-                                QuestionBanner(
-                                  question: chat.pendingQuestion!,
-                                  onSubmit: (requestId, answers) {
-                                    ref
-                                        .read(chatProvider(_chatKey).notifier)
-                                        .submitQuestion(requestId, answers);
-                                  },
-                                  onReject: (requestId) {
-                                    ref
-                                        .read(chatProvider(_chatKey).notifier)
-                                        .submitQuestion(
-                                          requestId,
-                                          const [],
-                                          rejected: true,
-                                        );
-                                  },
-                                ),
-                              _InputArea(
-                                controller: _inputCtrl,
-                                focusNode: _inputFocus,
-                                sending:
-                                    chat.sending ||
-                                    chat.messages.any(
-                                      (m) => m.state == MessageState.streaming,
-                                    ),
-                                taskActive: chat.taskActive,
-                                sessionId: chat.currentSessionId,
-                                queueItems: chat.queue.queuedItems,
-                                queueLoading: chat.queueLoading,
-                                queueError: chat.queueError,
-                                attachedFiles: chat.attachedFiles,
-                                agentId: widget.agentId,
-                                projectId: widget.projectId,
-                                projectRoot: widget.projectRoot,
-                                projectPrompt: ref.watch(
-                                  projectPromptProvider(widget.agentId),
-                                ),
-                                selectedModel: selectedModel,
-                                availableModels: availableModels,
-                                currentPlanMode: currentPlanMode,
-                                planHistory: planHistory,
-                                goalSettings: goalSettings,
-                                goalProgress: goalProgress,
-                                contextUsage: chat.contextUsage,
-                                configuredCompactionThreshold:
-                                    _compactionConfig.effectiveThresholdPercent,
-                                compactionConfigSaving: _compactionConfigSaving,
-                                machineId: widget.machineId,
-                                onCompactContext: () =>
-                                    _compactContext(selectedModel),
-                                onSaveCompactionThreshold:
-                                    _saveCompactionThreshold,
-                                onSend: _send,
-                                onStop: () => ref
-                                    .read(chatProvider(_chatKey).notifier)
-                                    .cancelCurrentTask(),
-                                onDeleteQueueItem: (item) => ref
-                                    .read(chatProvider(_chatKey).notifier)
-                                    .deleteQueueItem(item),
-                                onInsertQueueItem: (item) => ref
-                                    .read(chatProvider(_chatKey).notifier)
-                                    .insertQueueItem(item),
-                                onSendQueueItem: (item) => ref
-                                    .read(chatProvider(_chatKey).notifier)
-                                    .sendQueueItem(item),
-                                onReorderQueueItems: (items) => ref
-                                    .read(chatProvider(_chatKey).notifier)
-                                    .reorderQueueItems(items),
-                                onUpdateQueueItemModel:
-                                    (item, model, variant) => ref
-                                        .read(chatProvider(_chatKey).notifier)
-                                        .updateQueueItemModel(
-                                          item,
-                                          model: model,
-                                          variant: variant,
-                                        ),
-                                onPickFiles: _pickFiles,
-                                onRemoveFile: (i) {
-                                  ref
+    return ProjectPreferencesScope(
+      project: _projectSettingsKey,
+      child: PopScope(
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) _refreshDeviceStatus();
+        },
+        child: Scaffold(
+          body: SafeArea(
+            child: AttachmentDropTarget(
+              enabled: isAttachmentDropSupported(isMobile: isMobile),
+              onDrop: _handleDroppedFiles,
+              child: PageBackground(
+                child: Column(
+                  children: [
+                    _buildContextBar(context, chat),
+                    if (ref
+                        .watch(projectSettingsProvider(_projectSettingsKey))
+                        .showConnectionStatus)
+                      ChatConnectionStatus(
+                        agentId: widget.agentId,
+                        projectId: widget.projectId,
+                        visible: _routeVisible,
+                      ),
+                    if (chat.operationSteps.isNotEmpty)
+                      ChatOperationStrip(
+                        title: chat.operationTitle,
+                        steps: chat.operationSteps,
+                      ),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          // 左侧历史会话栏（桌面常驻，移动抽屉）
+                          if (!isMobile && _sessionPanelOpen)
+                            _SessionSidebar(
+                              agentId: widget.agentId,
+                              projectId: widget.projectId,
+                              currentSessionId: chat.currentSessionId,
+                              onSelect: (sid) async {
+                                _clearSelectedSubagentTask();
+                                final generation = ++_initialViewportGeneration;
+                                _positioningInitialViewport = true;
+                                _cancelPendingBottomScrolls();
+                                try {
+                                  await ref
                                       .read(chatProvider(_chatKey).notifier)
-                                      .removeAttachedFile(i);
-                                },
-                                onSelectModel: (m) {
-                                  _warnModelContextSwitch(
-                                    context,
-                                    chat.contextUsage,
-                                    m,
-                                  );
-                                  final current = ref.read(
-                                    selectedVariantProvider(widget.agentId),
-                                  );
-                                  final normalized = normalizeThinkingVariant(
-                                    m?.variants ?? const <String>[],
-                                    current,
-                                  );
-                                  if (current != normalized) {
-                                    unawaited(
-                                      ref
-                                          .read(
-                                            selectedVariantProvider(
-                                              widget.agentId,
-                                            ).notifier,
-                                          )
-                                          .select(normalized),
-                                    );
+                                      .loadSession(sid);
+                                  if (mounted &&
+                                      generation ==
+                                          _initialViewportGeneration) {
+                                    await _stabilizeToBottom();
                                   }
-                                  ref
-                                      .read(
-                                        selectedModelProvider(
-                                          widget.agentId,
-                                        ).notifier,
-                                      )
-                                      .select(m);
-                                },
-                                onAddFile: (f) {
-                                  ref
+                                } finally {
+                                  if (mounted &&
+                                      generation ==
+                                          _initialViewportGeneration) {
+                                    _positioningInitialViewport = false;
+                                  }
+                                }
+                              },
+                              onNew: () {
+                                _clearSelectedSubagentTask();
+                                _initialViewportGeneration++;
+                                _positioningInitialViewport = false;
+                                _cancelPendingBottomScrolls();
+                                ref
+                                    .read(chatProvider(_chatKey).notifier)
+                                    .newSession();
+                                ref.invalidate(
+                                  sessionListProvider(_sessionListKey),
+                                );
+                              },
+                            ),
+                          if (!isMobile && _sessionPanelOpen)
+                            Container(width: 1, color: AppColors.border),
+                          // 中央消息区 + 输入区
+                          Expanded(
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: _MessageArea(
+                                    messages: chat.messages,
+                                    stoppingTaskId: chat.cancelRequested
+                                        ? ref
+                                              .read(
+                                                chatProvider(_chatKey).notifier,
+                                              )
+                                              .activeTaskId
+                                        : null,
+                                    stopping: chat.cancelRequested,
+                                    scrollController: _scrollCtrl,
+                                    loadingEarlierHistory:
+                                        chat.loadingEarlierHistory,
+                                    hasEarlierHistory: chat.hasEarlierHistory,
+                                    onResend: _resend,
+                                    onRetryHistory: (taskId) => ref
+                                        .read(chatProvider(_chatKey).notifier)
+                                        .retryHistoryDetails(taskId),
+                                    onUserScroll: _handleUserScroll,
+                                  ),
+                                ),
+                                if (chat.pendingApproval != null)
+                                  _ApprovalBanner(
+                                    approval: chat.pendingApproval!,
+                                    onApprove: (reply) {
+                                      ref
+                                          .read(chatProvider(_chatKey).notifier)
+                                          .submitApproval(reply);
+                                    },
+                                  ),
+                                if (chat.pendingQuestion != null)
+                                  QuestionBanner(
+                                    question: chat.pendingQuestion!,
+                                    onSubmit: (requestId, answers) {
+                                      ref
+                                          .read(chatProvider(_chatKey).notifier)
+                                          .submitQuestion(requestId, answers);
+                                    },
+                                    onReject: (requestId) {
+                                      ref
+                                          .read(chatProvider(_chatKey).notifier)
+                                          .submitQuestion(
+                                            requestId,
+                                            const [],
+                                            rejected: true,
+                                          );
+                                    },
+                                  ),
+                                _InputArea(
+                                  controller: _inputCtrl,
+                                  focusNode: _inputFocus,
+                                  sending:
+                                      chat.sending ||
+                                      chat.messages.any(
+                                        (m) =>
+                                            m.state == MessageState.streaming,
+                                      ),
+                                  taskActive: chat.canStop,
+                                  sessionId: chat.currentSessionId,
+                                  queueItems: chat.queue.queuedItems,
+                                  queueLoading: chat.queueLoading,
+                                  queueError: chat.queueError,
+                                  attachedFiles: chat.attachedFiles,
+                                  agentId: widget.agentId,
+                                  projectId: widget.projectId,
+                                  projectRoot: widget.projectRoot,
+                                  projectPrompt: ref.watch(
+                                    projectPromptProvider(widget.agentId),
+                                  ),
+                                  selectedModel: selectedModel,
+                                  availableModels: availableModels,
+                                  currentPlanMode: currentPlanMode,
+                                  planHistory: planHistory,
+                                  goalSettings: goalSettings,
+                                  goalProgress: goalProgress,
+                                  contextUsage: chat.contextUsage,
+                                  configuredCompactionThreshold:
+                                      _compactionConfig
+                                          .effectiveThresholdPercent,
+                                  compactionConfigSaving:
+                                      _compactionConfigSaving,
+                                  machineId: widget.machineId,
+                                  onCompactContext: () =>
+                                      _compactContext(selectedModel),
+                                  onSaveCompactionThreshold:
+                                      _saveCompactionThreshold,
+                                  onSend: _send,
+                                  onStop: () => ref
                                       .read(chatProvider(_chatKey).notifier)
-                                      .addAttachedFile(f);
-                                },
-                                onEditProjectPrompt: _editProjectPrompt,
-                                onOpenProjectMemory: _openProjectMemory,
-                                onOpenGoalSettings: _showGoalSettings,
-                              ),
-                            ],
+                                      .cancelCurrentTask(),
+                                  onDeleteQueueItem: (item) => ref
+                                      .read(chatProvider(_chatKey).notifier)
+                                      .deleteQueueItem(item),
+                                  onInsertQueueItem: (item) => ref
+                                      .read(chatProvider(_chatKey).notifier)
+                                      .insertQueueItem(item),
+                                  onSendQueueItem: (item) => ref
+                                      .read(chatProvider(_chatKey).notifier)
+                                      .sendQueueItem(item),
+                                  onReorderQueueItems: (items) => ref
+                                      .read(chatProvider(_chatKey).notifier)
+                                      .reorderQueueItems(items),
+                                  onUpdateQueueItemModel:
+                                      (item, model, variant) => ref
+                                          .read(chatProvider(_chatKey).notifier)
+                                          .updateQueueItemModel(
+                                            item,
+                                            model: model,
+                                            variant: variant,
+                                          ),
+                                  onPickFiles: _pickFiles,
+                                  onRemoveFile: (i) {
+                                    ref
+                                        .read(chatProvider(_chatKey).notifier)
+                                        .removeAttachedFile(i);
+                                  },
+                                  onSelectModel: (m) {
+                                    _warnModelContextSwitch(
+                                      context,
+                                      chat.contextUsage,
+                                      m,
+                                    );
+                                    final current = ref.read(
+                                      selectedVariantProvider(widget.agentId),
+                                    );
+                                    final normalized = normalizeThinkingVariant(
+                                      m?.variants ?? const <String>[],
+                                      current,
+                                    );
+                                    if (current != normalized) {
+                                      unawaited(
+                                        ref
+                                            .read(
+                                              selectedVariantProvider(
+                                                widget.agentId,
+                                              ).notifier,
+                                            )
+                                            .select(normalized),
+                                      );
+                                    }
+                                    ref
+                                        .read(
+                                          selectedModelProvider(
+                                            widget.agentId,
+                                          ).notifier,
+                                        )
+                                        .select(m);
+                                  },
+                                  onAddFile: (f) {
+                                    ref
+                                        .read(chatProvider(_chatKey).notifier)
+                                        .addAttachedFile(f);
+                                  },
+                                  onEditProjectPrompt: _editProjectPrompt,
+                                  onOpenProjectMemory: _openProjectMemory,
+                                  onOpenGoalSettings: _showGoalSettings,
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                        if (isDesktop &&
-                            _subagentPanelOpen &&
-                            subagentTaskId != null)
-                          Container(width: 1, color: AppColors.border),
-                        if (isDesktop &&
-                            _subagentPanelOpen &&
-                            subagentTaskId != null)
-                          _SubagentSidebar(
-                            taskId: subagentTaskId,
-                            availableModels: availableModels,
-                            onClose: () =>
-                                setState(() => _subagentPanelOpen = false),
-                          ),
-                      ],
+                          if (isDesktop &&
+                              _routeVisible &&
+                              _subagentPanelOpen &&
+                              subagentTaskId != null)
+                            Container(width: 1, color: AppColors.border),
+                          if (isDesktop &&
+                              _routeVisible &&
+                              _subagentPanelOpen &&
+                              subagentTaskId != null)
+                            _SubagentSidebar(
+                              taskId: subagentTaskId,
+                              availableModels: availableModels,
+                              onClose: () =>
+                                  setState(() => _subagentPanelOpen = false),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
+          // 移动端抽屉
+          drawer: isMobile
+              ? Drawer(
+                  child: _SessionSidebar(
+                    agentId: widget.agentId,
+                    projectId: widget.projectId,
+                    currentSessionId: chat.currentSessionId,
+                    onSelect: (sid) async {
+                      _clearSelectedSubagentTask();
+                      final generation = ++_initialViewportGeneration;
+                      _positioningInitialViewport = true;
+                      _cancelPendingBottomScrolls();
+                      try {
+                        await ref
+                            .read(chatProvider(_chatKey).notifier)
+                            .loadSession(sid);
+                        if (mounted &&
+                            generation == _initialViewportGeneration) {
+                          await _stabilizeToBottom();
+                        }
+                      } finally {
+                        if (mounted &&
+                            generation == _initialViewportGeneration) {
+                          _positioningInitialViewport = false;
+                        }
+                      }
+                      if (!context.mounted) return;
+                      Navigator.of(context).pop();
+                    },
+                    onNew: () {
+                      _clearSelectedSubagentTask();
+                      _initialViewportGeneration++;
+                      _positioningInitialViewport = false;
+                      _cancelPendingBottomScrolls();
+                      ref.read(chatProvider(_chatKey).notifier).newSession();
+                      ref.invalidate(sessionListProvider(_sessionListKey));
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                )
+              : null,
         ),
-        // 移动端抽屉
-        drawer: isMobile
-            ? Drawer(
-                child: _SessionSidebar(
-                  agentId: widget.agentId,
-                  projectId: widget.projectId,
-                  currentSessionId: chat.currentSessionId,
-                  onSelect: (sid) async {
-                    _clearSelectedSubagentTask();
-                    final generation = ++_initialViewportGeneration;
-                    _positioningInitialViewport = true;
-                    _cancelPendingBottomScrolls();
-                    try {
-                      await ref
-                          .read(chatProvider(_chatKey).notifier)
-                          .loadSession(sid);
-                      if (mounted && generation == _initialViewportGeneration) {
-                        await _stabilizeToBottom();
-                      }
-                    } finally {
-                      if (mounted && generation == _initialViewportGeneration) {
-                        _positioningInitialViewport = false;
-                      }
-                    }
-                    if (!context.mounted) return;
-                    Navigator.of(context).pop();
-                  },
-                  onNew: () {
-                    _clearSelectedSubagentTask();
-                    _initialViewportGeneration++;
-                    _positioningInitialViewport = false;
-                    _cancelPendingBottomScrolls();
-                    ref.read(chatProvider(_chatKey).notifier).newSession();
-                    ref.invalidate(sessionListProvider(_sessionListKey));
-                    Navigator.of(context).pop();
-                  },
-                ),
-              )
-            : null,
       ),
     );
   }
@@ -1873,6 +1990,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
               ),
               onSelected: (action) {
                 switch (action) {
+                  case _ChatMoreAction.projectSettings:
+                    _openProjectSettings();
+                    break;
                   case _ChatMoreAction.switchAgent:
                     _showAgentSwitcher();
                     break;
@@ -1895,6 +2015,14 @@ class _ChatPageState extends ConsumerState<ChatPage>
                 }
               },
               itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: _ChatMoreAction.projectSettings,
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(Icons.settings_outlined, size: 19),
+                    title: Text('项目设置'),
+                  ),
+                ),
                 const PopupMenuItem(
                   value: _ChatMoreAction.switchAgent,
                   child: ListTile(
@@ -1935,7 +2063,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
   }
 }
 
-enum _ChatMoreAction { switchAgent, subagents, files }
+enum _ChatMoreAction { projectSettings, switchAgent, subagents, files }
 
 class _ContextChip extends StatelessWidget {
   final IconData icon;
@@ -1982,25 +2110,70 @@ class _ContextChip extends StatelessWidget {
 }
 
 // 消息区
-class _MessageArea extends StatelessWidget {
+class _MessageArea extends ConsumerStatefulWidget {
   final List<ChatMessage> messages;
+  final String? stoppingTaskId;
+  final bool stopping;
   final ScrollController scrollController;
   final bool loadingEarlierHistory;
   final bool hasEarlierHistory;
   final Future<void> Function(ChatMessage message) onResend;
+  final ValueChanged<String>? onRetryHistory;
   final ValueChanged<UserScrollNotification> onUserScroll;
 
   const _MessageArea({
     required this.messages,
+    this.stoppingTaskId,
+    this.stopping = false,
     required this.scrollController,
     required this.loadingEarlierHistory,
     required this.hasEarlierHistory,
     required this.onResend,
+    this.onRetryHistory,
     required this.onUserScroll,
   });
 
   @override
+  ConsumerState<_MessageArea> createState() => _MessageAreaState();
+}
+
+class _MessageAreaState extends ConsumerState<_MessageArea> {
+  final _animateEvents = <String>{};
+
+  @override
+  void didUpdateWidget(covariant _MessageArea oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.messages, widget.messages)) return;
+    final known = oldWidget.messages.map((m) => m.id).toSet();
+    final liveTasks = oldWidget.messages
+        .where((m) => m.state == MessageState.streaming)
+        .map((m) => m.taskId)
+        .toSet();
+    _animateEvents.addAll(
+      widget.messages
+          .where(
+            (m) =>
+                isBackgroundReplyEvent(m) &&
+                !known.contains(m.id) &&
+                liveTasks.contains(m.taskId),
+          )
+          .map((m) => m.id),
+    );
+    final current = widget.messages.map((m) => m.id).toSet();
+    _animateEvents.removeWhere((id) => !current.contains(id));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final messages = widget.messages;
+    final stopping = widget.stopping;
+    final stoppingTaskId = widget.stoppingTaskId;
+    final loadingEarlierHistory = widget.loadingEarlierHistory;
+    final hasEarlierHistory = widget.hasEarlierHistory;
+    final scrollController = widget.scrollController;
+    final onUserScroll = widget.onUserScroll;
+    final onResend = widget.onResend;
+    final onRetryHistory = widget.onRetryHistory;
     if (messages.isEmpty) {
       return const Center(
         child: EmptyState(
@@ -2010,7 +2183,32 @@ class _MessageArea extends StatelessWidget {
       );
     }
 
+    final continuous = ref.watch(
+      settingsProvider.select((s) => s.continuousReply),
+    );
+    final boundaries = <String, (bool, bool, bool)>{};
+    if (continuous) {
+      for (final group in groupReplyDisplay(messages, continuous: true)) {
+        if (group.first.role != MessageRole.agent ||
+            group.first.isInsertedContext) {
+          continue;
+        }
+        final surfaces = group.where(_hasReplySurface).toList(growable: false);
+        for (var i = 0; i < group.length; i++) {
+          boundaries[group[i].id] = (
+            i == 0,
+            i == group.length - 1,
+            surfaces.isNotEmpty && identical(group[i], surfaces.last),
+          );
+        }
+      }
+    }
+    if (!continuous) _animateEvents.clear();
     final showHistoryLoader = loadingEarlierHistory || hasEarlierHistory;
+    final indexes = {
+      for (var i = 0; i < messages.length; i++)
+        messages[i].id: i + (showHistoryLoader ? 1 : 0),
+    };
     return NotificationListener<UserScrollNotification>(
       onNotification: (notification) {
         onUserScroll(notification);
@@ -2023,14 +2221,34 @@ class _MessageArea extends StatelessWidget {
           vertical: 16,
         ),
         itemCount: messages.length + (showHistoryLoader ? 1 : 0),
+        findChildIndexCallback: (key) =>
+            key is ValueKey<String> ? indexes[key.value] : null,
         itemBuilder: (context, i) {
           if (showHistoryLoader && i == 0) {
             return _EarlierHistoryLoader(loading: loadingEarlierHistory);
           }
           final msg = messages[i - (showHistoryLoader ? 1 : 0)];
+          final boundary = boundaries[msg.id];
+          if (boundary != null) {
+            return _ContinuousReplySegment(
+              key: ValueKey(msg.id),
+              message: msg,
+              first: boundary.$1,
+              last: boundary.$2,
+              surfaceLast: boundary.$3,
+              animateEvent: _animateEvents.remove(msg.id),
+              stopping: stopping && msg.taskId == stoppingTaskId,
+              onRetryHistory: onRetryHistory,
+            );
+          }
           return _MessageBubble(
             message: msg,
+            stopping:
+                stopping &&
+                msg.state == MessageState.streaming &&
+                msg.taskId == stoppingTaskId,
             onResend: onResend,
+            onRetryHistory: onRetryHistory,
             key: ValueKey(msg.id),
           );
         },
@@ -2063,10 +2281,14 @@ class _EarlierHistoryLoader extends StatelessWidget {
 
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
+  final bool stopping;
   final Future<void> Function(ChatMessage message) onResend;
+  final ValueChanged<String>? onRetryHistory;
   const _MessageBubble({
     required this.message,
+    this.stopping = false,
     required this.onResend,
+    this.onRetryHistory,
     super.key,
   });
 
@@ -2077,15 +2299,69 @@ class _MessageBubble extends StatelessWidget {
     }
 
     final isUser = message.role == MessageRole.user;
-    final hasStreamingOutput =
-        message.content.trim().isNotEmpty ||
-        message.thinkingContent.trim().isNotEmpty ||
-        message.blocks.any(
-          (block) =>
-              block.type == ChatMessageBlockType.text &&
-              block.text.trim().isNotEmpty,
-        );
 
+    final contents = Column(
+      crossAxisAlignment: isUser
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        // 思考过程折叠区（仅 agent 消息）
+        if (!isUser && message.thinkingContent.isNotEmpty)
+          _ThinkingBlock(
+            thinking: message.thinkingContent,
+            isStreaming: message.state == MessageState.streaming,
+          ),
+        if (!isUser && message.thinkingContent.isNotEmpty)
+          const SizedBox(height: 6),
+        // 正文气泡
+        if (message.content.isNotEmpty ||
+            message.blocks.isNotEmpty ||
+            message.toolCalls.isNotEmpty ||
+            message.imageGeneration != null ||
+            message.isFinalizingDelivery ||
+            message.artifacts.isNotEmpty ||
+            message.files.isNotEmpty ||
+            isUser ||
+            message.state == MessageState.failed)
+          _BubbleContent(message: message, isUser: isUser),
+        if (!isUser &&
+            (message.state == MessageState.streaming ||
+                (message.historyDetails != HistoryDetailsState.none &&
+                    message.historyDetails != HistoryDetailsState.deferred) ||
+                (message.statusHint.isNotEmpty &&
+                    message.statusHint != '正在停止' &&
+                    !stopping)) &&
+            message.imageGeneration == null &&
+            !message.isFinalizingDelivery)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child:
+                message.state == MessageState.streaming ||
+                    (message.historyDetails != HistoryDetailsState.none &&
+                        message.historyDetails != HistoryDetailsState.deferred)
+                ? AgentActivityIndicator(
+                    message: message,
+                    stopping: stopping,
+                    statusHint: message.statusHint,
+                    onRetryHistory:
+                        message.taskId != null && onRetryHistory != null
+                        ? () => onRetryHistory!(message.taskId!)
+                        : null,
+                  )
+                : _MessageStatusHint(text: message.statusHint),
+          ),
+        // 用户消息附件预览
+        if (isUser && message.attachedFiles.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          _AttachmentPreview(files: message.attachedFiles),
+        ],
+        if (isUser)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: _UserMessageActions(onResend: () => onResend(message)),
+          ),
+      ],
+    );
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Row(
@@ -2095,83 +2371,281 @@ class _MessageBubble extends StatelessWidget {
             : MainAxisAlignment.start,
         children: [
           if (!isUser) ...[_Avatar(isUser: false), const SizedBox(width: 10)],
-          Flexible(
-            child: Column(
-              crossAxisAlignment: isUser
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
-              children: [
-                // 思考过程折叠区（仅 agent 消息）
-                if (!isUser && message.thinkingContent.isNotEmpty)
-                  _ThinkingBlock(
-                    thinking: message.thinkingContent,
-                    isStreaming: message.state == MessageState.streaming,
-                  ),
-                if (!isUser && message.thinkingContent.isNotEmpty)
-                  const SizedBox(height: 6),
-                if (!isUser &&
-                    message.state == MessageState.streaming &&
-                    message.imageGeneration == null &&
-                    !message.isFinalizingDelivery &&
-                    !hasStreamingOutput) ...[
-                  _StreamingProgressHint(message: message),
-                  const SizedBox(height: 6),
-                ],
-                if (!isUser &&
-                    message.statusHint.isNotEmpty &&
-                    message.imageGeneration == null) ...[
-                  _MessageStatusHint(text: message.statusHint),
-                  const SizedBox(height: 6),
-                ],
-                // 正文气泡
-                if (message.content.isNotEmpty ||
-                    message.thinkingContent.isNotEmpty ||
-                    message.blocks.isNotEmpty ||
-                    message.toolCalls.isNotEmpty ||
-                    message.imageGeneration != null ||
-                    message.isFinalizingDelivery ||
-                    message.artifacts.isNotEmpty ||
-                    message.files.isNotEmpty ||
-                    isUser ||
-                    message.state == MessageState.failed)
-                  _BubbleContent(message: message, isUser: isUser),
-                // streaming 时且还没正文，显示跳动点
-                if (!isUser &&
-                    message.state == MessageState.streaming &&
-                    message.content.isEmpty &&
-                    message.thinkingContent.isEmpty &&
-                    !message.blocks.any(
-                      (block) =>
-                          block.type == ChatMessageBlockType.text &&
-                          block.text.trim().isNotEmpty,
-                    ) &&
-                    message.imageGeneration == null &&
-                    !message.isFinalizingDelivery)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: _TypingIndicator(),
-                  ),
-                // 用户消息附件预览
-                if (isUser && message.attachedFiles.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  _AttachmentPreview(files: message.attachedFiles),
-                ],
-                if (isUser)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: _UserMessageActions(
-                      onResend: () => onResend(message),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+          Flexible(child: contents),
           if (isUser) ...[const SizedBox(width: 10), _Avatar(isUser: true)],
         ],
       ),
     );
   }
 }
+
+bool _hasReplySurface(ChatMessage message) =>
+    isBackgroundReplyEvent(message) ||
+    message.content.isNotEmpty ||
+    message.blocks.isNotEmpty ||
+    message.toolCalls.isNotEmpty ||
+    message.imageGeneration != null ||
+    message.isFinalizingDelivery ||
+    message.artifacts.isNotEmpty ||
+    message.files.isNotEmpty ||
+    message.state == MessageState.failed;
+
+/// Adjacent lazy list rows share the reply surface. Operational hints remain
+/// siblings of the surface, like the original split-bubble presentation.
+class _ContinuousReplySegment extends StatelessWidget {
+  final ChatMessage message;
+  final bool first;
+  final bool last;
+  final bool? surfaceLast;
+  final bool animateEvent;
+  final bool stopping;
+  final ValueChanged<String>? onRetryHistory;
+  const _ContinuousReplySegment({
+    super.key,
+    required this.message,
+    required this.first,
+    required this.last,
+    this.surfaceLast,
+    this.animateEvent = false,
+    this.stopping = false,
+    this.onRetryHistory,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const side = BorderSide(color: AppColors.border);
+    final background = isBackgroundReplyEvent(message);
+    final closesSurface = surfaceLast ?? last;
+    final showActivity =
+        last &&
+        !background &&
+        (message.state == MessageState.streaming ||
+            message.historyDetails != HistoryDetailsState.none) &&
+        message.imageGeneration == null &&
+        !message.isFinalizingDelivery;
+    return Padding(
+      padding: EdgeInsets.only(bottom: last ? 16 : 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (first) _Avatar(isUser: false) else const SizedBox(width: 32),
+          const SizedBox(width: 10),
+          Flexible(
+            child: SizedBox(
+              width: MediaQuery.sizeOf(context).width * .72,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!background && message.thinkingContent.isNotEmpty) ...[
+                    _ThinkingBlock(
+                      thinking: message.thinkingContent,
+                      isStreaming: message.state == MessageState.streaming,
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  if (_hasReplySurface(message))
+                    Container(
+                      key: first
+                          ? const ValueKey('continuous-reply-surface')
+                          : ValueKey('reply-body-${message.id}'),
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        border: Border(
+                          left: side,
+                          right: side,
+                          top: first ? side : BorderSide.none,
+                          bottom: closesSurface ? side : BorderSide.none,
+                        ),
+                        borderRadius: BorderRadius.vertical(
+                          top: first ? const Radius.circular(14) : Radius.zero,
+                          bottom: closesSurface
+                              ? const Radius.circular(14)
+                              : Radius.zero,
+                        ),
+                      ),
+                      padding: EdgeInsets.only(
+                        top: first ? 4 : 0,
+                        bottom: closesSurface ? 4 : 0,
+                      ),
+                      child: background
+                          ? _InlineBackgroundEvent(
+                              key: ValueKey(message.id),
+                              message: message,
+                              animate: animateEvent,
+                            )
+                          : _BubbleContent(
+                              message: message,
+                              isUser: false,
+                              embedded: true,
+                            ),
+                    ),
+                  if (last &&
+                      !background &&
+                      (showActivity ||
+                          (message.statusHint.isNotEmpty &&
+                              message.statusHint != '正在停止' &&
+                              !stopping &&
+                              message.imageGeneration == null)))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: AgentActivityIndicator(
+                        message: message,
+                        stopping: stopping,
+                        statusHint: message.statusHint,
+                        onRetryHistory:
+                            message.taskId != null && onRetryHistory != null
+                            ? () => onRetryHistory!(message.taskId!)
+                            : null,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineBackgroundEvent extends StatefulWidget {
+  final ChatMessage message;
+  final bool animate;
+  const _InlineBackgroundEvent({
+    super.key,
+    required this.message,
+    required this.animate,
+  });
+  @override
+  State<_InlineBackgroundEvent> createState() => _InlineBackgroundEventState();
+}
+
+class _InlineBackgroundEventState extends State<_InlineBackgroundEvent> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final metadata = widget.message.insertedContextMetadata;
+    final failed = metadata['job_status'] == 'error';
+    final title = metadata['job_title']?.toString().trim() ?? '';
+    final command = metadata['command']?.toString().trim() ?? '';
+    final accent = failed ? AppColors.statusError : const Color(0xFF35806A);
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: widget.animate && !reduceMotion ? 0 : 1, end: 1),
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 260),
+      builder: (context, value, child) => Opacity(
+        opacity: value,
+        child: Transform.translate(
+          offset: Offset(0, (1 - value) * 5),
+          child: child,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Divider(height: 1, color: AppColors.border),
+            Semantics(
+              expanded: _expanded,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(
+                        failed
+                            ? Icons.error_outline_rounded
+                            : Icons.check_circle_outline_rounded,
+                        size: 16,
+                        color: accent,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${failed ? '后台任务失败' : '后台任务已完成'}${title.isEmpty ? '' : ' · $title'}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            height: 1.5,
+                            color: AppColors.textSecondary,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _expanded ? '收起' : '展开',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      AnimatedRotation(
+                        turns: _expanded ? .5 : 0,
+                        duration: reduceMotion
+                            ? Duration.zero
+                            : const Duration(milliseconds: 180),
+                        child: const Icon(
+                          Icons.expand_more_rounded,
+                          size: 16,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            AnimatedSize(
+              duration: reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topLeft,
+              child: _expanded
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 24, bottom: 12),
+                      child: SelectableText(
+                        [
+                          if (command.isNotEmpty) command,
+                          if (widget.message.content.trim().isNotEmpty)
+                            widget.message.content.trim(),
+                        ].join('\n\n'),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.6,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+@visibleForTesting
+Widget buildContinuousReplyTestSurface(List<ChatMessage> messages) => Column(
+  children: [
+    for (var i = 0; i < messages.length; i++)
+      _ContinuousReplySegment(
+        key: ValueKey(messages[i].id),
+        message: messages[i],
+        first: i == 0,
+        last: i == messages.length - 1,
+      ),
+  ],
+);
 
 class _InsertedContextNode extends StatelessWidget {
   final ChatMessage message;
@@ -2796,277 +3270,43 @@ class _MessageStatusHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.primaryLight,
-        borderRadius: AppRadius.smRadius,
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.sync_problem_outlined,
-            size: 14,
-            color: AppColors.primary,
-          ),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              text,
-              style: const TextStyle(
-                fontSize: 12,
-                height: 1.5,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StreamingProgressHint extends StatefulWidget {
-  final ChatMessage message;
-
-  const _StreamingProgressHint({required this.message});
-
-  @override
-  State<_StreamingProgressHint> createState() => _StreamingProgressHintState();
-}
-
-class _StreamingProgressHintState extends State<_StreamingProgressHint> {
-  late final Timer _timer;
-  DateTime _now = DateTime.now();
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() => _now = DateTime.now());
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
-  }
-
-  bool get _hasText {
-    if (widget.message.content.trim().isNotEmpty) return true;
-    return widget.message.blocks.any(
-      (block) =>
-          block.type == ChatMessageBlockType.text &&
-          block.text.trim().isNotEmpty,
-    );
-  }
-
-  bool get _hasThinking => widget.message.thinkingContent.trim().isNotEmpty;
-  bool get _hasTools => widget.message.toolCalls.isNotEmpty;
-  bool get _hasRunningTools =>
-      widget.message.toolCalls.any((tool) => tool.isRunning);
-  bool get _hasPlan =>
-      widget.message.hasPlanBinding &&
-      widget.message.plan != null &&
-      !widget.message.plan!.isEmpty;
-
-  String get _title {
-    if (_hasText) return '正在生成正文';
-    if (_hasRunningTools) return '正在等待工具返回';
-    if (_hasTools) return '工具结果已同步，等待正文输出';
-    if (_hasPlan) return '计划已更新，等待正文输出';
-    if (_hasThinking) return '模型已开始思考，正在等待正文输出';
-    if ((widget.message.taskId ?? '').isEmpty) return '正在创建任务';
-    return '模型请求中，等待首个输出';
-  }
-
-  String get _subtitle {
-    final parts = <String>[];
-    final elapsed = _now.difference(widget.message.createdAt);
-    parts.add('已用时 ${_formatDuration(elapsed)}');
-    final firstToken = widget.message.firstTokenTime;
-    if (firstToken != null) {
-      parts.add('首字 ${_formatDuration(firstToken)}');
-    } else if (!_hasText && elapsed.inSeconds >= 30) {
-      parts.add('正文首包较慢');
-    }
-    if (_hasTools) {
-      final running = widget.message.toolCalls
-          .where((tool) => tool.isRunning)
-          .length;
-      final completed = widget.message.toolCalls
-          .where((tool) => tool.isCompleted)
-          .length;
-      if (running > 0) {
-        parts.add('$running 个工具运行中');
-      } else if (completed > 0) {
-        parts.add('$completed 个工具已完成');
-      }
-    }
-    return parts.join(' · ');
-  }
-
-  List<_StreamingStage> get _stages {
-    return [
-      _StreamingStage('已发送', true, false),
-      _StreamingStage('已连接', (widget.message.taskId ?? '').isNotEmpty, false),
-      _StreamingStage('思考', _hasThinking, !_hasText && _hasThinking),
-      _StreamingStage('正文', _hasText, _hasText),
-    ];
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final elapsed = _now.difference(widget.message.createdAt);
-    final slow = !_hasText && elapsed.inSeconds >= 60;
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 520),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: slow ? AppColors.statusWarningLight : AppColors.primaryLight,
-        borderRadius: AppRadius.smRadius,
-        border: Border.all(
-          color: slow
-              ? AppColors.statusWarning.withValues(alpha: 0.28)
-              : AppColors.border,
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 12,
+          height: 1.6,
+          fontWeight: FontWeight.w500,
+          color: AppColors.textSecondary,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.8,
-                    color: slow ? AppColors.statusWarning : AppColors.primary,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 7),
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.35,
-                        fontWeight: FontWeight.w600,
-                        color: slow
-                            ? AppColors.statusWarning
-                            : AppColors.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        height: 1.4,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: _stages
-                .map((stage) {
-                  final color = stage.active
-                      ? AppColors.primary
-                      : stage.done
-                      ? AppColors.statusSuccess
-                      : AppColors.textMuted;
-                  return Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: stage.active || stage.done
-                          ? AppColors.surface
-                          : AppColors.surfaceElevated,
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: color.withValues(
-                          alpha: stage.done ? 0.22 : 0.16,
-                        ),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          stage.done
-                              ? Icons.check_circle_rounded
-                              : Icons.radio_button_unchecked_rounded,
-                          size: 11,
-                          color: color,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          stage.label,
-                          style: TextStyle(
-                            fontSize: 10,
-                            height: 1.2,
-                            fontWeight: stage.active
-                                ? FontWeight.w600
-                                : FontWeight.w500,
-                            color: color,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                })
-                .toList(growable: false),
-          ),
-        ],
-      ),
     );
   }
-
-  String _formatDuration(Duration duration) {
-    final safe = duration.isNegative ? Duration.zero : duration;
-    if (safe.inMilliseconds < 1000) return '${safe.inMilliseconds}ms';
-    final minutes = safe.inMinutes;
-    final seconds = safe.inSeconds.remainder(60).toString().padLeft(2, '0');
-    if (minutes > 0) return '$minutes:$seconds';
-    return '${safe.inSeconds}s';
-  }
 }
 
-class _StreamingStage {
-  final String label;
-  final bool done;
-  final bool active;
+@visibleForTesting
+Widget buildChatMessageListTestSurface(
+  List<ChatMessage> messages,
+  ScrollController controller,
+) => _MessageArea(
+  messages: messages,
+  scrollController: controller,
+  loadingEarlierHistory: false,
+  hasEarlierHistory: false,
+  onResend: (_) async {},
+  onUserScroll: (_) {},
+);
 
-  const _StreamingStage(this.label, this.done, this.active);
-}
+@visibleForTesting
+Widget buildChatMessageHistoryTestSurface(ChatMessage message) =>
+    _MessageBubble(message: message, onResend: (_) async {});
+
+@visibleForTesting
+Widget buildChatStreamingProgressTestSurface(ChatMessage message) =>
+    MaterialApp(
+      home: Scaffold(body: AgentActivityIndicator(message: message)),
+    );
 
 // 附件预览（气泡下方）
 class _AttachmentPreview extends StatelessWidget {
@@ -3534,6 +3774,7 @@ class _ArtifactFileCardState extends ConsumerState<_ArtifactFileCard> {
         notifications: ref.read(appNotificationControllerProvider.notifier),
         taskId: taskId,
         artifact: widget.artifact,
+        project: ProjectPreferencesScope.of(context),
       );
     } catch (_) {
       // The shared download helper has already published the failure.
@@ -3670,6 +3911,7 @@ class _ArtifactImageCardState extends State<_ArtifactImageCard> {
   Future<void> _open(Uint8List bytes) async {
     final taskId = widget.taskId;
     if (taskId == null || taskId.isEmpty) return;
+    final project = ProjectPreferencesScope.of(context);
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ArtifactImageViewerPage(
@@ -3677,6 +3919,7 @@ class _ArtifactImageCardState extends State<_ArtifactImageCard> {
           artifact: widget.artifact,
           imageBytes: bytes,
           heroTag: _heroTag(),
+          project: project,
         ),
       ),
     );
@@ -4012,7 +4255,12 @@ class _Avatar extends StatelessWidget {
 class _BubbleContent extends ConsumerWidget {
   final ChatMessage message;
   final bool isUser;
-  const _BubbleContent({required this.message, required this.isUser});
+  final bool embedded;
+  const _BubbleContent({
+    required this.message,
+    required this.isUser,
+    this.embedded = false,
+  });
 
   bool get _shouldShowPlanSummary {
     final plan = message.plan;
@@ -4063,52 +4311,44 @@ class _BubbleContent extends ConsumerWidget {
         })
         .toList(growable: false);
     final hasContentBlocks = contentBlocks.isNotEmpty;
-    final hasAnyContentBlocks = allBlocks.isNotEmpty;
     final renderContentBlocks =
         hasContentBlocks && !_isOnlyFailedTextBlock(contentBlocks);
-    final showInlineGeneration =
-        !isUser &&
-        !showFinalDelivery &&
-        message.state == MessageState.streaming &&
-        message.imageGeneration == null &&
-        (message.content.trim().isNotEmpty ||
-            message.thinkingContent.trim().isNotEmpty ||
-            hasAnyContentBlocks ||
-            runningSubagents.isNotEmpty);
 
     return Container(
       constraints: BoxConstraints(
         maxWidth: MediaQuery.of(context).size.width * 0.72,
       ),
-      decoration: BoxDecoration(
-        color: isUser
-            ? AppColors.primary
-            : isFailed
-            ? AppColors.statusErrorLight
-            : AppColors.surface,
-        borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(12),
-          topRight: const Radius.circular(12),
-          bottomLeft: Radius.circular(isUser ? 12 : 3),
-          bottomRight: Radius.circular(isUser ? 3 : 12),
-        ),
-        border: isUser
-            ? null
-            : Border.all(
-                color: isFailed
-                    ? AppColors.statusError.withValues(alpha: 0.3)
-                    : AppColors.border,
+      decoration: embedded
+          ? null
+          : BoxDecoration(
+              color: isUser
+                  ? AppColors.primary
+                  : isFailed
+                  ? AppColors.statusErrorLight
+                  : AppColors.surface,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(12),
+                topRight: const Radius.circular(12),
+                bottomLeft: Radius.circular(isUser ? 12 : 3),
+                bottomRight: Radius.circular(isUser ? 3 : 12),
               ),
-        boxShadow: isUser
-            ? null
-            : const [
-                BoxShadow(
-                  color: Color(0x061A3A6A),
-                  blurRadius: 8,
-                  offset: Offset(0, 2),
-                ),
-              ],
-      ),
+              border: isUser
+                  ? null
+                  : Border.all(
+                      color: isFailed
+                          ? AppColors.statusError.withValues(alpha: 0.3)
+                          : AppColors.border,
+                    ),
+              boxShadow: isUser
+                  ? null
+                  : const [
+                      BoxShadow(
+                        color: Color(0x061A3A6A),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -4135,6 +4375,37 @@ class _BubbleContent extends ConsumerWidget {
                       isUser: isUser,
                       settings: settings,
                     ),
+            ),
+          if (!isUser && _hasUnpositionedTools)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      '工具调用记录 · 原始位置未记录',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                  _MessageBlockList(
+                    blocks: [
+                      for (final tool in message.toolCalls)
+                        ChatMessageBlock.tool(
+                          id: 'history_${tool.stableKey}',
+                          tool: tool,
+                        ),
+                    ],
+                    isUser: false,
+                    settings: settings,
+                    messageDone: message.state != MessageState.streaming,
+                  ),
+                ],
+              ),
             ),
           if (runningSubagents.isNotEmpty)
             Padding(
@@ -4164,11 +4435,6 @@ class _BubbleContent extends ConsumerWidget {
                 12,
               ),
               child: const FinalDeliveryProgress(),
-            ),
-          if (showInlineGeneration)
-            Padding(
-              padding: EdgeInsets.fromLTRB(14, 0, 14, 10),
-              child: _InlineGenerationProgress(tokenCount: message.tokenCount),
             ),
           if (isFailed)
             Padding(
@@ -4416,11 +4682,29 @@ class _BubbleContent extends ConsumerWidget {
     );
   }
 
+  bool get _hasUnpositionedTools =>
+      message.toolCalls.isNotEmpty &&
+      (!message.toolOrderKnown ||
+          (message.blocks.isEmpty && message.content.isNotEmpty));
+
   List<ChatMessageBlock> get _displayBlocks {
     if (isUser) {
       if (message.content.isEmpty) return const [];
       return [
         ChatMessageBlock.text(id: '${message.id}_text', text: message.content),
+      ];
+    }
+    if (_hasUnpositionedTools) {
+      final textBlocks = message.blocks
+          .where((block) => block.type == ChatMessageBlockType.text)
+          .toList();
+      if (textBlocks.isNotEmpty) return textBlocks;
+      return [
+        if (message.content.isNotEmpty)
+          ChatMessageBlock.text(
+            id: '${message.id}_text',
+            text: message.content,
+          ),
       ];
     }
     if (message.blocks.isNotEmpty) {
@@ -4464,7 +4748,7 @@ class _BubbleContent extends ConsumerWidget {
       parts.add('${message.tokenCount} tokens');
     }
     if (settings.showWordCount && message.content.isNotEmpty) {
-      parts.add('${message.content.length} 字');
+      parts.add('${replyCharacterCount(message.content)} 字符');
     }
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
@@ -4592,321 +4876,6 @@ class FinalDeliveryProgress extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _InlineGenerationProgress extends StatefulWidget {
-  final int? tokenCount;
-
-  const _InlineGenerationProgress({this.tokenCount});
-
-  @override
-  State<_InlineGenerationProgress> createState() =>
-      _InlineGenerationProgressState();
-}
-
-class _InlineGenerationProgressState extends State<_InlineGenerationProgress>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2800),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) => Container(
-        height: 52,
-        padding: const EdgeInsets.symmetric(horizontal: 11),
-        decoration: BoxDecoration(
-          color: AppColors.primaryLight.withValues(alpha: .46),
-          borderRadius: AppRadius.smRadius,
-          border: Border.all(color: AppColors.primary.withValues(alpha: .14)),
-        ),
-        child: Row(
-          children: [
-            const Text(
-              '正在生成',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primary,
-              ),
-            ),
-            if (widget.tokenCount != null) ...[
-              const SizedBox(width: 6),
-              Text(
-                '${widget.tokenCount} tokens',
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ],
-            const SizedBox(width: 12),
-            Expanded(
-              child: RepaintBoundary(
-                child: SizedBox(
-                  height: 36,
-                  child: CustomPaint(
-                    painter: _GenerationMeteorPainter(
-                      progress: _controller.value,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _GenerationMeteorPainter extends CustomPainter {
-  final double progress;
-
-  static final TextPainter _robotGlyph = TextPainter(
-    text: TextSpan(
-      text: String.fromCharCode(Icons.smart_toy_outlined.codePoint),
-      style: TextStyle(
-        color: Color(0xFF0EA5E9),
-        fontFamily: Icons.smart_toy_outlined.fontFamily,
-        package: Icons.smart_toy_outlined.fontPackage,
-        fontSize: 20,
-      ),
-    ),
-    textDirection: TextDirection.ltr,
-  )..layout();
-
-  const _GenerationMeteorPainter({required this.progress});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final centerY = size.height / 2;
-    final clip = RRect.fromRectAndRadius(
-      Offset.zero & size,
-      const Radius.circular(4),
-    );
-    canvas.save();
-    canvas.clipRRect(clip);
-
-    // A small deterministic emitter releases one fragment every frame slice.
-    // The core moves faster, while older fragments shrink and fade behind it.
-    final headX = -48 + (size.width + 96) * progress;
-    const particles =
-        <
-          ({
-            double behind,
-            double vertical,
-            double size,
-            double opacity,
-            Color color,
-          })
-        >[
-          (
-            behind: 8,
-            vertical: 0,
-            size: 6,
-            opacity: .90,
-            color: Color(0xFF06B6D4),
-          ),
-          (
-            behind: 10,
-            vertical: -4,
-            size: 4,
-            opacity: .78,
-            color: Color(0xFF38BDF8),
-          ),
-          (
-            behind: 10,
-            vertical: 4,
-            size: 4,
-            opacity: .78,
-            color: Color(0xFF14B8A6),
-          ),
-          (
-            behind: 15,
-            vertical: 0,
-            size: 5,
-            opacity: .70,
-            color: Color(0xFF14B8A6),
-          ),
-          (
-            behind: 17,
-            vertical: -5,
-            size: 3,
-            opacity: .58,
-            color: Color(0xFF38BDF8),
-          ),
-          (
-            behind: 17,
-            vertical: 5,
-            size: 3,
-            opacity: .58,
-            color: Color(0xFF06B6D4),
-          ),
-          (
-            behind: 21,
-            vertical: -2,
-            size: 4,
-            opacity: .53,
-            color: Color(0xFF0EA5E9),
-          ),
-          (
-            behind: 22,
-            vertical: 3,
-            size: 3,
-            opacity: .49,
-            color: Color(0xFF14B8A6),
-          ),
-          (
-            behind: 26,
-            vertical: 0,
-            size: 3.5,
-            opacity: .43,
-            color: Color(0xFF2563EB),
-          ),
-          (
-            behind: 28,
-            vertical: -4,
-            size: 2,
-            opacity: .34,
-            color: Color(0xFFFBBF24),
-          ),
-          (
-            behind: 29,
-            vertical: 4,
-            size: 2,
-            opacity: .34,
-            color: Color(0xFF38BDF8),
-          ),
-          (
-            behind: 32,
-            vertical: -1,
-            size: 2.5,
-            opacity: .28,
-            color: Color(0xFF14B8A6),
-          ),
-          (
-            behind: 35,
-            vertical: 2,
-            size: 1.5,
-            opacity: .22,
-            color: Color(0xFFFBBF24),
-          ),
-          (
-            behind: 37,
-            vertical: -3,
-            size: 1.5,
-            opacity: .18,
-            color: Color(0xFF60A5FA),
-          ),
-        ];
-    for (var i = particles.length - 1; i >= 0; i--) {
-      final age = progress - i * .023;
-      if (age < 0 || age > .50) continue;
-      final life = age / .50;
-      final distanceBehind = 8 + life * 52;
-      final spread = .45 + life * 2.1;
-      final vertical = math.sin(i * 2.1) * spread;
-      final particleSize = 4.2 - life * 2.5 + (i % 2) * .25;
-      final opacity = math.pow(1 - life, 1.65).toDouble() * .82;
-      final color = switch (i % 5) {
-        0 => const Color(0xFF14B8A6),
-        1 => const Color(0xFF06B6D4),
-        2 => const Color(0xFF38BDF8),
-        3 => const Color(0xFF60A5FA),
-        _ => life > .72 ? const Color(0xFFFBBF24) : const Color(0xFF60A5FA),
-      };
-      canvas.drawRect(
-        Rect.fromLTWH(
-          headX - distanceBehind,
-          centerY + vertical - particleSize / 2,
-          particleSize,
-          particleSize,
-        ),
-        Paint()
-          ..color = color.withValues(alpha: opacity)
-          ..isAntiAlias = false,
-      );
-    }
-
-    _robotGlyph.paint(
-      canvas,
-      Offset(headX - _robotGlyph.width / 2, centerY - _robotGlyph.height / 2),
-    );
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _GenerationMeteorPainter oldDelegate) {
-    return oldDelegate.progress != progress;
-  }
-}
-
-class _TypingIndicator extends StatefulWidget {
-  @override
-  State<_TypingIndicator> createState() => _TypingIndicatorState();
-}
-
-class _TypingIndicatorState extends State<_TypingIndicator>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (context, _) {
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(3, (i) {
-            final delay = i * 0.3;
-            final t = (_ctrl.value - delay).clamp(0.0, 1.0);
-            final opacity = (t < 0.5 ? t * 2 : (1 - t) * 2).clamp(0.3, 1.0);
-            return Container(
-              width: 6,
-              height: 6,
-              margin: const EdgeInsets.only(right: 3),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: opacity),
-                shape: BoxShape.circle,
-              ),
-            );
-          }),
-        );
-      },
     );
   }
 }
@@ -6840,8 +6809,11 @@ class _InputAreaState extends ConsumerState<_InputArea> {
                       bottom: 8,
                       child: _ContextUsageButton(
                         usage: _contextUsageWithModelLimit(
-                          widget.contextUsage,
-                          widget.selectedModel?.contextLimit,
+                          widget.contextUsage ??
+                              ((widget.sessionId?.isEmpty ?? true)
+                                  ? const ContextUsageInfo(contextTokens: 0)
+                                  : null),
+                          widget.selectedModel,
                         ),
                         draftTokens: _draftTokenEstimate,
                         configuredThresholdPercent:
@@ -9162,9 +9134,14 @@ String _formatDuration(Duration duration) {
 
 ContextUsageInfo? _contextUsageWithModelLimit(
   ContextUsageInfo? usage,
-  int? modelLimit,
+  ModelInfo? model,
 ) {
-  return ContextUsageInfo.withModelLimit(usage, modelLimit);
+  return ContextUsageInfo.withModelLimit(
+    usage,
+    model?.contextLimit,
+    selectedProviderID: model?.providerID,
+    selectedModelID: model?.modelID,
+  );
 }
 
 String _formatTime(DateTime time) {
@@ -9347,8 +9324,7 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                       child: Row(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.baseline,
-                                        textBaseline:
-                                            TextBaseline.alphabetic,
+                                        textBaseline: TextBaseline.alphabetic,
                                         children: [
                                           Flexible(
                                             child: Text(
@@ -9402,6 +9378,24 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
   }
 }
 
+@visibleForTesting
+Widget buildContextUsageTestSurface(
+  ContextUsageInfo? usage,
+  ModelInfo? model,
+) => MaterialApp(
+  home: Scaffold(
+    body: _ContextUsageButton(
+      usage: _contextUsageWithModelLimit(usage, model),
+      draftTokens: 0,
+      configuredThresholdPercent: 80,
+      savingThreshold: false,
+      canCompact: false,
+      onCompact: () {},
+      onSaveThreshold: (_) {},
+    ),
+  ),
+);
+
 class _ContextUsageButton extends StatelessWidget {
   final ContextUsageInfo? usage;
   final int draftTokens;
@@ -9421,7 +9415,7 @@ class _ContextUsageButton extends StatelessWidget {
     required this.onSaveThreshold,
   });
 
-  bool get _hasRealUsage => (usage?.knownContextTokens ?? 0) > 0;
+  bool get _hasRealUsage => usage?.hasContextMeasurement ?? false;
 
   int get _contextTokens => _hasRealUsage ? usage!.knownContextTokens : 0;
 
@@ -9489,7 +9483,7 @@ class _ContextUsageButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = !_hasRealUsage || _contextLimit <= 0
-        ? null
+        ? 0.0
         : (_percent / 100).clamp(0, 1).toDouble();
     return Tooltip(
       message: '上下文用量',
@@ -9595,7 +9589,7 @@ class _ContextUsagePanelState extends State<_ContextUsagePanel> {
       widget.usage?.compactionThresholdPercent ??
       widget.configuredThresholdPercent.clamp(1, 100).toDouble();
   String _formatTokens(int? value) {
-    if (value == null || value <= 0) return '--';
+    if (value == null || value < 0) return '--';
     if (value >= 1000) {
       final k = value / 1000;
       return '${k >= 10 ? k.toStringAsFixed(0) : k.toStringAsFixed(1)}k';
@@ -9604,7 +9598,7 @@ class _ContextUsagePanelState extends State<_ContextUsagePanel> {
   }
 
   String _formatPercent(num? value) {
-    if (value == null || value <= 0) return '--';
+    if (value == null || value < 0) return '--';
     return '${value.toStringAsFixed(value >= 10 ? 0 : 1)}%';
   }
 
@@ -9612,8 +9606,8 @@ class _ContextUsagePanelState extends State<_ContextUsagePanel> {
     if (widget.contextLimit <= 0) {
       return '等待统计';
     }
-    if (widget.contextTokens <= 0) {
-      return '等待用量';
+    if (!(widget.usage?.hasContextMeasurement ?? false)) {
+      return '暂无统计';
     }
     if (widget.percent >= _activeThresholdPercent) return '需要压缩';
     if (widget.percent >= _activeThresholdPercent - 10) return '接近阈值';
@@ -9640,7 +9634,9 @@ class _ContextUsagePanelState extends State<_ContextUsagePanel> {
     if (widget.contextLimit <= 0) {
       return '等待后端返回模型限制';
     }
-    return '圆环显示模型真实上下文使用比例，自动压缩阈值单独计算。';
+    return widget.usage?.compactionThresholdTokens == null
+        ? '按所选模型窗口计算占比；实际压缩阈值将在下次请求时确认。'
+        : '圆环显示最近一次上下文统计占比，自动压缩阈值单独计算。';
   }
 
   @override
@@ -9657,8 +9653,8 @@ class _ContextUsagePanelState extends State<_ContextUsagePanel> {
     final overThreshold = rawRemaining != null && rawRemaining <= 0;
     final hintText = widget.contextLimit <= 0
         ? '等待用量更新后，会显示自动压缩距离。'
-        : widget.contextTokens <= 0
-        ? '等待用量更新后显示真实上下文比例。'
+        : !(widget.usage?.hasContextMeasurement ?? false)
+        ? '暂无历史用量统计，下一次模型回复后更新。'
         : overThreshold
         ? '当前上下文已超过真实压缩阈值，下一次发送会保留摘要和最近对话。'
         : '当前使用 ${_formatPercent(widget.percent)}，自动压缩阈值 ${_formatPercent(_activeThresholdPercent)}。';
@@ -9734,8 +9730,9 @@ class _ContextUsagePanelState extends State<_ContextUsagePanel> {
                         CircularProgressIndicator(
                           value:
                               widget.contextLimit <= 0 ||
-                                  widget.contextTokens <= 0
-                              ? null
+                                  !(widget.usage?.hasContextMeasurement ??
+                                      false)
+                              ? 0.0
                               : (widget.percent / 100).clamp(0, 1).toDouble(),
                           strokeWidth: 7,
                           backgroundColor: AppColors.borderLight,
@@ -9746,7 +9743,7 @@ class _ContextUsagePanelState extends State<_ContextUsagePanel> {
                         Text(
                           widget.contextLimit <= 0
                               ? '--'
-                              : widget.contextTokens <= 0
+                              : !(widget.usage?.hasContextMeasurement ?? false)
                               ? '--'
                               : _formatPercent(widget.percent),
                           style: const TextStyle(

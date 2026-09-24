@@ -1,13 +1,13 @@
 import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import path from "node:path"
-import type { HistoryEvent } from "./session-history"
+import type { HistoryEvent, HistoryPage } from "./session-history"
 
 /** Durable, append-only source for the events shown in the chat UI. */
 export type DisplayEvent = Omit<HistoryEvent, "sequence"> & { sequence?: number }
 
 const databases = new Map<string, Database>()
-const caches = new Map<string, { events: DisplayEvent[]; root: string; sessionID: string }>()
+const importedSessions = new Set<string>()
 const DISPLAY_PAYLOAD_KEYS = new Set([
   "task_id", "session_id", "content", "message", "field", "sent_at",
   "metadata", "tool", "plan", "error", "attempt", "goal_id", "objective",
@@ -69,6 +69,7 @@ function db(root: string) {
     );
     CREATE INDEX IF NOT EXISTS display_event_session_idx ON display_event(session_id, sequence, id);
     CREATE INDEX IF NOT EXISTS display_event_task_idx ON display_event(task_id, sequence);
+    CREATE INDEX IF NOT EXISTS display_event_task_type_idx ON display_event(task_id, type);
   `)
   databases.set(root, database)
   return database
@@ -121,8 +122,7 @@ export function displayEventFromTaskEnvelope(type: string, payload: Record<strin
 export function recordTaskDisplayEvent(root: string, type: string, payload: Record<string, unknown>): DisplayEvent | undefined {
   const event = displayEventFromTaskEnvelope(type, payload)
   if (!event || !event.session_id) return undefined
-  const key = cacheKey(root, event.session_id)
-  const cached = caches.get(key) ?? { events: loadEvents(root, event.session_id), root, sessionID: event.session_id }
+  ensureLegacyImported(root, event.session_id)
   const database = db(root)
   const row = database.prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM display_event WHERE task_id = ?").get(event.task_id) as { sequence?: number } | undefined
   const sequence = Number(row?.sequence ?? 1)
@@ -135,16 +135,73 @@ export function recordTaskDisplayEvent(root: string, type: string, payload: Reco
     event.sent_at,
     JSON.stringify(stored),
   )
-  cached.events.push(stored)
-  caches.set(key, cached)
   return stored
 }
 
 export async function readSessionDisplayLog(root: string, sessionID: string, taskID?: string): Promise<DisplayEvent[]> {
-  const key = cacheKey(root, sessionID)
-  const cached = caches.get(key)
-  const events = cached ? cached.events : loadEvents(root, sessionID)
-  return events.filter((event) => !taskID || event.task_id === taskID).map((event) => ({ ...event }))
+  ensureLegacyImported(root, sessionID)
+  const database = db(root)
+  // Do not retain or scan every previous task when a single task is requested.
+  const rows = taskID
+    ? database.prepare("SELECT data FROM display_event WHERE session_id = ? AND task_id = ? ORDER BY sequence").all(sessionID, taskID)
+    : database.prepare("SELECT data FROM display_event WHERE session_id = ? ORDER BY id").all(sessionID)
+  return (rows as Array<{ data: string }>).flatMap((row) => parseEvent(row.data))
+}
+
+/** A durable task log with its start marker (or terminal legacy log) can be
+ * paged directly even while running. Never reconstruct the full model session
+ * and all child sessions for every page of an active task. */
+export function readTaskDisplayPage(root: string, sessionID: string, taskID: string, cursor = "", limit = 200): HistoryPage | undefined {
+  if (!taskID) return undefined
+  ensureLegacyImported(root, sessionID)
+  const database = db(root)
+  const recorded = database.prepare("SELECT 1 FROM display_event WHERE task_id = ? AND session_id = ? AND type IN ('started', 'completed', 'failed', 'cancelled') LIMIT 1").get(taskID, sessionID)
+  if (!recorded) return undefined
+  const after = Math.max(0, Number.parseInt(cursor || "0", 10) || 0)
+  const size = Math.min(Math.max(limit, 1), 200)
+  // Older runtimes stored every token separately, often hundreds of thousands
+  // of reasoning rows. Compact only adjacent deltas and use the last consumed
+  // durable sequence as cursor, so tools/rounds keep their original positions.
+  const rows = database.prepare("SELECT data FROM display_event WHERE task_id = ? AND session_id = ? AND sequence > ? ORDER BY sequence LIMIT ?").iterate(taskID, sessionID, after, 16_385) as Iterable<{ data: string }>
+  const events: HistoryEvent[] = []
+  let consumed = 0
+  let bytes = 0
+  let hasMore = false
+  for (const row of rows) {
+    if (consumed >= 16_384 || bytes >= 2 * 1024 * 1024) {
+      hasMore = true
+      break
+    }
+    const event = parseEvent(row.data)[0]
+    if (!event?.sequence) return undefined
+    const previous = events.at(-1)
+    const merge = previous?.type === "delta" && event.type === "delta" &&
+      previous.field === event.field && previous.session_id === event.session_id &&
+      typeof previous.content === "string" && typeof event.content === "string" &&
+      previous.content.length + event.content.length <= 16_384 &&
+      JSON.stringify(previous.metadata) === JSON.stringify(event.metadata)
+    if (!merge && events.length >= size) {
+      hasMore = true
+      break
+    }
+    consumed++
+    bytes += row.data.length * 2
+    if (merge) {
+      previous!.content += event.content!
+      previous!.sequence = event.sequence
+    } else {
+      events.push(event as HistoryEvent)
+    }
+  }
+  return {
+    events,
+    next_cursor: hasMore ? String(events.at(-1)?.sequence ?? after) : "",
+    has_more: hasMore,
+    complete: !hasMore,
+    error_code: "",
+    source_sequence_start: events[0]?.sequence ?? 0,
+    source_sequence_end: events.at(-1)?.sequence ?? 0,
+  }
 }
 
 // Retained for compatibility with existing callers; writes are now immediate.
@@ -163,6 +220,14 @@ export function sequenceDisplayEvents(events: DisplayEvent[], taskID: string): H
     task_id: event.task_id || taskID,
     sequence: event.sequence ?? ++fallback,
   }))
+}
+
+function ensureLegacyImported(root: string, sessionID: string) {
+  const key = cacheKey(root, sessionID)
+  if (importedSessions.has(key)) return
+  const exists = db(root).prepare("SELECT 1 FROM display_event WHERE session_id = ? LIMIT 1").get(sessionID)
+  if (!exists) loadEvents(root, sessionID)
+  importedSessions.add(key)
 }
 
 function loadEvents(root: string, sessionID: string): DisplayEvent[] {

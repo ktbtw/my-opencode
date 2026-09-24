@@ -1,6 +1,7 @@
 import 'package:chat_codex_app/core/notifications/app_notification_controller.dart';
 import 'package:chat_codex_app/core/notifications/app_notification_host.dart';
 import 'package:chat_codex_app/core/notifications/app_notification_model.dart';
+import 'package:chat_codex_app/core/notifications/app_notification_sync.dart';
 import 'package:chat_codex_app/core/notifications/app_notification_repository.dart';
 import 'package:chat_codex_app/core/services/app_navigation.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,137 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
 void main() {
+  testWidgets(
+    'switch progress over a modal can collapse and close during remote updates',
+    (tester) async {
+      final container = await _pumpHost(
+        tester,
+        repository: _MemoryRepository(),
+      );
+      final controller = container.read(
+        appNotificationControllerProvider.notifier,
+      );
+      final dialog = showDialog<void>(
+        context: tester.element(find.text('页面内容')),
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(title: Text('切换检测')),
+      );
+      final record = controller.start(
+        operationId: 'semantic-preflight:job',
+        title: '正在切换 Agent 助手',
+        message: '处理中',
+        scope: AppNotificationScope.synced,
+        progressMode: AppNotificationProgressMode.determinate,
+        progress: .03,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byIcon(Icons.keyboard_arrow_up_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      controller.applyRemoteChange(
+        AppNotificationRemoteChange(
+          version: 1,
+          operationId: record.operationId,
+          record: record.copyWith(
+            progress: .5,
+            updatedAt: record.updatedAt.add(const Duration(seconds: 1)),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(controller.state.collapsed, isTrue);
+      expect(
+        find.byKey(const ValueKey('collapsed-notification-button')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byIcon(Icons.close_rounded));
+      await tester.pump();
+      controller.applyRemoteChange(
+        AppNotificationRemoteChange(
+          version: 2,
+          operationId: record.operationId,
+          record: record.copyWith(
+            progress: .7,
+            updatedAt: record.updatedAt.add(const Duration(seconds: 2)),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(controller.state.active, isEmpty);
+      expect(find.text('切换检测'), findsOneWidget);
+      Navigator.of(tester.element(find.text('切换检测'))).pop();
+      await tester.pumpAndSettle();
+      await dialog;
+      await _disposeHost(tester, container);
+    },
+  );
+
+  testWidgets('island fits a narrow screen and honors reduced motion', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final container = await _pumpHost(
+      tester,
+      repository: _MemoryRepository(),
+      reduced: true,
+      scale: 2,
+    );
+    final controller = container.read(
+      appNotificationControllerProvider.notifier,
+    );
+    controller.start(
+      operationId: 'narrow',
+      title: '这是一条很长的任务通知标题',
+      message: '处理中',
+    );
+    controller.collapse();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(tester.takeException(), isNull);
+    final rect = tester.getRect(
+      find.byKey(const ValueKey('collapsed-notification-button')),
+    );
+    expect(rect.left, greaterThanOrEqualTo(0));
+    expect(rect.right, lessThanOrEqualTo(320));
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await _disposeHost(tester, container);
+  });
+
+  testWidgets(
+    'read notification disappears from island and remains in history',
+    (tester) async {
+      final container = await _pumpHost(
+        tester,
+        repository: _MemoryRepository(),
+      );
+      final controller = container.read(
+        appNotificationControllerProvider.notifier,
+      );
+      controller.start(operationId: 'read', title: '待处理', message: '执行中');
+      controller.collapse();
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('collapsed-notification-button')),
+        findsOneWidget,
+      );
+      controller.markRead('read');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('collapsed-notification-button')),
+        findsNothing,
+      );
+      expect(controller.state.active.single.unread, isFalse);
+      controller.openCenter();
+      await tester.pump();
+      expect(find.text('待处理'), findsOneWidget);
+      await _disposeHost(tester, container);
+    },
+  );
+
   testWidgets('full notification collapses into island and expands again', (
     tester,
   ) async {
@@ -39,18 +171,21 @@ void main() {
     expect(find.text('68%'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.keyboard_arrow_up_rounded));
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(controller.state.collapsed, isTrue);
     final collapsedButton = find.byKey(
       const ValueKey('collapsed-notification-button'),
     );
     expect(collapsedButton, findsOneWidget);
-    expect(tester.getSize(collapsedButton), const Size.square(56));
+    expect(tester.getSize(collapsedButton).width, 286);
+    expect(tester.getSize(collapsedButton).height, lessThan(64));
     expect(find.text('1 个任务进行中'), findsNothing);
 
     await tester.tap(collapsedButton);
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(controller.state.collapsed, isFalse);
     expect(find.text('正在加载运行时与设备配置'), findsOneWidget);
@@ -216,7 +351,8 @@ void main() {
 
     expect(find.text('正在切换 Agent 助手'), findsOneWidget);
     await tester.tap(find.byIcon(Icons.keyboard_arrow_up_rounded));
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(controller.state.collapsed, isTrue);
     expect(
@@ -297,7 +433,8 @@ void main() {
     await tester.pump();
 
     await tester.tap(find.byTooltip('通知中心').last);
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('当前任务'), findsOneWidget);
 
     await tester.tap(find.text('最近记录'));
@@ -348,7 +485,8 @@ void main() {
       kind: AppNotificationKind.installation,
     );
     controller.openCenter();
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('正在下载 IDA 运行时'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -431,6 +569,8 @@ void main() {
 Future<ProviderContainer> _pumpHost(
   WidgetTester tester, {
   required AppNotificationRepository repository,
+  bool reduced = false,
+  double scale = 1,
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -441,8 +581,13 @@ Future<ProviderContainer> _pumpHost(
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
-        builder: (context, child) =>
-            AppNotificationHost(child: child ?? const SizedBox.shrink()),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            disableAnimations: reduced,
+            textScaler: TextScaler.linear(scale),
+          ),
+          child: AppNotificationHost(child: child ?? const SizedBox.shrink()),
+        ),
         home: const Scaffold(
           appBar: _TestTopBar(),
           body: Center(child: Text('页面内容')),

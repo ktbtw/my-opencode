@@ -12,9 +12,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late Directory logDirectory;
+  final logDirectories = <Directory>[];
 
   setUp(() async {
     logDirectory = await Directory.systemTemp.createTemp('chat-queue-log-');
+    logDirectories.add(logDirectory);
     final logFile = File('${logDirectory.path}/test.log');
     await logFile.writeAsString('');
     SharedPreferences.setMockInitialValues({
@@ -24,11 +26,1094 @@ void main() {
     await AppStorage.init();
   });
 
-  tearDown(() async {
-    if (await logDirectory.exists()) {
-      await logDirectory.delete(recursive: true);
+  // Diagnostic writes are intentionally asynchronous; keep their directories
+  // alive until the suite finishes rather than racing each test's teardown.
+  tearDownAll(() async {
+    for (final directory in logDirectories) {
+      if (await directory.exists()) await directory.delete(recursive: true);
     }
   });
+
+  test(
+    'suspending flushes accepted batched text before dedupe advances',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('flush', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'mac',
+        projectId: 'p',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      repository.taskEvents('flush').add({
+        'type': 'delta',
+        'sequence': 1,
+        'content': '切后台前的尾字',
+      });
+      await Future<void>.delayed(Duration.zero);
+      notifier.markAppBackgrounded();
+      expect(_agentMessage(notifier, 'flush').content, '切后台前的尾字');
+    },
+  );
+
+  test(
+    'a stable recent SSE suffix is replaced by the full recovered body',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('suffix', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'mac',
+        projectId: 'p',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      repository.taskEvents('suffix').add({
+        'type': 'delta',
+        'sequence': 5,
+        'content': '尾部',
+      });
+      await _eventually(
+        () => _agentMessage(notifier, 'suffix').content == '尾部',
+      );
+      notifier.markAppBackgrounded();
+      repository.snapshots['suffix'] = const TaskEventSnapshot(
+        text: '缺失的开头及尾部',
+      );
+      await notifier.reconcileAfterResume();
+      await _eventually(
+        () =>
+            _agentMessage(notifier, 'suffix').historyDetails ==
+            HistoryDetailsState.none,
+      );
+      final reply = _agentMessage(notifier, 'suffix');
+      expect(reply.content, '缺失的开头及尾部');
+      expect(
+        reply.blocks
+            .where((b) => b.type == ChatMessageBlockType.text)
+            .map((b) => b.text)
+            .join(),
+        reply.content,
+      );
+    },
+  );
+
+  for (final resumed in [false, true]) {
+    test(
+      'slow active history still restores body after UI deadline resumed=$resumed',
+      () async {
+        final repository = _FakeChatRepository()
+          ..history = [_task('late-body', status: TaskStatus.running)];
+        final notifier = ChatNotifier(
+          repo: repository,
+          agentId: 'mac',
+          projectId: 'project',
+        )..activeHistoryHydrationTimeout = const Duration(milliseconds: 10);
+        addTearDown(() async {
+          notifier.dispose();
+          await repository.dispose();
+        });
+        if (resumed) {
+          await notifier.loadSession('session-1');
+          notifier.markAppBackgrounded();
+        }
+        repository.snapshotCompleter = Completer<TaskEventSnapshot>();
+        if (resumed) {
+          await notifier.reconcileAfterResume();
+        } else {
+          await notifier.loadSession('session-1');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+        expect(notifier.state.canStop, isTrue);
+        expect(
+          _agentMessage(notifier, 'late-body').historyDetails,
+          HistoryDetailsState.loading,
+        );
+        repository.snapshotCompleter!.complete(
+          const TaskEventSnapshot(
+            text: '后台已经输出的正文',
+            blocks: [ChatMessageBlock.text(id: 'restored', text: '后台已经输出的正文')],
+          ),
+        );
+        await _eventually(
+          () => _agentMessage(notifier, 'late-body').content == '后台已经输出的正文',
+        );
+        final reply = _agentMessage(notifier, 'late-body');
+        expect(
+          reply.blocks
+              .where((b) => b.type == ChatMessageBlockType.text)
+              .map((b) => b.text)
+              .join(),
+          reply.content,
+        );
+        expect(reply.historyDetails, HistoryDetailsState.none);
+        expect(reply.streamRecovery, StreamRecovery.following);
+      },
+    );
+  }
+
+  test(
+    'incomplete history shows an available prefix without claiming completion',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('prefix', status: TaskStatus.running)]
+        ..snapshots['prefix'] = const TaskEventSnapshot(
+          complete: false,
+          text: '已收到的正文',
+        );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'mac',
+        projectId: 'p',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final reply = _agentMessage(notifier, 'prefix');
+      expect(reply.content, '已收到的正文');
+      expect(reply.historyDetails, HistoryDetailsState.partial);
+      expect(notifier.state.canStop, isTrue);
+    },
+  );
+
+  test('slow recovery remains isolated between two agents', () async {
+    final a = _FakeChatRepository()
+      ..history = [_task('a', status: TaskStatus.running)]
+      ..snapshotCompleter = Completer<TaskEventSnapshot>();
+    final b = _FakeChatRepository()
+      ..history = [_task('b', status: TaskStatus.running)]
+      ..snapshots['b'] = const TaskEventSnapshot(text: 'B 正文');
+    final first = ChatNotifier(repo: a, agentId: 'mac', projectId: 'p1')
+      ..activeHistoryHydrationTimeout = const Duration(milliseconds: 10);
+    final second = ChatNotifier(repo: b, agentId: 'win', projectId: 'p2');
+    addTearDown(() async {
+      first.dispose();
+      second.dispose();
+      await a.dispose();
+      await b.dispose();
+    });
+    await Future.wait([
+      first.loadSession('session-1'),
+      second.loadSession('session-1'),
+    ]);
+    expect(_agentMessage(second, 'b').content, 'B 正文');
+    a.snapshotCompleter!.complete(const TaskEventSnapshot(text: 'A 正文'));
+    await _eventually(() => _agentMessage(first, 'a').content == 'A 正文');
+    expect(_agentMessage(second, 'b').content, 'B 正文');
+  });
+
+  test(
+    'late failed retry status cannot restore a hint on a closed round',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('retry-race', status: TaskStatus.running)]
+        ..snapshots['retry-race'] = const TaskEventSnapshot(complete: false);
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      repository.taskReadCompleter = Completer<TaskModel>();
+      final retry = notifier.retryHistoryDetails('retry-race');
+      final events = repository.taskEvents('retry-race');
+      events.add({'type': 'delta', 'content': '第一段'});
+      events.add({
+        'type': 'input_applied',
+        'content': '构建完成',
+        'metadata': {
+          'queue_item_id': 'job-retry',
+          'injection_version': 1,
+          'source': 'background_job',
+          'context_type': 'backgroundJob',
+        },
+      });
+      events.add({'type': 'delta', 'content': '第二段'});
+      await _eventually(() => notifier.state.messages.last.content == '第二段');
+      repository.taskReadCompleter!.completeError(StateError('offline'));
+      await retry;
+      final replies = notifier.state.messages.where(
+        (m) => m.role == MessageRole.agent,
+      );
+      expect(
+        replies.every((m) => m.historyDetails == HistoryDetailsState.none),
+        isTrue,
+      );
+      expect(notifier.state.canStop, isTrue);
+    },
+  );
+
+  for (final complete in [false, true]) {
+    test(
+      'late history complete=$complete cannot reopen a closed background round',
+      () async {
+        final repository = _FakeChatRepository()
+          ..history = [_task('round-race', status: TaskStatus.running)]
+          ..snapshotCompleter = Completer<TaskEventSnapshot>();
+        final notifier = ChatNotifier(
+          repo: repository,
+          agentId: 'agent-1',
+          projectId: 'project-1',
+        );
+        addTearDown(() async {
+          notifier.dispose();
+          await repository.dispose();
+        });
+        final load = notifier.loadSession('session-1');
+        await _eventually(
+          () => repository.snapshotReads.contains('round-race'),
+        );
+        final events = repository.taskEvents('round-race');
+        events.add({'type': 'delta', 'content': '第一段'});
+        await _eventually(() => notifier.state.messages.last.content == '第一段');
+        events.add({
+          'type': 'input_applied',
+          'content': '构建完成',
+          'metadata': {
+            'queue_item_id': 'job-race',
+            'injection_version': 1,
+            'source': 'background_job',
+            'context_type': 'backgroundJob',
+          },
+        });
+        events.add({'type': 'delta', 'content': '第二段'});
+        await _eventually(() => notifier.state.messages.last.content == '第二段');
+        repository.snapshotCompleter!.complete(
+          TaskEventSnapshot(complete: complete, text: '过期正文'),
+        );
+        await load;
+        final replies = notifier.state.messages
+            .where((m) => m.role == MessageRole.agent)
+            .toList();
+        expect(replies.map((m) => m.content), ['第一段', '第二段']);
+        expect(replies.first.state, MessageState.done);
+        expect(replies.first.historyDetails, HistoryDetailsState.none);
+        expect(replies.first.streamRecovery, StreamRecovery.none);
+        expect(replies.last.state, MessageState.streaming);
+        expect(replies.last.historyDetails, HistoryDetailsState.none);
+        expect(notifier.state.canStop, isTrue);
+      },
+    );
+  }
+
+  test(
+    'background boundary clears old partial history and retry targets the last round only',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('round-partial', status: TaskStatus.running)]
+        ..snapshots['round-partial'] = const TaskEventSnapshot(complete: false);
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      expect(
+        notifier.state.messages.last.historyDetails,
+        HistoryDetailsState.partial,
+      );
+      final events = repository.taskEvents('round-partial');
+      events.add({'type': 'delta', 'content': '第一段'});
+      events.add({
+        'type': 'input_applied',
+        'content': '构建完成',
+        'metadata': {
+          'queue_item_id': 'job-partial',
+          'injection_version': 1,
+          'source': 'background_job',
+          'context_type': 'backgroundJob',
+        },
+      });
+      events.add({'type': 'delta', 'content': '第二段'});
+      await _eventually(() => notifier.state.messages.last.content == '第二段');
+      await notifier.retryHistoryDetails('round-partial');
+      final replies = notifier.state.messages
+          .where((m) => m.role == MessageRole.agent)
+          .toList();
+      expect(replies.first.historyDetails, HistoryDetailsState.none);
+      expect(replies.last.historyDetails, HistoryDetailsState.partial);
+      repository.history = [
+        _task('round-partial', status: TaskStatus.completed, result: '第二段'),
+      ];
+      await notifier.retryHistoryDetails('round-partial');
+      final restored = notifier.state.messages
+          .where((m) => m.role == MessageRole.agent)
+          .toList();
+      expect(restored.first.historyDetails, HistoryDetailsState.none);
+      expect(restored.last.historyDetails, HistoryDetailsState.partial);
+    },
+  );
+
+  test(
+    'live real totals replace estimates and completion replay is idempotent',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('stats-live', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final events = repository.taskEvents('stats-live');
+      events.add({
+        'type': 'delta',
+        'field': 'reasoning',
+        'content': 'thinking' * 1000,
+        'sent_at': '2026-07-28T08:00:01Z',
+      });
+      await _eventually(
+        () => notifier.state.messages.last.thinkingContent.isNotEmpty,
+      );
+      expect(notifier.state.messages.last.tokenCount, isNull);
+      events.add({
+        'type': 'delta',
+        'content': 'answer',
+        'sent_at': '2026-07-28T08:00:02Z',
+        'metadata': {'reply_first_text_ms': 1234},
+      });
+      final usage = {
+        'source': 'llm_usage',
+        'stage': 'request_usage_ready',
+        'message_id': 'one',
+        'total_tokens': 150,
+      };
+      events.add({'type': 'progress', 'metadata': usage});
+      events.add({
+        'type': 'progress',
+        'metadata': {...usage, 'message_id': 'two', 'total_tokens': 250},
+      });
+      events.add({
+        'type': 'completed',
+        'content': 'answer',
+        'usage': {...usage, 'message_id': 'two', 'total_tokens': 250},
+      });
+      await _eventually(() => !notifier.state.taskActive);
+      expect(notifier.state.messages.last.tokenCount, 400);
+      expect(
+        notifier.state.messages.last.firstTokenTime,
+        const Duration(milliseconds: 1234),
+      );
+    },
+  );
+
+  test(
+    'cold history merge keeps cached timing and distinct calls after server reconstruction',
+    () async {
+      final task = _task(
+        'stats-cold',
+        status: TaskStatus.completed,
+        result: 'answer',
+      );
+      final repository = _FakeChatRepository()..history = [task];
+      final local = _RecordingLocalChatStore();
+      final raw = <Map<String, dynamic>>[
+        {
+          'type': 'delta',
+          'content': 'answer',
+          'sent_at': '2026-07-28T08:00:02Z',
+          'metadata': {'reply_first_text_ms': 2345},
+        },
+        {
+          'type': 'progress',
+          'metadata': {
+            'source': 'llm_usage',
+            'message_id': 'a',
+            'total_tokens': 100,
+          },
+        },
+      ];
+      for (var i = 0; i < raw.length; i++) {
+        await local.recordEvent(
+          identity: AppStorage.storageIdentity,
+          taskId: task.taskId,
+          eventKey: '$i',
+          payload: raw[i],
+        );
+      }
+      repository.snapshots[task.taskId] = repository.snapshotFromTaskEvents(
+        task.taskId,
+        [
+          {
+            'type': 'delta',
+            'content': 'answer',
+            '_reconstructed_history': true,
+            'sent_at': '2026-09-19T00:00:00Z',
+          },
+          {
+            'type': 'progress',
+            'metadata': {
+              'source': 'llm_usage',
+              'message_id': 'b',
+              'total_tokens': 200,
+            },
+          },
+        ],
+      );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+        localStore: local,
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final reply = notifier.state.messages.last;
+      expect(reply.tokenCount, 300);
+      expect(reply.firstTokenTime, const Duration(milliseconds: 2345));
+    },
+  );
+
+  test(
+    'cold cache restores context while server history is still pending',
+    () async {
+      final task = _task(
+        'cached-context',
+        status: TaskStatus.completed,
+        result: '已有回复',
+      );
+      final local = _RecordingLocalChatStore()
+        ..cachedTasks = [
+          CachedChatTask(
+            taskId: task.taskId,
+            createdAt: task.createdAt!.toIso8601String(),
+            payload: _taskJson(task),
+          ),
+        ];
+      await local.recordEvent(
+        identity: AppStorage.storageIdentity,
+        taskId: task.taskId,
+        eventKey: 'usage',
+        payload: {
+          'type': 'progress',
+          'sent_at': '2026-09-19T00:00:00Z',
+          'metadata': {
+            'source': 'llm_usage',
+            'context_tokens': 42000,
+            'context_limit': 128000,
+          },
+        },
+      );
+      final repository = _FakeChatRepository()
+        ..historyCompleter = Completer<List<Map<String, dynamic>>>();
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+        localStore: local,
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      final loading = notifier.loadSession('session-1');
+      await _eventually(
+        () => notifier.state.contextUsage?.knownContextTokens == 42000,
+      );
+      expect(repository.historyCompleter!.isCompleted, isFalse);
+      repository.historyCompleter!.complete([_taskJson(task)]);
+      await loading;
+      expect(notifier.state.contextUsage?.knownContextTokens, 42000);
+    },
+  );
+
+  test(
+    'cold session restores usage from history without sending and clears it on a new session',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [
+          _task('task-context', status: TaskStatus.completed, result: '已有回复'),
+        ];
+      repository.snapshots['task-context'] = const TaskEventSnapshot(
+        contextUsage: ContextUsageInfo(
+          contextTokens: 42000,
+          contextLimit: 128000,
+        ),
+      );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      expect(notifier.state.contextUsage?.knownContextTokens, 42000);
+      expect(notifier.state.contextUsage?.contextLimit, 128000);
+      expect(repository.createTaskCompleter.isCompleted, isFalse);
+      notifier.newSession();
+      expect(notifier.state.contextUsage, isNull);
+    },
+  );
+
+  test(
+    'hidden conversation releases streams and restores terminal state',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      await _eventually(() => repository.queueEvents.hasListener);
+      expect(repository.taskEvents('task-1').hasListener, isTrue);
+      notifier.setPageVisible(false);
+      await pumpEventQueue();
+      expect(repository.taskEvents('task-1').hasListener, isFalse);
+      expect(repository.queueEvents.hasListener, isFalse);
+      expect(notifier.state.canStop, isTrue);
+      await notifier.reconcileAfterResume();
+      expect(repository.taskEvents('task-1').hasListener, isFalse);
+      repository.history = [
+        _task(
+          'task-1',
+          status: TaskStatus.completed,
+          result: 'finished while hidden',
+        ),
+      ];
+      notifier.setPageVisible(true);
+      await _eventually(() => !notifier.state.canStop);
+      expect(
+        _agentMessage(notifier, 'task-1').content,
+        'finished while hidden',
+      );
+      expect(repository.queueEvents.hasListener, isTrue);
+    },
+  );
+
+  test('burst output batches UI updates without losing text or stop', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    var updates = 0;
+    final remove = notifier.addListener(
+      (_) => updates++,
+      fireImmediately: false,
+    );
+    addTearDown(remove);
+    final expected = StringBuffer();
+    for (var i = 1; i <= 2000; i++) {
+      expected.write('字$i');
+      repository.taskEvents('task-1').add({
+        'type': 'delta',
+        'field': 'text',
+        'content': '字$i',
+        'sequence': i,
+      });
+    }
+    await _eventually(
+      () => _agentMessage(notifier, 'task-1').content == expected.toString(),
+    );
+    expect(updates, lessThan(20));
+    expect(notifier.state.canStop, isTrue);
+    repository.taskEvents('task-1').add({
+      'type': 'cancelled',
+      'sequence': 2001,
+    });
+    await _eventually(() => !notifier.state.canStop);
+    expect(_agentMessage(notifier, 'task-1').content, expected.toString());
+  });
+
+  test(
+    'a second foreground recovery supersedes a stalled old task read',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      notifier.markAppBackgrounded();
+      final oldRead = Completer<TaskModel>();
+      repository.taskReadCompleter = oldRead;
+      final firstResume = notifier.reconcileAfterResume();
+      await pumpEventQueue();
+      notifier.markAppBackgrounded();
+      repository.taskReadCompleter = null;
+      repository.history = [
+        _task('task-1', status: TaskStatus.completed, result: 'done'),
+      ];
+      await notifier.reconcileAfterResume();
+      expect(notifier.state.canStop, isFalse);
+      oldRead.complete(_task('task-1', status: TaskStatus.running));
+      await firstResume;
+      expect(notifier.state.canStop, isFalse);
+      expect(_agentMessage(notifier, 'task-1').content, 'done');
+    },
+  );
+
+  test('stop feedback is immediate and failure restores retry', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('task-1', status: TaskStatus.running)]
+      ..cancelCompleter = Completer<void>();
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    final stopping = notifier.cancelCurrentTask();
+    expect(notifier.state.cancelRequested, isTrue);
+    expect(_agentMessage(notifier, 'task-1').statusHint, '正在停止');
+    await repository.cancelStarted.future;
+    repository.cancelCompleter!.completeError(
+      StateError('network interrupted'),
+    );
+    await stopping;
+    expect(notifier.state.cancelRequested, isFalse);
+    expect(notifier.state.canStop, isTrue);
+    expect(_agentMessage(notifier, 'task-1').statusHint, isEmpty);
+  });
+
+  test('late cancel response does not resurrect completed task', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('task-1', status: TaskStatus.running)]
+      ..cancelCompleter = Completer<void>();
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    final stopping = notifier.cancelCurrentTask();
+    await pumpEventQueue();
+    repository.history = [
+      _task('task-1', status: TaskStatus.completed, result: 'done'),
+    ];
+    notifier.markAppBackgrounded();
+    await notifier.reconcileAfterResume();
+    repository.cancelCompleter!.complete();
+    await stopping;
+    expect(notifier.state.cancelRequested, isFalse);
+    expect(notifier.state.canStop, isFalse);
+    expect(_agentMessage(notifier, 'task-1').state, MessageState.done);
+  });
+
+  test('history loading alone is not stoppable, a restored stream is', () {
+    expect(const ChatState(sending: true).canStop, isFalse);
+    expect(
+      ChatState(
+        messages: [
+          ChatMessage(
+            id: 'agent-task',
+            role: MessageRole.agent,
+            state: MessageState.streaming,
+            content: '',
+            taskId: 'task',
+            createdAt: DateTime.now(),
+          ),
+        ],
+      ).canStop,
+      isTrue,
+    );
+  });
+
+  test(
+    'cold start keeps restored presentation after snapshot and SSE replay',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      expect(
+        _agentMessage(notifier, 'task-1').streamRecovery,
+        StreamRecovery.following,
+      );
+      repository.taskEvents('task-1').add({
+        'type': 'started',
+        'session_id': 'session-1',
+      });
+      repository.taskEvents('task-1').add({
+        'type': 'delta',
+        'content': '恢复后的输出',
+      });
+      await _eventually(
+        () => _agentMessage(notifier, 'task-1').content.isNotEmpty,
+      );
+      expect(
+        _agentMessage(notifier, 'task-1').streamRecovery,
+        StreamRecovery.following,
+      );
+      expect(notifier.state.canStop, isTrue);
+      await notifier.cancelCurrentTask();
+      expect(repository.cancelledTasks, ['task-1']);
+    },
+  );
+
+  test(
+    'returning to the page cannot leave the reply in syncing forever',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('resume-watchdog', status: TaskStatus.running)];
+      final notifier =
+          ChatNotifier(
+              repo: repository,
+              agentId: 'agent-1',
+              projectId: 'project-1',
+            )
+            ..resumeRecoveryWatchdogTimeout = const Duration(milliseconds: 20)
+            ..recoveryHistoryTimeout = const Duration(milliseconds: 80);
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      notifier.setPageVisible(false);
+      repository.snapshotCompleter = Completer<TaskEventSnapshot>();
+      notifier.setPageVisible(true);
+      await Future<void>.delayed(const Duration(milliseconds: 45));
+      final reply = _agentMessage(notifier, 'resume-watchdog');
+      // The watchdog first leaves the stale syncing state, then the restarted
+      // fake event stream may immediately move it to following.
+      expect(reply.streamRecovery, isNot(StreamRecovery.syncing));
+      expect(notifier.state.taskActive, isTrue);
+      expect(notifier.state.canStop, isTrue);
+      repository.snapshotCompleter!.complete(
+        const TaskEventSnapshot(complete: false),
+      );
+    },
+  );
+
+  test(
+    'resume renders completed body without waiting for frozen history',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      repository.taskEvents('task-1').add({
+        'type': 'delta',
+        'content': '第一段',
+        'sent_at': '2026-07-28T08:00:01Z',
+      });
+      await _eventually(
+        () => _agentMessage(notifier, 'task-1').content == '第一段',
+      );
+      notifier.markAppBackgrounded();
+      repository.history = [
+        _task('task-1', status: TaskStatus.completed, result: '第一段，后台已完成的完整回复'),
+      ];
+      repository.snapshotCompleter = Completer<TaskEventSnapshot>();
+      await notifier.reconcileAfterResume().timeout(
+        const Duration(milliseconds: 300),
+      );
+      final reply = _agentMessage(notifier, 'task-1');
+      expect(reply.state, MessageState.done);
+      expect(reply.content, '第一段，后台已完成的完整回复');
+      expect(
+        reply.blocks
+            .where((b) => b.type == ChatMessageBlockType.text)
+            .map((b) => b.text)
+            .join(),
+        reply.content,
+      );
+      expect(reply.streamRecovery, StreamRecovery.none);
+      expect(reply.historyDetails, HistoryDetailsState.loading);
+      expect(notifier.state.canStop, isFalse);
+      expect(repository.snapshotCompleter!.isCompleted, isFalse);
+      repository.snapshotCompleter!.complete(
+        const TaskEventSnapshot(
+          statistics: ReplyStatistics(requests: {'m1': 234}),
+        ),
+      );
+      await _eventually(
+        () => _agentMessage(notifier, 'task-1').tokenCount == 234,
+      );
+      expect(_agentMessage(notifier, 'task-1').content, reply.content);
+      expect(
+        _agentMessage(notifier, 'task-1').historyDetails,
+        HistoryDetailsState.none,
+      );
+    },
+  );
+
+  test('partial history never overwrites the already completed body', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    notifier.markAppBackgrounded();
+    repository.history = [
+      _task('task-1', status: TaskStatus.completed, result: '完整的最终正文'),
+    ];
+    repository.snapshots['task-1'] = const TaskEventSnapshot(
+      complete: false,
+      text: '只读到开头',
+      blocks: [ChatMessageBlock.text(id: 'partial', text: '只读到开头')],
+    );
+    await notifier.reconcileAfterResume();
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    final reply = _agentMessage(notifier, 'task-1');
+    expect(reply.content, '完整的最终正文');
+    expect(
+      reply.blocks
+          .where((b) => b.type == ChatMessageBlockType.text)
+          .map((b) => b.text)
+          .join(),
+      reply.content,
+    );
+    expect(notifier.replySyncProgress?.description, contains('历史详情未全部载入'));
+    expect(reply.historyDetails, HistoryDetailsState.partial);
+    repository.snapshots['task-1'] = const TaskEventSnapshot(text: '完整的最终正文');
+    await notifier.retryHistoryDetails('task-1');
+    expect(
+      _agentMessage(notifier, 'task-1').historyDetails,
+      HistoryDetailsState.none,
+    );
+    expect(_agentMessage(notifier, 'task-1').content, '完整的最终正文');
+    expect(notifier.state.canStop, isFalse);
+  });
+
+  test(
+    'failed resume status read times out and reconnects without a cold start',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier =
+          ChatNotifier(
+              repo: repository,
+              agentId: 'agent-1',
+              projectId: 'project-1',
+            )
+            ..recoveryStatusTimeout = const Duration(milliseconds: 40)
+            ..terminalReconcileInterval = const Duration(milliseconds: 20);
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      notifier.markAppBackgrounded();
+      final hanging = Completer<TaskModel>();
+      repository.taskReadCompleter = hanging;
+      final watches = repository.taskWatchCount;
+      await notifier.reconcileAfterResume().timeout(
+        const Duration(milliseconds: 300),
+      );
+      expect(repository.taskWatchCount, greaterThan(watches));
+      expect(
+        _agentMessage(notifier, 'task-1').streamRecovery,
+        StreamRecovery.reconnecting,
+      );
+      repository.taskReadCompleter = null;
+      repository.history = [
+        _task('task-1', status: TaskStatus.completed, result: '网络恢复后取到结果'),
+      ];
+      await _eventually(() => !notifier.state.taskActive);
+      expect(_agentMessage(notifier, 'task-1').content, '网络恢复后取到结果');
+      // A timed-out response arriving late must not reopen a completed task.
+      hanging.complete(_task('task-1', status: TaskStatus.running));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(notifier.state.taskActive, isFalse);
+      expect(_agentMessage(notifier, 'task-1').state, MessageState.done);
+    },
+  );
+
+  test(
+    'active resume bounds slow history and reconnects live events',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      )..recoveryHistoryTimeout = const Duration(milliseconds: 30);
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      notifier.markAppBackgrounded();
+      repository.snapshotCompleter = Completer<TaskEventSnapshot>();
+      final watches = repository.taskWatchCount;
+      await notifier.reconcileAfterResume().timeout(
+        const Duration(milliseconds: 300),
+      );
+      expect(repository.taskWatchCount, greaterThan(watches));
+      repository.taskEvents('task-1').add({
+        'type': 'completed',
+        'content': '实时连接已恢复',
+      });
+      await _eventually(() => !notifier.state.taskActive);
+      repository.snapshotCompleter!.complete(
+        const TaskEventSnapshot(text: '过期的内容'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(_agentMessage(notifier, 'task-1').content, '实时连接已恢复');
+    },
+  );
+
+  test(
+    'slow terminal probes do not stack or overwrite a newer resumed task',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      )..terminalReconcileInterval = const Duration(milliseconds: 10);
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final stale = Completer<TaskModel>();
+      repository.taskReadCompleter = stale;
+      final reads = repository.taskReadCount;
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(repository.taskReadCount - reads, 1);
+      notifier.markAppBackgrounded();
+      repository.taskReadCompleter = null;
+      repository.history = [
+        _task('task-1', status: TaskStatus.completed, result: '正确结果'),
+      ];
+      await notifier.reconcileAfterResume();
+      stale.complete(_task('task-1', status: TaskStatus.failed));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(_agentMessage(notifier, 'task-1').state, MessageState.done);
+      expect(_agentMessage(notifier, 'task-1').content, '正确结果');
+    },
+  );
+
+  test('late terminal details do not leak into a different session', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    notifier.markAppBackgrounded();
+    repository.history = [
+      _task('task-1', status: TaskStatus.completed, result: '完成'),
+    ];
+    repository.snapshotCompleter = Completer<TaskEventSnapshot>();
+    await notifier.reconcileAfterResume();
+    notifier.newSession();
+    repository.snapshotCompleter!.complete(
+      const TaskEventSnapshot(text: '旧会话详情'),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(notifier.state.messages, isEmpty);
+  });
+
+  test(
+    'resume reconciles terminal task while queue snapshot is pending',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('task-1', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      repository.queueSnapshotCompleter = Completer<ChatQueueSnapshot>();
+      repository.history = [_task('task-1', status: TaskStatus.failed)];
+      notifier.markAppBackgrounded();
+      try {
+        await notifier.reconcileAfterResume().timeout(
+          const Duration(seconds: 1),
+        );
+        expect(_agentMessage(notifier, 'task-1').state, MessageState.failed);
+        expect(notifier.state.canStop, isFalse);
+      } finally {
+        repository.queueSnapshotCompleter!.complete(
+          const ChatQueueSnapshot(sessionId: 'session-1'),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+    },
+  );
 
   test(
     'rapid second send waits for the first session and enters queue',
@@ -453,6 +1538,98 @@ void main() {
   );
 
   test(
+    'cold start separates unpositioned archive tools from the final body',
+    () async {
+      const tool = ToolCallInfo(
+        id: 'read-1',
+        callId: 'read-1',
+        tool: 'read',
+        status: 'completed',
+      );
+      final repository = _FakeChatRepository()
+        ..history = [
+          _task('legacy', status: TaskStatus.completed, result: '完整正文'),
+        ];
+      repository.snapshots['legacy'] = repository.snapshotFromTaskEvents(
+        'legacy',
+        [
+          {
+            'type': 'tool_updated',
+            'tool': {'id': tool.id, 'tool': tool.tool, 'status': 'completed'},
+          },
+          {'type': 'completed', 'content': '完整正文'},
+        ],
+      );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final reply = _agentMessage(notifier, 'legacy');
+      expect(reply.content, '完整正文');
+      expect(reply.toolCalls.single.tool, 'read');
+      expect(reply.toolOrderKnown, isFalse);
+      expect(reply.historyDetails, HistoryDetailsState.none);
+    },
+  );
+
+  test(
+    'background enrichment restores original text/tool order after immediate result',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('ordered', status: TaskStatus.running)];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      notifier.markAppBackgrounded();
+      repository.history = [
+        _task('ordered', status: TaskStatus.completed, result: '前文后文完整尾部'),
+      ];
+      repository.snapshotCompleter = Completer<TaskEventSnapshot>();
+      await notifier.reconcileAfterResume();
+      expect(_agentMessage(notifier, 'ordered').content, '前文后文完整尾部');
+      repository.snapshotCompleter!.complete(
+        repository.snapshotFromTaskEvents('ordered', [
+          {'type': 'delta', 'content': '前文'},
+          {
+            'type': 'tool_updated',
+            'tool': {'id': 'read', 'tool': 'read', 'status': 'completed'},
+          },
+          {'type': 'delta', 'content': '后文'},
+          {'type': 'completed', 'content': '前文后文完整尾部'},
+        ]),
+      );
+      await _eventually(
+        () =>
+            _agentMessage(notifier, 'ordered').historyDetails ==
+            HistoryDetailsState.none,
+      );
+      final reply = _agentMessage(notifier, 'ordered');
+      expect(reply.toolOrderKnown, isTrue);
+      expect(reply.blocks.map((b) => b.type), [
+        ChatMessageBlockType.text,
+        ChatMessageBlockType.tool,
+        ChatMessageBlockType.text,
+      ]);
+      expect(reply.blocks.first.text, '前文');
+      expect(reply.blocks.last.text, '后文完整尾部');
+      expect(notifier.state.canStop, isFalse);
+    },
+  );
+
+  test(
     'history snapshot keeps tools before body instead of dumping them at the bottom',
     () async {
       const tool = ToolCallInfo(
@@ -651,10 +1828,7 @@ void main() {
         blocks: [
           ChatMessageBlock.tool(id: 'tool_prt_a', tool: firstTool),
           ChatMessageBlock.tool(id: 'tool_prt_b', tool: secondTool),
-          ChatMessageBlock.text(
-            id: 'text_1',
-            text: '先核对上限。再推测试包。测试包已写上。',
-          ),
+          ChatMessageBlock.text(id: 'text_1', text: '先核对上限。再推测试包。测试包已写上。'),
         ],
       );
       final notifier = ChatNotifier(
@@ -735,7 +1909,8 @@ void main() {
         _task(
           'task-xiaomi',
           status: TaskStatus.completed,
-          result: '先核对速通 max 协议的出售开关。协议出售走同一套背包出售。接着核对副本页品质设置。所以副本页去掉金色仍可能卖掉。更长的任务结果用于触发保留当前正文。',
+          result:
+              '先核对速通 max 协议的出售开关。协议出售走同一套背包出售。接着核对副本页品质设置。所以副本页去掉金色仍可能卖掉。更长的任务结果用于触发保留当前正文。',
         ),
       ];
       repository.snapshots['task-xiaomi'] = TaskEventSnapshot(
@@ -936,15 +2111,17 @@ void main() {
         'content': '第一段',
         'sent_at': '2026-07-28T08:00:01Z',
       });
-      repository.taskEvents('task-1').add(
-        _toolUpdated(
-          id: 'prt_1',
-          callId: 'call_abc',
-          tool: 'bash',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:02Z',
-        ),
-      );
+      repository
+          .taskEvents('task-1')
+          .add(
+            _toolUpdated(
+              id: 'prt_1',
+              callId: 'call_abc',
+              tool: 'bash',
+              status: 'running',
+              sentAt: '2026-07-28T08:00:02Z',
+            ),
+          );
       repository.taskEvents('task-1').add({
         'type': 'delta',
         'field': 'text',
@@ -1216,186 +2393,177 @@ void main() {
       expect(agent.toolCalls, hasLength(1));
       expect(agent.toolCalls.single.status, 'completed');
       expect(agent.toolCalls.single.output, 'ok');
+      expect(agent.blocks.where((block) => block.tool != null), hasLength(1));
       expect(
-        agent.blocks.where((block) => block.tool != null),
-        hasLength(1),
+        agent.blocks.singleWhere((block) => block.tool != null).tool!.status,
+        'completed',
       );
-      expect(agent.blocks.singleWhere((block) => block.tool != null).tool!.status, 'completed');
     },
   );
 
-  test(
-    'a later running event does not regress a completed tool',
-    () async {
-      final repository = _FakeChatRepository();
-      repository.history = [_task('task-1', status: TaskStatus.running)];
-      final notifier = ChatNotifier(
-        repo: repository,
-        agentId: 'agent-1',
-        projectId: 'project-1',
-      );
-      addTearDown(() async {
-        notifier.dispose();
-        await repository.dispose();
-      });
+  test('a later running event does not regress a completed tool', () async {
+    final repository = _FakeChatRepository();
+    repository.history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
 
-      await notifier.loadSession('session-1');
-      final events = repository.taskEvents('task-1');
-      events.add(
-        _toolUpdated(
-          id: 'prt_1',
-          callId: 'call_abc',
-          tool: 'read',
-          status: 'completed',
-          output: 'file contents',
-          sentAt: '2026-07-28T08:00:01Z',
-        ),
-      );
-      events.add(
-        _toolUpdated(
-          id: 'prt_1',
-          callId: 'call_abc',
-          tool: 'read',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:02Z',
-        ),
-      );
-      await _eventually(() {
-        final agent = _agentMessage(notifier, 'task-1');
-        return agent.toolCalls.any((tool) => tool.status == 'completed');
-      });
-      await Future<void>.delayed(const Duration(milliseconds: 30));
-
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('task-1');
+    events.add(
+      _toolUpdated(
+        id: 'prt_1',
+        callId: 'call_abc',
+        tool: 'read',
+        status: 'completed',
+        output: 'file contents',
+        sentAt: '2026-07-28T08:00:01Z',
+      ),
+    );
+    events.add(
+      _toolUpdated(
+        id: 'prt_1',
+        callId: 'call_abc',
+        tool: 'read',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:02Z',
+      ),
+    );
+    await _eventually(() {
       final agent = _agentMessage(notifier, 'task-1');
-      expect(agent.toolCalls, hasLength(1));
-      expect(agent.toolCalls.single.status, 'completed');
-      expect(agent.toolCalls.single.output, 'file contents');
-    },
-  );
+      return agent.toolCalls.any((tool) => tool.status == 'completed');
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 30));
 
-  test(
-    'completing one parallel tool leaves the other running',
-    () async {
-      final repository = _FakeChatRepository();
-      repository.history = [_task('task-1', status: TaskStatus.running)];
-      final notifier = ChatNotifier(
-        repo: repository,
-        agentId: 'agent-1',
-        projectId: 'project-1',
-      );
-      addTearDown(() async {
-        notifier.dispose();
-        await repository.dispose();
-      });
+    final agent = _agentMessage(notifier, 'task-1');
+    expect(agent.toolCalls, hasLength(1));
+    expect(agent.toolCalls.single.status, 'completed');
+    expect(agent.toolCalls.single.output, 'file contents');
+  });
 
-      await notifier.loadSession('session-1');
-      final events = repository.taskEvents('task-1');
-      events.add(
-        _toolUpdated(
-          id: 'prt_a',
-          callId: 'call_a',
-          tool: 'glob',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:01Z',
-        ),
-      );
-      events.add(
-        _toolUpdated(
-          id: 'prt_b',
-          callId: 'call_b',
-          tool: 'bash',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:02Z',
-        ),
-      );
-      events.add(
-        _toolUpdated(
-          id: 'prt_a',
-          callId: 'call_a',
-          tool: 'glob',
-          status: 'completed',
-          output: '*.dart',
-          sentAt: '2026-07-28T08:00:03Z',
-        ),
-      );
-      await _eventually(() {
-        final agent = _agentMessage(notifier, 'task-1');
-        return agent.toolCalls.length == 2 &&
-            agent.toolCalls.any((tool) => tool.status == 'completed') &&
-            agent.toolCalls.any((tool) => tool.status == 'running');
-      });
+  test('completing one parallel tool leaves the other running', () async {
+    final repository = _FakeChatRepository();
+    repository.history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
 
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('task-1');
+    events.add(
+      _toolUpdated(
+        id: 'prt_a',
+        callId: 'call_a',
+        tool: 'glob',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:01Z',
+      ),
+    );
+    events.add(
+      _toolUpdated(
+        id: 'prt_b',
+        callId: 'call_b',
+        tool: 'bash',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:02Z',
+      ),
+    );
+    events.add(
+      _toolUpdated(
+        id: 'prt_a',
+        callId: 'call_a',
+        tool: 'glob',
+        status: 'completed',
+        output: '*.dart',
+        sentAt: '2026-07-28T08:00:03Z',
+      ),
+    );
+    await _eventually(() {
       final agent = _agentMessage(notifier, 'task-1');
-      expect(
-        agent.toolCalls.map((tool) => '${tool.tool}:${tool.status}').toList(),
-        ['glob:completed', 'bash:running'],
-      );
-    },
-  );
+      return agent.toolCalls.length == 2 &&
+          agent.toolCalls.any((tool) => tool.status == 'completed') &&
+          agent.toolCalls.any((tool) => tool.status == 'running');
+    });
 
-  test(
-    'input_applied finalizes the previous round of running tools',
-    () async {
-      final repository = _FakeChatRepository();
-      repository.history = [_task('task-1', status: TaskStatus.running)];
-      final notifier = ChatNotifier(
-        repo: repository,
-        agentId: 'agent-1',
-        projectId: 'project-1',
-      );
-      addTearDown(() async {
-        notifier.dispose();
-        await repository.dispose();
-      });
+    final agent = _agentMessage(notifier, 'task-1');
+    expect(
+      agent.toolCalls.map((tool) => '${tool.tool}:${tool.status}').toList(),
+      ['glob:completed', 'bash:running'],
+    );
+  });
 
-      await notifier.loadSession('session-1');
-      final events = repository.taskEvents('task-1');
-      events.add(
-        _toolUpdated(
-          id: 'prt_1',
-          callId: 'call_abc',
-          tool: 'mcp_search',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:01Z',
-        ),
-      );
-      events.add(
-        _toolUpdated(
-          id: 'prt_2',
-          callId: 'call_def',
-          tool: 'bash',
-          status: 'completed',
-          output: 'ok',
-          sentAt: '2026-07-28T08:00:02Z',
-        ),
-      );
-      events.add({
-        'type': 'input_applied',
-        'content': '现在开始第二轮',
-        'metadata': {'queue_item_id': 'queue-1', 'injection_version': 1},
-        'sent_at': '2026-07-28T08:00:03Z',
-      });
-      await _eventually(
-        () => notifier.state.messages.any(
-          (message) => message.id == 'user_insert_queue-1',
-        ),
-      );
+  test('input_applied finalizes the previous round of running tools', () async {
+    final repository = _FakeChatRepository();
+    repository.history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
 
-      final firstAgent = notifier.state.messages.firstWhere(
-        (message) =>
-            message.role == MessageRole.agent && message.taskId == 'task-1',
-      );
-      expect(firstAgent.state, MessageState.done);
-      expect(firstAgent.toolCalls, hasLength(2));
-      expect(firstAgent.toolCalls.every((tool) => tool.isTerminal), isTrue);
-      expect(
-        firstAgent.blocks
-            .where((block) => block.tool != null)
-            .every((block) => block.tool!.isTerminal),
-        isTrue,
-      );
-    },
-  );
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('task-1');
+    events.add(
+      _toolUpdated(
+        id: 'prt_1',
+        callId: 'call_abc',
+        tool: 'mcp_search',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:01Z',
+      ),
+    );
+    events.add(
+      _toolUpdated(
+        id: 'prt_2',
+        callId: 'call_def',
+        tool: 'bash',
+        status: 'completed',
+        output: 'ok',
+        sentAt: '2026-07-28T08:00:02Z',
+      ),
+    );
+    events.add({
+      'type': 'input_applied',
+      'content': '现在开始第二轮',
+      'metadata': {'queue_item_id': 'queue-1', 'injection_version': 1},
+      'sent_at': '2026-07-28T08:00:03Z',
+    });
+    await _eventually(
+      () => notifier.state.messages.any(
+        (message) => message.id == 'user_insert_queue-1',
+      ),
+    );
+
+    final firstAgent = notifier.state.messages.firstWhere(
+      (message) =>
+          message.role == MessageRole.agent && message.taskId == 'task-1',
+    );
+    expect(firstAgent.state, MessageState.done);
+    expect(firstAgent.toolCalls, hasLength(2));
+    expect(firstAgent.toolCalls.every((tool) => tool.isTerminal), isTrue);
+    expect(
+      firstAgent.blocks
+          .where((block) => block.tool != null)
+          .every((block) => block.tool!.isTerminal),
+      isTrue,
+    );
+  });
 
   test(
     'subagent result injection keeps sibling running subagents alive',
@@ -1425,10 +2593,8 @@ void main() {
         _subagentResultApplied('node-a', sentAt: '2026-07-28T08:00:03Z'),
       );
       await _eventually(
-        () => _subagentStatuses(
-          notifier,
-          'task-1',
-        ).contains('node-a:completed'),
+        () =>
+            _subagentStatuses(notifier, 'task-1').contains('node-a:completed'),
       );
 
       expect(_subagentStatuses(notifier, 'task-1'), contains('node-b:running'));
@@ -1522,110 +2688,104 @@ void main() {
     },
   );
 
-  test(
-    'completed event finalizes leftover running tools',
-    () async {
-      final repository = _FakeChatRepository();
-      repository.history = [_task('task-1', status: TaskStatus.running)];
-      final notifier = ChatNotifier(
-        repo: repository,
-        agentId: 'agent-1',
-        projectId: 'project-1',
-      );
-      addTearDown(() async {
-        notifier.dispose();
-        await repository.dispose();
-      });
+  test('completed event finalizes leftover running tools', () async {
+    final repository = _FakeChatRepository();
+    repository.history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
 
-      await notifier.loadSession('session-1');
-      final events = repository.taskEvents('task-1');
-      events.add(
-        _toolUpdated(
-          id: 'prt_1',
-          callId: 'call_abc',
-          tool: 'glob',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:01Z',
-        ),
-      );
-      events.add({
-        'type': 'completed',
-        'content': '第一轮已经结束',
-        'sent_at': '2026-07-28T08:00:02Z',
-      });
-      await _eventually(() => !notifier.state.taskActive);
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('task-1');
+    events.add(
+      _toolUpdated(
+        id: 'prt_1',
+        callId: 'call_abc',
+        tool: 'glob',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:01Z',
+      ),
+    );
+    events.add({
+      'type': 'completed',
+      'content': '第一轮已经结束',
+      'sent_at': '2026-07-28T08:00:02Z',
+    });
+    await _eventually(() => !notifier.state.taskActive);
 
-      final agent = _agentMessage(notifier, 'task-1');
-      expect(agent.state, MessageState.done);
-      expect(agent.toolCalls, hasLength(1));
-      expect(agent.toolCalls.single.status, 'completed');
-    },
-  );
+    final agent = _agentMessage(notifier, 'task-1');
+    expect(agent.state, MessageState.done);
+    expect(agent.toolCalls, hasLength(1));
+    expect(agent.toolCalls.single.status, 'completed');
+  });
 
-  test(
-    'late deltas after completed do not revive generating state',
-    () async {
-      final repository = _FakeChatRepository();
-      repository.history = [_task('task-1', status: TaskStatus.running)];
-      final notifier = ChatNotifier(
-        repo: repository,
-        agentId: 'agent-1',
-        projectId: 'project-1',
-      );
-      addTearDown(() async {
-        notifier.dispose();
-        await repository.dispose();
-      });
+  test('late deltas after completed do not revive generating state', () async {
+    final repository = _FakeChatRepository();
+    repository.history = [_task('task-1', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
 
-      await notifier.loadSession('session-1');
-      final events = repository.taskEvents('task-1');
-      events.add({
-        'type': 'delta',
-        'field': 'text',
-        'content': '第一轮已经写完',
-        'sent_at': '2026-07-28T08:00:01Z',
-      });
-      events.add(
-        _toolUpdated(
-          id: 'prt_1',
-          callId: 'call_abc',
-          tool: 'read',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:02Z',
-        ),
-      );
-      events.add({
-        'type': 'completed',
-        'content': '第一轮已经写完',
-        'sent_at': '2026-07-28T08:00:03Z',
-      });
-      await _eventually(() => !notifier.state.taskActive);
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('task-1');
+    events.add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '第一轮已经写完',
+      'sent_at': '2026-07-28T08:00:01Z',
+    });
+    events.add(
+      _toolUpdated(
+        id: 'prt_1',
+        callId: 'call_abc',
+        tool: 'read',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:02Z',
+      ),
+    );
+    events.add({
+      'type': 'completed',
+      'content': '第一轮已经写完',
+      'sent_at': '2026-07-28T08:00:03Z',
+    });
+    await _eventually(() => !notifier.state.taskActive);
 
-      events.add({
-        'type': 'delta',
-        'field': 'text',
-        'content': '迟到的正文不应再写入',
-        'sent_at': '2026-07-28T08:00:04Z',
-      });
-      events.add(
-        _toolUpdated(
-          id: 'prt_1',
-          callId: 'call_abc',
-          tool: 'read',
-          status: 'running',
-          sentAt: '2026-07-28T08:00:05Z',
-        ),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+    events.add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '迟到的正文不应再写入',
+      'sent_at': '2026-07-28T08:00:04Z',
+    });
+    events.add(
+      _toolUpdated(
+        id: 'prt_1',
+        callId: 'call_abc',
+        tool: 'read',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:05Z',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      final agent = _agentMessage(notifier, 'task-1');
-      expect(agent.state, MessageState.done);
-      expect(agent.content, '第一轮已经写完');
-      expect(agent.content.contains('迟到'), isFalse);
-      expect(agent.toolCalls.single.status, 'completed');
-      expect(notifier.state.taskActive, isFalse);
-    },
-  );
+    final agent = _agentMessage(notifier, 'task-1');
+    expect(agent.state, MessageState.done);
+    expect(agent.content, '第一轮已经写完');
+    expect(agent.content.contains('迟到'), isFalse);
+    expect(agent.toolCalls.single.status, 'completed');
+    expect(notifier.state.taskActive, isFalse);
+  });
 
   test(
     'live stream without completed still closes when getTask is already done',
@@ -1722,8 +2882,7 @@ void main() {
           (message) =>
               message.role == MessageRole.agent && message.taskId == 'task-1',
         );
-        return firstAgent.toolCalls.single.output ==
-            'done after round switch';
+        return firstAgent.toolCalls.single.output == 'done after round switch';
       });
 
       final firstAgent = notifier.state.messages.firstWhere(
@@ -1800,8 +2959,7 @@ void main() {
       });
       await _eventually(() {
         final agent = _agentMessage(notifier, 'task-1');
-        return agent.toolCalls.length == 3 &&
-            agent.content.contains('任务已提交');
+        return agent.toolCalls.length == 3 && agent.content.contains('任务已提交');
       });
 
       final agent = _agentMessage(notifier, 'task-1');
@@ -1890,10 +3048,7 @@ void main() {
       final agent = _agentMessage(notifier, 'task-1');
       expect(agent.state, MessageState.done);
       expect(notifier.state.taskActive, isFalse);
-      expect(
-        agent.toolCalls.every((tool) => !tool.isRunning),
-        isTrue,
-      );
+      expect(agent.toolCalls.every((tool) => !tool.isRunning), isTrue);
     },
   );
 
@@ -2087,6 +3242,7 @@ Future<void> _eventually(bool Function() predicate) async {
 
 class _RecordingLocalChatStore implements LocalChatStore {
   final List<Map<String, dynamic>> _events = [];
+  List<CachedChatTask> cachedTasks = [];
 
   @override
   Future<void> init() async {}
@@ -2111,7 +3267,7 @@ class _RecordingLocalChatStore implements LocalChatStore {
     required String projectId,
     required String sessionId,
     int limit = 20,
-  }) async => const [];
+  }) async => cachedTasks;
 
   @override
   Future<void> saveTasks({
@@ -2161,10 +3317,27 @@ class _FakeChatRepository extends ChatRepository {
   final queueEvents = StreamController<ChatQueueSnapshot>.broadcast();
   final Map<String, StreamController<Map<String, dynamic>>> _taskEvents = {};
   final Map<String, TaskEventSnapshot> snapshots = {};
+  final List<String> snapshotReads = [];
+  final List<String> cancelledTasks = [];
+  Completer<void>? cancelCompleter;
+  final cancelStarted = Completer<void>();
+
+  @override
+  Future<void> cancelTask(String taskId) async {
+    cancelledTasks.add(taskId);
+    if (!cancelStarted.isCompleted) cancelStarted.complete();
+    await cancelCompleter?.future;
+  }
+
   final List<String> queuedTexts = [];
   final List<String> queuedModels = [];
   List<TaskModel> history = const [];
+  Completer<List<Map<String, dynamic>>>? historyCompleter;
   Completer<ChatQueueSnapshot>? queueSnapshotCompleter;
+  Completer<TaskModel>? taskReadCompleter;
+  Completer<TaskEventSnapshot>? snapshotCompleter;
+  int taskReadCount = 0;
+  int taskWatchCount = 0;
   Completer<ChatQueueItem>? insertQueueItemCompleter;
   final insertQueueItemRequested = Completer<void>();
   int queueWatchCount = 0;
@@ -2252,10 +3425,14 @@ class _FakeChatRepository extends ChatRepository {
     int limit = 5,
     DateTime? beforeCreatedAt,
     String? beforeTaskId,
-  }) async => history.take(limit).map(_taskJson).toList(growable: false);
+  }) async => historyCompleter != null
+      ? historyCompleter!.future
+      : history.take(limit).map(_taskJson).toList(growable: false);
 
   @override
   Future<TaskModel> getTask(String taskId) async {
+    taskReadCount++;
+    if (taskReadCompleter != null) return taskReadCompleter!.future;
     for (final task in history) {
       if (task.taskId == taskId) return task;
     }
@@ -2264,11 +3441,14 @@ class _FakeChatRepository extends ChatRepository {
 
   @override
   Future<TaskEventSnapshot> getTaskEventSnapshot(String taskId) async {
+    snapshotReads.add(taskId);
+    if (snapshotCompleter != null) return snapshotCompleter!.future;
     return snapshots[taskId] ?? const TaskEventSnapshot();
   }
 
   @override
   Stream<Map<String, dynamic>> watchTaskEvents(String taskId) {
+    taskWatchCount++;
     return taskEvents(taskId).stream;
   }
 
@@ -2323,6 +3503,7 @@ class _FakeChatRepository extends ChatRepository {
     return insertQueueItemCompleter?.future ?? Future.value(item);
   }
 
+  @override
   Future<void> dispose() async {
     await queueEvents.close();
     for (final controller in _taskEvents.values) {

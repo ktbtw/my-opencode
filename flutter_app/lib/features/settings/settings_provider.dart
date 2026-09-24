@@ -3,6 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:async';
+import 'package:crypto/crypto.dart';
+import '../../core/storage/app_storage.dart';
+import '../../core/services/account_scope.dart';
 import '../../core/config/api_client.dart';
 
 class AppSettings {
@@ -36,6 +40,7 @@ class AppSettings {
   final bool latexRender;
   final bool mermaidRender;
   final bool htmlPreview;
+  final bool continuousReply;
 
   // 统计类
   final bool showFirstTokenTime;
@@ -67,6 +72,7 @@ class AppSettings {
     this.latexRender = true,
     this.mermaidRender = true,
     this.htmlPreview = true,
+    this.continuousReply = false,
     this.showFirstTokenTime = false,
     this.showTokenCount = false,
     this.showWordCount = false,
@@ -91,6 +97,7 @@ class AppSettings {
     bool? latexRender,
     bool? mermaidRender,
     bool? htmlPreview,
+    bool? continuousReply,
     bool? showFirstTokenTime,
     bool? showTokenCount,
     bool? showWordCount,
@@ -111,6 +118,7 @@ class AppSettings {
       latexRender: latexRender ?? this.latexRender,
       mermaidRender: mermaidRender ?? this.mermaidRender,
       htmlPreview: htmlPreview ?? this.htmlPreview,
+      continuousReply: continuousReply ?? this.continuousReply,
       showFirstTokenTime: showFirstTokenTime ?? this.showFirstTokenTime,
       showTokenCount: showTokenCount ?? this.showTokenCount,
       showWordCount: showWordCount ?? this.showWordCount,
@@ -146,20 +154,119 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     'showWordCount': AppSettings.showWordCountSettingKey,
   };
 
-  SettingsNotifier() : super(const AppSettings()) {
+  final String _identity;
+  final Future<Map<String, dynamic>> Function()? _readRemote;
+  final Future<void> Function(Map<String, dynamic>)? _saveRemote;
+  final _localReady = Completer<void>();
+  Future<void> _writes = Future.value();
+  Future<void>? _syncing;
+  final Map<String, int> _revisions = {};
+
+  SettingsNotifier({
+    Future<Map<String, dynamic>> Function()? readRemote,
+    Future<void> Function(Map<String, dynamic>)? saveRemote,
+  }) : _identity = AppStorage.initialized ? AppStorage.storageIdentity : '',
+       _readRemote = readRemote,
+       _saveRemote = saveRemote,
+       super(const AppSettings()) {
     _load();
+  }
+
+  bool get _active =>
+      mounted &&
+      _identity == (AppStorage.initialized ? AppStorage.storageIdentity : '');
+  String _scoped(String key) =>
+      'statistics.${sha256.convert(utf8.encode(_identity))}.$key';
+  Future<void> _enqueue(Future<void> Function() action) {
+    final next = _writes.then((_) => action());
+    _writes = next.catchError((Object _) {});
+    return next;
+  }
+
+  Future<Map<String, dynamic>> _fetchStatistics() =>
+      _readRemote?.call() ??
+      ApiClient.get(
+        '/api/agents/${AppSettings.userSettingsAgentId}/settings',
+        expectedIdentity: _identity,
+      );
+
+  Future<void> _flushStatistics() async {
+    if (_syncing != null) return _syncing;
+    final future = _drainStatistics();
+    _syncing = future;
+    try {
+      await future;
+    } finally {
+      _syncing = null;
+    }
+  }
+
+  Future<void> _drainStatistics() async {
+    final prefs = await SharedPreferences.getInstance();
+    while (_active) {
+      await _writes;
+      final pending = _readPendingStatistics(prefs);
+      if (pending.isEmpty || !_active) return;
+      try {
+        if (_saveRemote != null) {
+          await _saveRemote(pending);
+        } else {
+          await ApiClient.post(
+            '/api/agents/${AppSettings.userSettingsAgentId}/settings',
+            pending,
+            expectedIdentity: _identity,
+          );
+        }
+      } catch (_) {
+        return;
+      }
+      await _enqueue(() async {
+        if (!_active) return;
+        final current = _readPendingStatistics(prefs);
+        for (final entry in pending.entries) {
+          if (current[entry.key] == entry.value) current.remove(entry.key);
+        }
+        await _writePendingStatistics(prefs, current);
+      });
+    }
   }
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!_active) {
+      _localReady.complete();
+      return;
+    }
+    // Migrate the old device-wide values once, without exposing them to the
+    // next account signing in on the same device.
+    const ownerKey = 'statistics_migration_owner_v1';
+    if (!prefs.containsKey(ownerKey)) {
+      await prefs.setString(ownerKey, _identity);
+      for (final key in _statisticsRemoteKeys.keys) {
+        final value = prefs.getBool(key);
+        if (value != null) await prefs.setBool(_scoped(key), value);
+      }
+      final pending = prefs.getString(AppSettings.pendingStatisticsSettingsKey);
+      if (pending != null) {
+        await prefs.setString(
+          _scoped(AppSettings.pendingStatisticsSettingsKey),
+          pending,
+        );
+      }
+    }
+    if (!_active) {
+      _localReady.complete();
+      return;
+    }
     state = AppSettings(
       markdownRender: prefs.getBool('markdownRender') ?? true,
       latexRender: prefs.getBool('latexRender') ?? true,
       mermaidRender: prefs.getBool('mermaidRender') ?? true,
       htmlPreview: prefs.getBool('htmlPreview') ?? true,
-      showFirstTokenTime: prefs.getBool('showFirstTokenTime') ?? false,
-      showTokenCount: prefs.getBool('showTokenCount') ?? false,
-      showWordCount: prefs.getBool('showWordCount') ?? false,
+      continuousReply: prefs.getBool('continuousReply') ?? false,
+      showFirstTokenTime: prefs.getBool(_scoped('showFirstTokenTime')) ?? false,
+      showTokenCount: prefs.getBool(_scoped('showTokenCount')) ?? false,
+      showWordCount: prefs.getBool(_scoped('showWordCount')) ?? false,
       pasteAsFile: prefs.getBool('pasteAsFile') ?? false,
       autoOpenRecentTask:
           prefs.getBool(AppSettings.autoOpenRecentTaskSettingKey) ?? false,
@@ -170,65 +277,68 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       downloadDirectory: prefs.getString(AppSettings.downloadDirectoryKey),
     );
 
+    _localReady.complete();
+    final revisions = Map<String, int>.from(_revisions);
     try {
-      final settings = await ApiClient.get(
-        '/api/agents/${AppSettings.userSettingsAgentId}/settings',
-      );
-      final pendingStatistics = _readPendingStatistics(prefs);
-      final enabled =
-          settings[AppSettings.emailNotificationSettingKey] == 'true';
-      final globalPrompt =
-          (settings[AppSettings.globalPromptSettingKey] as String? ?? '')
-              .trim();
-      final projectMemoryEnabled =
-          settings[AppSettings.projectMemoryEnabledSettingKey] != 'false';
-      final continueAfterCancel =
-          settings[AppSettings.chatQueueContinueAfterCancelSettingKey] ==
-          'true';
-      final orchestrationEnabled =
-          settings[AppSettings.subagentOrchestrationEnabledSettingKey] !=
-          'false';
-      final orchestrationConcurrent = int.tryParse(
-        settings[AppSettings.subagentOrchestrationMaxConcurrentSettingKey]
-                as String? ??
-            '',
-      );
-      final orchestrationRoleModels = _decodeRoleModels(
-        settings[AppSettings.subagentOrchestrationRoleModelsSettingKey]
-                as String? ??
-            '',
-      );
-      final statistics = <String, bool>{};
-      for (final entry in _statisticsRemoteKeys.entries) {
-        if (pendingStatistics.containsKey(entry.value)) continue;
-        final value = _nullableBool(settings[entry.value]);
-        if (value == null) continue;
-        statistics[entry.key] = value;
-        await prefs.setBool(entry.key, value);
-      }
-      await prefs.setBool(AppSettings.emailNotificationEnabledKey, enabled);
-      state = state.copyWith(
-        emailNotificationEnabled: enabled,
-        globalPrompt: globalPrompt,
-        projectMemoryEnabled: projectMemoryEnabled,
-        chatQueueContinueAfterCancel: continueAfterCancel,
-        subagentOrchestrationEnabled: orchestrationEnabled,
-        subagentOrchestrationMaxConcurrent: (orchestrationConcurrent ?? 5)
-            .clamp(1, 5),
-        subagentOrchestrationRoleModels: orchestrationRoleModels,
-        showFirstTokenTime:
-            statistics['showFirstTokenTime'] ?? state.showFirstTokenTime,
-        showTokenCount: statistics['showTokenCount'] ?? state.showTokenCount,
-        showWordCount: statistics['showWordCount'] ?? state.showWordCount,
-      );
-      if (pendingStatistics.isNotEmpty) {
-        await ApiClient.post(
-          '/api/agents/${AppSettings.userSettingsAgentId}/settings',
-          pendingStatistics,
+      final settings = await _fetchStatistics();
+      if (!_active) return;
+      await _enqueue(() async {
+        if (!_active) return;
+        final pendingStatistics = _readPendingStatistics(prefs);
+        final enabled =
+            settings[AppSettings.emailNotificationSettingKey] == 'true';
+        final globalPrompt =
+            (settings[AppSettings.globalPromptSettingKey] as String? ?? '')
+                .trim();
+        final projectMemoryEnabled =
+            settings[AppSettings.projectMemoryEnabledSettingKey] != 'false';
+        final continueAfterCancel =
+            settings[AppSettings.chatQueueContinueAfterCancelSettingKey] ==
+            'true';
+        final orchestrationEnabled =
+            settings[AppSettings.subagentOrchestrationEnabledSettingKey] !=
+            'false';
+        final orchestrationConcurrent = int.tryParse(
+          settings[AppSettings.subagentOrchestrationMaxConcurrentSettingKey]
+                  as String? ??
+              '',
         );
-        await prefs.remove(AppSettings.pendingStatisticsSettingsKey);
-      }
+        final orchestrationRoleModels = _decodeRoleModels(
+          settings[AppSettings.subagentOrchestrationRoleModelsSettingKey]
+                  as String? ??
+              '',
+        );
+        final statistics = <String, bool>{};
+        for (final entry in _statisticsRemoteKeys.entries) {
+          if (pendingStatistics.containsKey(entry.value) ||
+              _revisions[entry.key] != revisions[entry.key]) {
+            continue;
+          }
+          final value = _nullableBool(settings[entry.value]);
+          if (value == null) continue;
+          statistics[entry.key] = value;
+          await prefs.setBool(_scoped(entry.key), value);
+        }
+        await prefs.setBool(AppSettings.emailNotificationEnabledKey, enabled);
+        if (!_active) return;
+        statistics.removeWhere((key, _) => _revisions[key] != revisions[key]);
+        state = state.copyWith(
+          emailNotificationEnabled: enabled,
+          globalPrompt: globalPrompt,
+          projectMemoryEnabled: projectMemoryEnabled,
+          chatQueueContinueAfterCancel: continueAfterCancel,
+          subagentOrchestrationEnabled: orchestrationEnabled,
+          subagentOrchestrationMaxConcurrent: (orchestrationConcurrent ?? 5)
+              .clamp(1, 5),
+          subagentOrchestrationRoleModels: orchestrationRoleModels,
+          showFirstTokenTime:
+              statistics['showFirstTokenTime'] ?? state.showFirstTokenTime,
+          showTokenCount: statistics['showTokenCount'] ?? state.showTokenCount,
+          showWordCount: statistics['showWordCount'] ?? state.showWordCount,
+        );
+      });
     } catch (_) {}
+    if (_active) await _flushStatistics();
   }
 
   Future<void> loadGlobalPrompt() async {
@@ -275,30 +385,28 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   }
 
   Future<void> toggle(String key) async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = _get(key);
-    final next = !current;
-    final localKey = key == 'autoOpenRecentTask'
-        ? AppSettings.autoOpenRecentTaskSettingKey
-        : key;
-    await prefs.setBool(localKey, next);
+    await _localReady.future;
+    if (!_active) return;
+    final next = !_get(key);
     state = _set(key, next);
+    _revisions[key] = (_revisions[key] ?? 0) + 1;
     final remoteKey = _statisticsRemoteKeys[key];
-    if (remoteKey == null) return;
-
-    final pending = _readPendingStatistics(prefs)
-      ..[remoteKey] = next.toString();
-    await _writePendingStatistics(prefs, pending);
-    try {
-      await ApiClient.post(
-        '/api/agents/${AppSettings.userSettingsAgentId}/settings',
-        {remoteKey: next.toString()},
-      );
-      pending.remove(remoteKey);
-      await _writePendingStatistics(prefs, pending);
-    } catch (_) {
-      // Keep the local value and retry the account sync during the next load.
-    }
+    await _enqueue(() async {
+      if (!_active) return;
+      final prefs = await SharedPreferences.getInstance();
+      final localKey = remoteKey != null
+          ? _scoped(key)
+          : key == 'autoOpenRecentTask'
+          ? AppSettings.autoOpenRecentTaskSettingKey
+          : key;
+      await prefs.setBool(localKey, next);
+      if (remoteKey != null) {
+        final pending = _readPendingStatistics(prefs)
+          ..[remoteKey] = next.toString();
+        await _writePendingStatistics(prefs, pending);
+      }
+    });
+    if (remoteKey != null && _active) await _flushStatistics();
   }
 
   Future<void> setDownloadDirectory(String? path) async {
@@ -427,6 +535,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     'latexRender' => state.latexRender,
     'mermaidRender' => state.mermaidRender,
     'htmlPreview' => state.htmlPreview,
+    'continuousReply' => state.continuousReply,
     'showFirstTokenTime' => state.showFirstTokenTime,
     'showTokenCount' => state.showTokenCount,
     'showWordCount' => state.showWordCount,
@@ -442,6 +551,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     'latexRender' => state.copyWith(latexRender: value),
     'mermaidRender' => state.copyWith(mermaidRender: value),
     'htmlPreview' => state.copyWith(htmlPreview: value),
+    'continuousReply' => state.copyWith(continuousReply: value),
     'showFirstTokenTime' => state.copyWith(showFirstTokenTime: value),
     'showTokenCount' => state.copyWith(showTokenCount: value),
     'showWordCount' => state.copyWith(showWordCount: value),
@@ -457,7 +567,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   };
 
   Map<String, String> _readPendingStatistics(SharedPreferences prefs) {
-    final raw = prefs.getString(AppSettings.pendingStatisticsSettingsKey);
+    final raw = prefs.getString(
+      _scoped(AppSettings.pendingStatisticsSettingsKey),
+    );
     if (raw == null || raw.isEmpty) return <String, String>{};
     try {
       final decoded = jsonDecode(raw);
@@ -475,11 +587,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     Map<String, String> values,
   ) async {
     if (values.isEmpty) {
-      await prefs.remove(AppSettings.pendingStatisticsSettingsKey);
+      await prefs.remove(_scoped(AppSettings.pendingStatisticsSettingsKey));
       return;
     }
     await prefs.setString(
-      AppSettings.pendingStatisticsSettingsKey,
+      _scoped(AppSettings.pendingStatisticsSettingsKey),
       jsonEncode(values),
     );
   }
@@ -501,6 +613,9 @@ Map<String, dynamic> _decodeRoleModels(String raw) {
   return const {};
 }
 
-final settingsProvider = StateNotifierProvider<SettingsNotifier, AppSettings>(
-  (ref) => SettingsNotifier(),
-);
+final settingsProvider = StateNotifierProvider<SettingsNotifier, AppSettings>((
+  ref,
+) {
+  ref.watch(accountScopeProvider);
+  return SettingsNotifier();
+});

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:chat_codex_app/core/notifications/app_notification_model.dart';
 import 'package:chat_codex_app/core/notifications/app_notification_sync.dart';
 import 'package:chat_codex_app/core/storage/app_storage.dart';
@@ -80,6 +81,38 @@ void main() {
     },
   );
 
+  test(
+    'read receipt still sends when unrelated progress upload fails',
+    () async {
+      final gateway = _FakeGateway()..failUpsert = true;
+      final service = AppNotificationSyncService(
+        gateway: gateway,
+        pushDelay: const Duration(days: 1),
+      );
+      service.queueUpsert(_record('progress'));
+      service.queueRead(['read']);
+      await service.syncNow();
+      expect(gateway.readBatches.single, ['read']);
+      service.dispose();
+    },
+  );
+
+  test('in flight old account feed is ignored after account switch', () async {
+    final gateway = _FakeGateway()
+      ..pendingList = Completer<AppNotificationRemotePage>();
+    final received = <AppNotificationRemoteChange>[];
+    final service = AppNotificationSyncService(gateway: gateway);
+    service.start(received.add);
+    await pumpEventQueue();
+    await AppStorage.setOperatorKey('operator-two');
+    gateway.pendingList!.complete(
+      AppNotificationRemotePage(items: [_change(1, _record('old'))], cursor: 1),
+    );
+    await pumpEventQueue();
+    expect(received, isEmpty);
+    service.dispose();
+  });
+
   test('read and dismiss commands are batched without duplicates', () async {
     final gateway = _FakeGateway();
     final service = AppNotificationSyncService(
@@ -133,6 +166,8 @@ class _FakeGateway implements AppNotificationRemoteGateway {
   final List<List<String>> dismissBatches = [];
   final List<AppNotificationRemoteChange> _changes = [];
   int _version = 0;
+  Completer<AppNotificationRemotePage>? pendingList;
+  bool failUpsert = false;
 
   void seed(AppNotificationRemoteChange change) {
     _changes.add(change);
@@ -143,6 +178,7 @@ class _FakeGateway implements AppNotificationRemoteGateway {
   Future<AppNotificationRemoteChange> upsert(
     AppNotificationRecord record,
   ) async {
+    if (failUpsert) throw StateError("offline upload");
     upserts.add(record);
     final change = _change(++_version, record);
     _changes.add(change);
@@ -154,6 +190,7 @@ class _FakeGateway implements AppNotificationRemoteGateway {
     required int after,
     int limit = 200,
   }) async {
+    if (pendingList != null) return pendingList!.future;
     final items = _changes
         .where((item) => item.version > after)
         .take(limit)

@@ -254,6 +254,47 @@ func (m *MySQLArchive) ListEvents(taskID string) ([]model.Event, error) {
 	return events, nil
 }
 
+func (m *MySQLArchive) ListReplyStatistics(taskID string) ([]model.Event, error) {
+	rows, err := m.db.Query(`SELECT id, payload_json, sent_at FROM task_events
+WHERE task_id = ? AND (
+ (event_type = 'progress' AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.metadata.source')) = 'llm_usage'
+ AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.metadata.stage')) IN ('request_usage_ready', 'reply_timing_ready'))
+ OR (event_type = 'delta' AND JSON_EXTRACT(payload_json, '$.metadata.reply_first_text_ms') IS NOT NULL)
+) ORDER BY sent_at DESC, id DESC`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	events := make([]model.Event, 0, 200)
+	for rows.Next() {
+		var id int64
+		var payload sql.NullString
+		var sentAt time.Time
+		if err := rows.Scan(&id, &payload, &sentAt); err != nil {
+			return nil, err
+		}
+		if !payload.Valid || strings.TrimSpace(payload.String) == "" {
+			continue
+		}
+		var event model.Event
+		if err := json.Unmarshal([]byte(payload.String), &event); err != nil {
+			return nil, err
+		}
+		event.ID, event.SentAt = id, sentAt.UTC()
+		if event.Sequence <= 0 {
+			event.Sequence = id
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for left, right := 0, len(events)-1; left < right; left, right = left+1, right-1 {
+		events[left], events[right] = events[right], events[left]
+	}
+	return events, nil
+}
+
 func (m *MySQLArchive) ListEventsAfter(taskID string, afterSequence int64, limit int) ([]model.Event, error) {
 	if limit <= 0 {
 		limit = 200

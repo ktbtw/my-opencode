@@ -78,8 +78,11 @@ class AppStorage {
 
   // 用户名
   static String? getUsername() => _p.getString(_keyUsername);
-  static Future<void> setUsername(String name) =>
-      _p.setString(_keyUsername, name);
+  static Future<void> setUsername(String name) async {
+    final previous = authIdentity;
+    await _p.setString(_keyUsername, name);
+    if (authIdentity != previous) _authIdentityChanges.add(authIdentity);
+  }
 
   // 显示名称
   static String? getDisplayName() => _p.getString(_keyDisplayName);

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/app_navigation.dart';
+import '../services/app_foreground.dart';
 import '../theme/app_colors.dart';
 import 'app_notification_controller.dart';
 import 'app_notification_model.dart';
@@ -20,40 +21,56 @@ class AppNotificationHost extends ConsumerWidget {
     final controller = ref.read(appNotificationControllerProvider.notifier);
     final media = MediaQuery.of(context);
     final mobile = media.size.width < 600;
+    final foreground = ref.watch(appForegroundProvider);
     final active = state.active
         .where(
           (record) =>
+              record.unread &&
               !(state.foregroundChat?.matchesCompletion(record) ?? false),
         )
-        .take(mobile ? 1 : 3)
         .toList(growable: false);
 
     return Stack(
       fit: StackFit.expand,
       children: [
         child,
-        if (active.isNotEmpty && !state.centerOpen)
-          Positioned(
-            top: media.padding.top + 60,
+        if (foreground && active.isNotEmpty && !state.centerOpen)
+          AnimatedPositioned(
+            duration: media.disableAnimations
+                ? Duration.zero
+                : const Duration(milliseconds: 360),
+            curve: Curves.easeOutCubic,
+            top: media.padding.top + (state.collapsed ? 8 : 60),
             right: mobile ? 8 : 16,
-            left: mobile ? 8 : null,
+            left: mobile ? 8 : 16,
             child: Align(
-              alignment: Alignment.topRight,
-              child: state.collapsed
-                  ? _NotificationIsland(
-                      records: active,
-                      onTap: controller.expand,
-                      onDismiss: () => _dismissRecord(controller, active.first),
-                    )
-                  : _NotificationStack(
-                      records: active,
-                      mobile: mobile,
-                      onCollapse: controller.collapse,
-                      onOpenCenter: controller.openCenter,
-                      onDismiss: (record) => _dismissRecord(controller, record),
-                      onAction: (record, action) =>
-                          _handleAction(controller, record, action),
-                    ),
+              alignment: Alignment.topCenter,
+              child: AnimatedSize(
+                duration: media.disableAnimations
+                    ? Duration.zero
+                    : const Duration(milliseconds: 360),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: state.collapsed
+                    ? _NotificationIsland(
+                        records: active,
+                        onTap: controller.expand,
+                        onDismiss: () =>
+                            _dismissRecord(controller, active.first),
+                      )
+                    : _NotificationStack(
+                        records: active
+                            .take(mobile ? 1 : 3)
+                            .toList(growable: false),
+                        mobile: mobile,
+                        onCollapse: controller.collapse,
+                        onOpenCenter: controller.openCenter,
+                        onDismiss: (record) =>
+                            _dismissRecord(controller, record),
+                        onAction: (record, action) =>
+                            _handleAction(controller, record, action),
+                      ),
+              ),
             ),
           ),
         if (state.centerOpen)
@@ -707,109 +724,189 @@ class _NotificationIsland extends StatelessWidget {
   Widget build(BuildContext context) {
     final primary = records.first;
     final progress = primary.normalizedProgress;
-    return Material(
-      color: Colors.transparent,
-      child: Semantics(
-        label: '${primary.title}，展开通知',
-        button: true,
-        child: InkWell(
-          onTap: onTap,
-          customBorder: const CircleBorder(),
-          child: SizedBox(
-            key: const ValueKey('collapsed-notification-button'),
-            width: 56,
-            height: 56,
-            child: Stack(
-              alignment: Alignment.center,
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: _statusColor(primary.status)),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x261D3865),
-                        blurRadius: 18,
-                        offset: Offset(0, 7),
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      if (progress != null &&
-                          primary.progressMode ==
-                              AppNotificationProgressMode.determinate)
-                        _ProgressRing(
-                          key: const ValueKey('collapsed-notification-progress'),
-                          progress: progress,
-                          color: _statusColor(primary.status),
-                          size: 43,
-                        ),
-                      _NotificationIcon(record: primary, size: 27),
-                    ],
-                  ),
-                ),
-                if (records.length > 1)
-                  Positioned(
-                    top: -3,
-                    right: -3,
-                    child: Container(
-                      constraints: const BoxConstraints(minWidth: 19),
-                      height: 19,
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      alignment: Alignment.center,
-                      decoration: const BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Text(
-                        records.length > 9 ? '9+' : '${records.length}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                Positioned(
-                  right: -6,
-                  bottom: -6,
-                  child: Semantics(
-                    label: '关闭通知',
-                    button: true,
-                    child: Material(
-                      color: AppColors.surface,
-                      shape: const CircleBorder(),
-                      child: InkResponse(
-                        onTap: onDismiss,
-                        containedInkWell: true,
-                        customBorder: const CircleBorder(),
-                        child: const SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: Icon(
-                            Icons.close_rounded,
-                            size: 14,
-                            color: AppColors.textMuted,
+    final determinate =
+        progress != null &&
+        primary.progressMode == AppNotificationProgressMode.determinate;
+    final width = math.min(286.0, MediaQuery.sizeOf(context).width - 32);
+    return Semantics(
+      label: '${primary.title}，展开通知',
+      button: true,
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7FAFF),
+          border: Border.all(color: const Color(0xFFDCE5F0)),
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x14506482),
+              blurRadius: 20,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(30),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: SizedBox(
+              key: const ValueKey('collapsed-notification-button'),
+              width: width,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 7, 7, 7),
+                child: Row(
+                  children: [
+                    if (determinate)
+                      _ProgressRing(
+                        key: const ValueKey('collapsed-notification-progress'),
+                        showLabel: false,
+                        backgroundColor: const Color(0xFFE1E9F5),
+                        progress: progress,
+                        color: const Color(0xFF3666B9),
+                        size: 22,
+                      )
+                    else if (primary.isTerminal)
+                      Icon(
+                        primary.status == AppNotificationStatus.succeeded
+                            ? Icons.check_rounded
+                            : Icons.info_outline_rounded,
+                        color: const Color(0xFF3666B9),
+                        size: 20,
+                      )
+                    else
+                      const _IslandPulse(),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 180),
+                        child: Align(
+                          key: ValueKey(primary.title),
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            primary.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF28374D),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    if (determinate)
+                      Text(
+                        '${(progress * 100).round()}%',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF3666B9),
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    if (records.length > 1)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 7),
+                        child: Text(
+                          '+${records.length - 1}',
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: Color(0xFF687B95),
+                          ),
+                        ),
+                      ),
+                    Semantics(
+                      label: '关闭通知',
+                      button: true,
+                      child: IconButton(
+                        onPressed: onDismiss,
+                        constraints: const BoxConstraints(
+                          minWidth: 40,
+                          minHeight: 40,
+                        ),
+                        padding: EdgeInsets.zero,
+                        iconSize: 14,
+                        icon: const Icon(
+                          Icons.close_rounded,
+                          color: Color(0xFF687B95),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
+}
+
+class _IslandPulse extends StatefulWidget {
+  const _IslandPulse();
+  @override
+  State<_IslandPulse> createState() => _IslandPulseState();
+}
+
+class _IslandPulseState extends State<_IslandPulse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _motion = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  );
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context) || !TickerMode.of(context)) {
+      _motion.stop();
+    } else if (!_motion.isAnimating) {
+      _motion.repeat();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: CustomPaint(
+      size: const Size(22, 22),
+      painter: _IslandWavePainter(_motion),
+    ),
+  );
+  @override
+  void dispose() {
+    _motion.dispose();
+    super.dispose();
+  }
+}
+
+class _IslandWavePainter extends CustomPainter {
+  final Animation<double> motion;
+  _IslandWavePainter(this.motion) : super(repaint: motion);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFF3666B9)
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+    for (var i = 0; i < 3; i++) {
+      final height =
+          5 + 7 * (1 + math.sin((motion.value + i / 5) * math.pi * 2)) / 2;
+      final x = size.width / 2 + (i - 1) * 5;
+      canvas.drawLine(
+        Offset(x, (size.height - height) / 2),
+        Offset(x, (size.height + height) / 2),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _IslandWavePainter oldDelegate) =>
+      oldDelegate.motion != motion;
 }
 
 class _NotificationCenterOverlay extends StatelessWidget {
@@ -1363,9 +1460,13 @@ class _ProgressRing extends StatelessWidget {
   final double progress;
   final Color color;
   final double size;
+  final bool showLabel;
+  final Color backgroundColor;
 
   const _ProgressRing({
     super.key,
+    this.showLabel = true,
+    this.backgroundColor = const Color(0xFFE5EDF8),
     required this.progress,
     required this.color,
     required this.size,
@@ -1391,18 +1492,19 @@ class _ProgressRing extends StatelessWidget {
                 strokeWidth: size < 32 ? 3 : 5,
                 strokeCap: StrokeCap.round,
                 color: color,
-                backgroundColor: const Color(0xFFE5EDF8),
+                backgroundColor: backgroundColor,
               ),
             ),
-            Text(
-              '${(value * 100).round()}${size < 32 ? '' : '%'}',
-              style: TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: size < 32 ? 7 : 10,
-                fontWeight: FontWeight.w700,
-                fontFeatures: const [FontFeature.tabularFigures()],
+            if (showLabel)
+              Text(
+                '${(value * 100).round()}${size < 32 ? '' : '%'}',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: size < 32 ? 7 : 10,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
               ),
-            ),
           ],
         ),
       ),

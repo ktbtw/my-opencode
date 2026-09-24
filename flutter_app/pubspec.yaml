@@ -2,12 +2,13 @@ name: chat_codex_app
 description: "Chat Codex - 远程设备与 Agent 管理控制台"
 publish_to: 'none'
 
-version: 1.6.83+230
+version: 1.6.103+250
 
 environment:
   sdk: ^3.8.0
 
 dependencies:
+  characters: ^1.4.0
   archive: ^4.0.9
   flutter:
     sdk: flutter

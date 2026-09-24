@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../storage/app_storage.dart';
 import '../services/global_overlay_service.dart';
+import '../services/app_live_events.dart';
 import 'app_notification_model.dart';
 import 'app_notification_redactor.dart';
 import 'app_notification_repository.dart';
@@ -77,6 +78,19 @@ final appNotificationControllerProvider =
         unawaited(controller.reloadForIdentity());
       });
       ref.onDispose(authSubscription.cancel);
+      ref.listen(appLiveStreamProvider, (_, next) {
+        final event = next.valueOrNull;
+        if (event?.type != 'notification.updated') return;
+        try {
+          controller.applyRemoteChange(
+            AppNotificationRemoteChange.fromJson(
+              Map<String, dynamic>.from(jsonDecode(event!.data) as Map),
+            ),
+          );
+        } catch (_) {
+          /* Ignore malformed transport frames. */
+        }
+      });
       final nativeNotificationSubscription = GlobalOverlayService
           .notificationEvents
           .listen((event) {
@@ -121,6 +135,8 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
   // Hiding an active notification must not dismiss the remote operation. Keep
   // this suppression across app restarts until the remote operation is done.
   final Set<String> _hiddenOperationIds = {};
+  final Map<String, int> _remoteVersions = {};
+  final Set<String> _pendingReadIds = {};
   Future<void> _writeTail = Future.value();
   bool _disposed = false;
   int _hydrationGeneration = 0;
@@ -140,15 +156,22 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     final generation = ++_hydrationGeneration;
     final snapshot = await repository.load();
     if (_disposed || generation != _hydrationGeneration) return;
-    _hiddenOperationIds
-      ..clear()
-      ..addAll(snapshot.hiddenOperationIds);
-    final hadLocalChanges = state.active.isNotEmpty || state.recent.isNotEmpty;
+    // Disk hydration can finish after a tap. Merge suppression and preserve
+    // the user's presentation choice instead of restoring an older surface.
+    _hiddenOperationIds.addAll(snapshot.hiddenOperationIds);
+    final hadLocalChanges =
+        state.active.isNotEmpty ||
+        state.recent.isNotEmpty ||
+        state.collapsed ||
+        _hiddenOperationIds.isNotEmpty;
     final recentByOperation = <String, AppNotificationRecord>{
       for (final item in snapshot.recent) item.operationId: item,
     };
     final activeByOperation = <String, AppNotificationRecord>{};
     for (final item in snapshot.active) {
+      if (_hiddenOperationIds.contains(item.operationId) && !item.isTerminal) {
+        continue;
+      }
       if (item.isTerminal) {
         recentByOperation[item.operationId] = item;
       } else {
@@ -163,8 +186,12 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
       recentByOperation.remove(item.operationId);
       activeByOperation[item.operationId] = item;
     }
-    final active = activeByOperation.values.toList();
-    final recent = recentByOperation.values.toList();
+    AppNotificationRecord applyPendingRead(AppNotificationRecord item) =>
+        _pendingReadIds.remove(item.operationId)
+        ? item.copyWith(unread: false)
+        : item;
+    final active = activeByOperation.values.map(applyPendingRead).toList();
+    final recent = recentByOperation.values.map(applyPendingRead).toList();
     state = state.copyWith(
       active: _sortActive(active),
       recent: _trimRecent(recent),
@@ -187,6 +214,8 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     }
     _archiveTimers.clear();
     _hiddenOperationIds.clear();
+    _remoteVersions.clear();
+    _pendingReadIds.clear();
     state = const AppNotificationState();
     await hydrate();
   }
@@ -209,7 +238,8 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     String sourceLabel = '',
   }) {
     final timestamp = now();
-    _hiddenOperationIds.remove(operationId);
+    // Reattaching to the same in-flight operation is not a new user request.
+    // Only its terminal result (or an operation with a new ID) can alert again.
     final existing = _findByOperationId(operationId);
     final restarting = existing?.isTerminal == true;
     final record = AppNotificationRecord(
@@ -252,7 +282,17 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     AppNotificationAttention? attention,
   }) {
     final current = _findByOperationId(operationId);
-    if (current == null) return;
+    if (current == null) {
+      // A hidden operation is removed from active/recent, so its terminal
+      // update can never reach upsert() — the only place that releases the
+      // suppression. Release it here instead: otherwise the operationId stays
+      // suppressed forever, and later operations that reuse the same stable id
+      // (e.g. a device's Agent switch) never surface again.
+      if (status != null && _isTerminal(status)) {
+        if (_hiddenOperationIds.remove(operationId)) _schedulePersist();
+      }
+      return;
+    }
     final nextStatus = status ?? current.status;
     final timestamp = now();
     upsert(
@@ -274,7 +314,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
                   ? current.completedAt ?? timestamp
                   : timestamp)
             : null,
-        unread: true,
+        unread: current.unread,
       ),
       // Progress updates must never undo a collapse chosen by the user.
       expand: false,
@@ -352,6 +392,10 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     bool expand = true,
   }) {
     final existing = _findByOperationId(record.operationId);
+    if ((existing?.id == record.id && existing?.unread == false) ||
+        _pendingReadIds.remove(record.operationId)) {
+      record = record.copyWith(unread: false);
+    }
     if (!force &&
         existing != null &&
         !_isValidTransition(existing.status, record.status)) {
@@ -375,6 +419,9 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
 
     final isNewOperation = existing == null;
     final isRestartedOperation = force && existing?.isTerminal == true;
+    if (isRestartedOperation && existing?.id != record.id) {
+      _pendingReadIds.remove(record.operationId);
+    }
     final shouldExpand = expand && (isNewOperation || isRestartedOperation);
 
     _maybeSignalAttention(existing, record);
@@ -407,12 +454,14 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
 
   void applyRemoteChange(AppNotificationRemoteChange change) {
     if (_disposed || change.operationId.isEmpty) return;
+    if (change.version <= (_remoteVersions[change.operationId] ?? -1)) return;
+    _remoteVersions[change.operationId] = change.version;
     if (change.deleted) {
       _hiddenOperationIds.remove(change.operationId);
       _removeWithoutSync(change.operationId);
       return;
     }
-    final record = change.record;
+    var record = change.record;
     if (record == null ||
         record.scope != AppNotificationScope.synced ||
         record.operationId != change.operationId) {
@@ -424,7 +473,14 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     }
     final existing = _findByOperationId(change.operationId);
     if (existing != null && record.updatedAt.isBefore(existing.updatedAt)) {
+      if (!record.unread && existing.id == record.id) {
+        _applyReadLocally(change.operationId);
+      }
       return;
+    }
+    if (existing?.id == record.id && existing?.unread == false ||
+        _pendingReadIds.remove(change.operationId)) {
+      record = record.copyWith(unread: false);
     }
     final activeIndex = state.active.indexWhere(
       (item) => item.operationId == change.operationId,
@@ -432,7 +488,8 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     final recentIndex = state.recent.indexWhere(
       (item) => item.operationId == change.operationId,
     );
-    if (recentIndex >= 0 || (record.isTerminal && !record.unread)) {
+    if ((recentIndex >= 0 && existing?.id == record.id) ||
+        (record.isTerminal && !record.unread)) {
       _archiveTimers.remove(change.operationId)?.cancel();
       final active = [...state.active]
         ..removeWhere((item) => item.operationId == change.operationId);
@@ -507,7 +564,17 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     _schedulePersist();
   }
 
-  void markRead(String operationId) {
+  void _applyReadLocally(String operationId) {
+    AppNotificationRecord mark(AppNotificationRecord item) =>
+        item.operationId == operationId ? item.copyWith(unread: false) : item;
+    state = state.copyWith(
+      active: state.active.map(mark).toList(growable: false),
+      recent: state.recent.map(mark).toList(growable: false),
+    );
+    _schedulePersist();
+  }
+
+  void markRead(String operationId, {bool synchronizeIfMissing = false}) {
     final normalized = operationId.trim();
     if (normalized.isEmpty) return;
     AppNotificationRecord mark(AppNotificationRecord item) {
@@ -525,7 +592,8 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
       ...state.active,
       ...state.recent,
     ].where((item) => item.operationId == normalized).firstOrNull;
-    if (record?.scope == AppNotificationScope.synced) {
+    if (record?.scope == AppNotificationScope.synced || synchronizeIfMissing) {
+      if (record == null) _pendingReadIds.add(normalized);
       syncService?.queueRead([normalized]);
     }
   }
@@ -664,6 +732,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     AppNotificationRecord? existing,
     AppNotificationRecord record,
   ) {
+    if (!record.unread) return;
     final shouldSignal = switch (record.attention) {
       AppNotificationAttention.none => false,
       AppNotificationAttention.critical =>

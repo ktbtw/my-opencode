@@ -4,6 +4,51 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'restored task shows sync then live status without initial stages',
+    (tester) async {
+      final message = ChatMessage(
+        id: 'agent-task',
+        role: MessageRole.agent,
+        state: MessageState.streaming,
+        content: '',
+        taskId: 'task',
+        createdAt: DateTime.now(),
+        streamRecovery: StreamRecovery.syncing,
+      );
+      await tester.pumpWidget(buildChatStreamingProgressTestSurface(message));
+      expect(find.text('正在同步最新回复'), findsOneWidget);
+      expect(find.text('已发送'), findsNothing);
+      final updated = message.copyForUpdate()
+        ..streamRecovery = StreamRecovery.following;
+      await tester.pumpWidget(buildChatStreamingProgressTestSurface(updated));
+      expect(find.text('等待新的回复'), findsOneWidget);
+      expect(find.text('已连接'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('new task uses inline status without progress cards', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildChatStreamingProgressTestSurface(
+        ChatMessage(
+          id: 'agent-task',
+          role: MessageRole.agent,
+          state: MessageState.streaming,
+          content: '',
+          taskId: 'task',
+          createdAt: DateTime.now(),
+        ),
+      ),
+    );
+    expect(find.text('正在等待回复'), findsOneWidget);
+    expect(find.text('已发送'), findsNothing);
+    expect(find.text('正文'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('active composer keeps stop and send as independent buttons', (
     tester,
   ) async {
@@ -65,10 +110,7 @@ void main() {
     final insert = find.byTooltip('插入当前对话');
     expect(send, findsOneWidget);
     expect(insert, findsOneWidget);
-    expect(
-      tester.getCenter(send).dx,
-      lessThan(tester.getCenter(insert).dx),
-    );
+    expect(tester.getCenter(send).dx, lessThan(tester.getCenter(insert).dx));
     await tester.tap(send);
     expect(queueSends, 1);
   });

@@ -1,4 +1,4 @@
-import { afterEach, expect } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 import { $ } from "bun"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
@@ -6,6 +6,9 @@ import fs from "fs/promises"
 import path from "path"
 import { Effect, Fiber, Layer } from "effect"
 import { Snapshot } from "../../src/snapshot"
+import { InstanceState } from "@/effect/instance-state"
+import { Global } from "@opencode-ai/core/global"
+import { Hash } from "@opencode-ai/core/util/hash"
 import { disposeAllInstances, provideInstance, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
@@ -1112,4 +1115,80 @@ it.instance(
     for (const file of fresh) expect(yield* exists(file)).toBe(false)
   }),
   { git: true },
+)
+
+
+test("runtime snapshot exclusions are narrow and platform independent", () => {
+  for (const root of ["", "nested/"]) {
+    for (const name of ["display-log.sqlite", "display-log.sqlite-wal", "display-log.sqlite-shm", "display-log.sqlite-journal", "display-log/session.json"]) {
+      const file = `${root}.chatcodex-artifacts/${name}`
+      expect(Snapshot.isRuntimeFile(file)).toBe(true)
+      expect(Snapshot.isRuntimeFile(file.replaceAll("/", "\\"))).toBe(true)
+    }
+  }
+  for (const file of ["src/display-log.sqlite", ".chatcodex-artifacts/task/result.txt", ".chatcodex-artifacts/display-log.sqlite.backup", "src/main.ts"]) {
+    expect(Snapshot.isRuntimeFile(file)).toBe(false)
+  }
+  for (const file of ["build/app.bin", "nested/build/app.bin", ".dart_tool/package_config.json", "node_modules/pkg/index.js", "tools/__pycache__/x.pyc"]) {
+    expect(Snapshot.isSnapshotExcluded(file)).toBe(true)
+  }
+  for (const file of ["deliverables/result.zip", ".chatcodex-artifacts/task/result.txt", "src/build-notes.md"]) {
+    expect(Snapshot.isSnapshotExcluded(file)).toBe(false)
+  }
+})
+
+test("repack budgets the replacement pack and reserve in bytes", () => {
+  const gb = 1024 ** 3
+  expect(Snapshot.hasRepackSpace(54 * gb, 59 * gb)).toBe(false)
+  expect(Snapshot.hasRepackSpace(61 * gb - 1, 59 * gb)).toBe(false)
+  expect(Snapshot.hasRepackSpace(61 * gb, 59 * gb)).toBe(true)
+  expect(Snapshot.hasRepackSpace(0, 0)).toBe(false)
+})
+
+it.instance(
+  "runtime logs never enter snapshot while delivered files still do",
+  withTrackedSnapshot(({ tmp, snapshot, before }) => Effect.gen(function* () {
+    for (const folder of ["", "nested/"]) {
+      for (const name of ["display-log.sqlite", "display-log.sqlite-wal", "display-log.sqlite-shm", "display-log/session.json"]) {
+        yield* write(`${tmp.path}/${folder}.chatcodex-artifacts/${name}`, "runtime-data")
+      }
+    }
+    yield* write(`${tmp.path}/.chatcodex-artifacts/task/result.txt`, "deliverable")
+    yield* write(`${tmp.path}/a.txt`, "new source")
+    const patch = yield* snapshot.patch(before)
+    expect(patch.files).toContain(fwd(tmp.path, "a.txt"))
+    expect(patch.files).toContain(fwd(tmp.path, ".chatcodex-artifacts/task/result.txt"))
+    expect(patch.files.some(Snapshot.isRuntimeFile)).toBe(false)
+    const after = yield* snapshot.track()
+    expect((yield* snapshot.diffFull(before, after!)).some((row) => row.file && Snapshot.isRuntimeFile(row.file))).toBe(false)
+    yield* snapshot.revert([patch])
+    expect(yield* readText(`${tmp.path}/.chatcodex-artifacts/display-log.sqlite`)).toBe("runtime-data")
+    expect(yield* exists(`${tmp.path}/.chatcodex-artifacts/task/result.txt`)).toBe(false)
+  })), { git: true },
+)
+
+it.instance(
+  "legacy tracked runtime logs are evicted even unchanged and never restored",
+  withTrackedSnapshot(({ tmp, snapshot }) => Effect.gen(function* () {
+    const ctx = yield* InstanceState.context
+    const gitdir = path.join(Global.Path.data, "snapshot", ctx.project.id, Hash.fast(ctx.worktree))
+    const names = [".chatcodex-artifacts/display-log.sqlite", ".chatcodex-artifacts/display-log.sqlite-wal", ".chatcodex-artifacts/display-log.sqlite-shm"]
+    for (const name of names) yield* write(path.join(tmp.path, name), "old runtime")
+    // Reproduce the old version's index, bypassing the new ignore rule.
+    yield* exec(tmp.path, ["git", "--git-dir", gitdir, "--work-tree", tmp.path, "add", "-f", "--", ...names])
+    const legacy = yield* Effect.promise(async () => (await $`git --git-dir ${gitdir} write-tree`.cwd(tmp.path).quiet().text()).trim())
+    const migrated = yield* snapshot.track()
+    const indexed = yield* Effect.promise(() => $`git --git-dir ${gitdir} ls-files`.cwd(tmp.path).quiet().text())
+    expect(indexed).not.toContain("display-log")
+    expect((yield* snapshot.patch(legacy)).files.some(Snapshot.isRuntimeFile)).toBe(false)
+    expect(yield* snapshot.diff(legacy)).not.toContain("display-log")
+    expect((yield* snapshot.diffFull(legacy, migrated!)).some((row) => row.file?.includes("display-log"))).toBe(false)
+    for (const name of names) yield* write(path.join(tmp.path, name), "current runtime")
+    yield* write(`${tmp.path}/a.txt`, "new source")
+    yield* snapshot.restore(legacy)
+    for (const name of names) expect(yield* readText(path.join(tmp.path, name))).toBe("current runtime")
+    expect(yield* readText(`${tmp.path}/a.txt`)).toBe(tmp.extra.aContent)
+    yield* snapshot.revert([{ hash: legacy, files: names.map((name) => path.join(tmp.path, name)) }])
+    for (const name of names) expect(yield* readText(path.join(tmp.path, name))).toBe("current runtime")
+  })), { git: true },
 )

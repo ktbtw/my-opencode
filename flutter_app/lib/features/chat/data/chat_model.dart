@@ -1,4 +1,6 @@
 import 'dart:typed_data';
+import 'reply_statistics.dart';
+export 'reply_statistics.dart';
 
 import '../../../shared/grok_context_limit.dart';
 
@@ -1025,6 +1027,7 @@ class TaskModel {
 }
 
 class TaskEventRoundSnapshot {
+  final ReplyStatistics statistics;
   final String text;
   final String reasoning;
   final String statusHint;
@@ -1037,6 +1040,7 @@ class TaskEventRoundSnapshot {
   final int? tokenCount;
 
   const TaskEventRoundSnapshot({
+    this.statistics = const ReplyStatistics(),
     this.text = '',
     this.reasoning = '',
     this.statusHint = '',
@@ -1129,11 +1133,15 @@ class ContextUsageInfo {
     this.updatedAt,
   });
 
+  bool get hasContextMeasurement =>
+      (compactionCountTokens != null && compactionCountTokens! >= 0) ||
+      (contextTokens != null && contextTokens! >= 0);
+
   int get knownContextTokens {
-    if (compactionCountTokens != null && compactionCountTokens! > 0) {
+    if (compactionCountTokens != null && compactionCountTokens! >= 0) {
       return compactionCountTokens!;
     }
-    if (contextTokens != null && contextTokens! > 0) return contextTokens!;
+    if (contextTokens != null && contextTokens! >= 0) return contextTokens!;
     return 0;
   }
 
@@ -1145,14 +1153,34 @@ class ContextUsageInfo {
 
   static ContextUsageInfo? withModelLimit(
     ContextUsageInfo? usage,
-    int? modelLimit,
-  ) {
-    if (usage != null) return usage.withFallbackLimit(modelLimit);
+    int? modelLimit, {
+    String? selectedProviderID,
+    String? selectedModelID,
+  }) {
+    if (usage != null) {
+      final differentModel =
+          selectedModelID != null &&
+          (selectedModelID != usage.modelID ||
+              selectedProviderID != usage.providerID);
+      if (modelLimit == null ||
+          modelLimit <= 0 ||
+          (modelLimit == usage.contextLimit && !differentModel)) {
+        return usage;
+      }
+      return usage.copyWith(
+        contextLimit: modelLimit,
+        contextUsagePercent: usage.hasContextMeasurement
+            ? usage.knownContextTokens / modelLimit * 100
+            : null,
+        clearCompactionThreshold: true,
+      );
+    }
     if (modelLimit == null || modelLimit <= 0) return null;
     return ContextUsageInfo(contextLimit: modelLimit);
   }
 
   ContextUsageInfo copyWith({
+    bool clearCompactionThreshold = false,
     String? stage,
     String? providerID,
     String? modelID,
@@ -1187,8 +1215,9 @@ class ContextUsageInfo {
       compactionCountTokens:
           compactionCountTokens ?? this.compactionCountTokens,
       contextUsagePercent: contextUsagePercent ?? this.contextUsagePercent,
-      compactionThresholdTokens:
-          compactionThresholdTokens ?? this.compactionThresholdTokens,
+      compactionThresholdTokens: clearCompactionThreshold
+          ? null
+          : compactionThresholdTokens ?? this.compactionThresholdTokens,
       compactionThresholdPercent:
           compactionThresholdPercent ?? this.compactionThresholdPercent,
       inputTokens: inputTokens ?? this.inputTokens,
@@ -1203,6 +1232,11 @@ class ContextUsageInfo {
   }
 
   ContextUsageInfo merge(ContextUsageInfo next) {
+    if (updatedAt != null &&
+        next.updatedAt != null &&
+        next.updatedAt!.isBefore(updatedAt!)) {
+      return this;
+    }
     return ContextUsageInfo(
       stage: next.stage.isNotEmpty ? next.stage : stage,
       providerID: next.providerID.isNotEmpty ? next.providerID : providerID,
@@ -1299,6 +1333,9 @@ class ContextUsageInfo {
 }
 
 class TaskEventSnapshot {
+  final bool complete;
+  final bool preservesToolPositions;
+  final ReplyStatistics statistics;
   final String text;
   final String reasoning;
   final String statusHint;
@@ -1313,6 +1350,9 @@ class TaskEventSnapshot {
   final FinalDeliveryPhase finalDeliveryPhase;
 
   const TaskEventSnapshot({
+    this.complete = true,
+    this.preservesToolPositions = true,
+    this.statistics = const ReplyStatistics(),
     this.text = '',
     this.reasoning = '',
     this.statusHint = '',
@@ -1505,6 +1545,10 @@ class AiOutputFile {
   }
 }
 
+enum HistoryDetailsState { none, deferred, loading, partial }
+
+enum StreamRecovery { none, syncing, reconnecting, following }
+
 class ChatMessage {
   final String id;
   final MessageRole role;
@@ -1512,6 +1556,9 @@ class ChatMessage {
   String content;
   String thinkingContent;
   String statusHint;
+  StreamRecovery streamRecovery;
+  HistoryDetailsState historyDetails;
+  bool toolOrderKnown;
   String errorDetail;
   FinalDeliveryPhase finalDeliveryPhase;
   ImageGenerationInfo? imageGeneration;
@@ -1536,6 +1583,7 @@ class ChatMessage {
   List<PlanHistorySnapshot> planHistory;
   bool hasPlanBinding;
   // 统计信息
+  ReplyStatistics statistics;
   int? tokenCount;
   Duration? firstTokenTime; // 从发送到收到首个 delta 的时间
 
@@ -1546,6 +1594,9 @@ class ChatMessage {
     required this.content,
     this.thinkingContent = '',
     this.statusHint = '',
+    this.streamRecovery = StreamRecovery.none,
+    this.historyDetails = HistoryDetailsState.none,
+    this.toolOrderKnown = true,
     this.errorDetail = '',
     this.finalDeliveryPhase = FinalDeliveryPhase.idle,
     this.imageGeneration,
@@ -1567,6 +1618,7 @@ class ChatMessage {
     this.planHistory = const [],
     this.hasPlanBinding = false,
     this.tokenCount,
+    this.statistics = const ReplyStatistics(),
     this.firstTokenTime,
   });
 
@@ -1585,6 +1637,9 @@ class ChatMessage {
       content: content,
       thinkingContent: thinkingContent,
       statusHint: statusHint,
+      streamRecovery: streamRecovery,
+      historyDetails: historyDetails,
+      toolOrderKnown: toolOrderKnown,
       errorDetail: errorDetail,
       finalDeliveryPhase: finalDeliveryPhase,
       imageGeneration: imageGeneration,
@@ -1608,6 +1663,7 @@ class ChatMessage {
       planHistory: List<PlanHistorySnapshot>.from(planHistory),
       hasPlanBinding: hasPlanBinding,
       tokenCount: tokenCount,
+      statistics: statistics,
       firstTokenTime: firstTokenTime,
     );
   }
