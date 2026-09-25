@@ -12,7 +12,28 @@ String formatChatTaskError(String? raw) {
   if (_isImageFailure(text)) {
     return '生图失败，系统已自动重试仍失败，请稍后重试。';
   }
+  if (_isUnsupportedAttachment(text)) {
+    return '附件格式不被当前模型支持，无法读取。请改用纯文本（.txt 等）附件，或更换模型后重试。';
+  }
   return normalized;
+}
+
+// 模型无法消费附件媒体类型时，供应商返回的是一句英文（例如
+// “'file part media type application/octet-stream' functionality not supported.”
+// 或 “this model does not support image input”）。这里换成产品语种。
+bool _isUnsupportedAttachment(String text) {
+  final lower = text.toLowerCase();
+  final unsupported =
+      lower.contains('functionality not supported') ||
+      lower.contains('not supported') ||
+      lower.contains('does not support') ||
+      lower.contains('unsupported');
+  if (!unsupported) return false;
+  return lower.contains('file part') ||
+      lower.contains('media type') ||
+      lower.contains('content part') ||
+      lower.contains('this model does not support') ||
+      lower.contains('附件');
 }
 
 String _stripDetail(String text) {

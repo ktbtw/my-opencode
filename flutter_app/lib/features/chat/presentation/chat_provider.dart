@@ -1301,17 +1301,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final taskCreatedAt =
           task.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
       final userText = task.userText;
-      if (userText != null && userText.isNotEmpty) {
+      final attachedFiles = task.attachedFiles;
+      // 只发附件、不写字的消息也要保留：靠附件才能还原这一轮的用户输入。
+      if ((userText != null && userText.isNotEmpty) || attachedFiles.isNotEmpty) {
         msgs.add(
           ChatMessage(
             id: 'user_${task.taskId}',
             role: MessageRole.user,
             state: MessageState.done,
-            content: userText,
+            content: userText ?? '',
             createdAt: taskCreatedAt,
             taskId: task.taskId,
             taskCreatedAt: taskCreatedAt,
             taskMessageIndex: 0,
+            attachedFiles: attachedFiles,
           ),
         );
       }
@@ -2296,6 +2299,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           taskId: item.taskId,
           taskCreatedAt: taskCreatedAt,
           taskMessageIndex: 0,
+          attachedFiles: attachedFilesFromParts(item.parts),
         ),
       );
     }

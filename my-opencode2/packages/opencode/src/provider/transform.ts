@@ -417,14 +417,22 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
 
       const mime = part.type === "image" ? String(part.image).split(";")[0].replace("data:", "") : part.mediaType
       const filename = part.type === "file" ? part.filename : undefined
+      const name = filename ? `"${filename}"` : mime
       const modality = mimeToModality(mime)
-      if (!modality) return part
+      if (!modality) {
+        // Unmappable attachments (e.g. application/octet-stream, zip) would make
+        // OpenAI compatible providers throw and fail the whole task, so degrade
+        // them into a readable notice instead.
+        return {
+          type: "text" as const,
+          text: `[附件 ${name}（${mime}）无法发送给当前模型，请告知用户该附件不可读取，改用文本或图片附件。]`,
+        }
+      }
       if (model.capabilities.input[modality]) return part
 
-      const name = filename ? `"${filename}"` : modality
       return {
         type: "text" as const,
-        text: `ERROR: Cannot read ${name} (this model does not support ${modality} input). Inform the user.`,
+        text: `[附件 ${name} 无法读取：当前模型不支持 ${modality} 输入，请告知用户更换模型或改用文本附件。]`,
       }
     })
 

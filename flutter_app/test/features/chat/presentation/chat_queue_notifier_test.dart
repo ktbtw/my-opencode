@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:chat_codex_app/core/storage/app_storage.dart';
@@ -540,6 +541,98 @@ void main() {
       expect(notifier.state.contextUsage?.knownContextTokens, 42000);
     },
   );
+
+  test(
+    'history user messages keep their attachments for the preview',
+    () async {
+      // 历史重建时只取文本会让附件预览消失，这里锁住附件回填。
+      final taskJson = {
+        'task_id': 'attach-1',
+        'agent_id': 'agent-1',
+        'project_id': 'project-1',
+        'session_id': 'session-1',
+        'status': 'completed',
+        'result': '收到',
+        'parts': [
+          {'type': 'text', 'text': '看下附件'},
+          {
+            'type': 'file',
+            'mime': 'text/plain',
+            'filename': '新建文本文档.txt',
+            'url':
+                'data:text/plain;base64,${base64Encode(utf8.encode('hello world'))}',
+          },
+        ],
+        'created_at': '2026-07-28T08:00:00Z',
+        'updated_at': '2026-07-28T08:00:00Z',
+      };
+      final repository = _FakeChatRepository();
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+
+      await _loadRawHistory(notifier, repository, [taskJson]);
+
+      final message = notifier.state.messages.firstWhere(
+        (item) => item.role == MessageRole.user,
+      );
+      expect(message.attachedFiles, hasLength(1));
+      expect(message.attachedFiles.single.filename, '新建文本文档.txt');
+      expect(message.attachedFiles.single.mimeType, 'text/plain');
+      expect(
+        utf8.decode(base64Decode(message.attachedFiles.single.base64Data)),
+        'hello world',
+      );
+    },
+  );
+
+  test('attachment-only history messages are not dropped', () async {
+    final repository = _FakeChatRepository();
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+
+    await _loadRawHistory(notifier, repository, [
+      {
+        'task_id': 'attach-only',
+        'agent_id': 'agent-1',
+        'project_id': 'project-1',
+        'session_id': 'session-1',
+        'status': 'completed',
+        'result': '收到',
+        'parts': [
+          {
+            'type': 'file',
+            'mime': 'text/plain',
+            'filename': 'notes.txt',
+            'url':
+                'data:text/plain;base64,${base64Encode(utf8.encode('only file'))}',
+          },
+        ],
+        'created_at': '2026-07-28T08:00:00Z',
+        'updated_at': '2026-07-28T08:00:00Z',
+      },
+    ]);
+
+    final message = notifier.state.messages.firstWhere(
+      (item) => item.role == MessageRole.user,
+    );
+    expect(message.content, '');
+    expect(message.attachedFiles, hasLength(1));
+    expect(message.attachedFiles.single.filename, 'notes.txt');
+  });
 
   test(
     'cold session restores usage from history without sending and clears it on a new session',
@@ -3096,6 +3189,19 @@ const _modelB = ModelInfo(
   name: 'Model B',
   variants: ['low'],
 );
+
+Future<void> _loadRawHistory(
+  ChatNotifier notifier,
+  _FakeChatRepository repository,
+  List<Map<String, dynamic>> tasks,
+) async {
+  // 历史 JSON 必须原样注入：测试替身重新序列化 TaskModel 时会丢掉 file part。
+  final completer = Completer<List<Map<String, dynamic>>>();
+  repository.historyCompleter = completer;
+  final loading = notifier.loadSession('session-1');
+  completer.complete(tasks);
+  await loading;
+}
 
 TaskModel _task(String id, {required TaskStatus status, String result = ''}) {
   return TaskModel(

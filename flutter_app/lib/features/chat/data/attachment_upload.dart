@@ -7,23 +7,54 @@ String attachmentExtensionFromName(String filename) {
   return filename.substring(index + 1).toLowerCase();
 }
 
+// 明确属于二进制/需要原样透传的扩展名。
+const _binaryMimeByExtension = <String, String>{
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'png': 'image/png',
+  'gif': 'image/gif',
+  'webp': 'image/webp',
+  'bmp': 'image/bmp',
+  'pdf': 'application/pdf',
+};
+
+// 文本类扩展名一律按 text/plain 发送。Agent 只会把 mime 恰好为 text/plain 的
+// data: 附件解码成可读文本（opencode prompt.ts），其它 mime 会被当成不透明的
+// file part 透传给模型，多数模型会直接以英文 “not supported” 报错。
+const _textExtensions = <String>{
+  'txt', 'text', 'log', 'md', 'markdown', 'rst',
+  'csv', 'tsv', 'json', 'jsonl', 'ndjson', 'xml', 'html', 'htm', 'css',
+  'yaml', 'yml', 'toml', 'ini', 'cfg', 'conf', 'properties', 'env',
+  'sql', 'sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1',
+  'dart', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte',
+  'py', 'rb', 'php', 'java', 'kt', 'kts', 'gradle', 'scala', 'groovy',
+  'go', 'rs', 'c', 'h', 'cc', 'cpp', 'cxx', 'hpp', 'cs', 'swift', 'm', 'mm',
+  'lua', 'pl', 'r', 'tex', 'srt', 'vtt', 'diff', 'patch', 'pem', 'crt',
+};
+
 String attachmentMimeFromName(String filename, {String? fallbackMimeType}) {
-  return switch (attachmentExtensionFromName(filename)) {
-    'jpg' || 'jpeg' => 'image/jpeg',
-    'png' => 'image/png',
-    'gif' => 'image/gif',
-    'webp' => 'image/webp',
-    'bmp' => 'image/bmp',
-    'pdf' => 'application/pdf',
-    'html' => 'text/html',
-    'css' => 'text/css',
-    'json' => 'application/json',
-    'xml' => 'application/xml',
-    _ =>
-      fallbackMimeType?.trim().isNotEmpty == true
-          ? fallbackMimeType!.trim()
-          : 'text/plain',
-  };
+  final extension = attachmentExtensionFromName(filename);
+  final binary = _binaryMimeByExtension[extension];
+  if (binary != null) return binary;
+  if (_textExtensions.contains(extension)) return 'text/plain';
+  final fallback = fallbackMimeType?.trim() ?? '';
+  return fallback.isNotEmpty ? fallback : 'text/plain';
+}
+
+/// 判断附件能否按文本打开（可预览/编辑）。图片与 PDF 走各自的查看方式。
+bool isTextAttachment(String filename, String mimeType) {
+  if (mimeType.startsWith('image/')) return false;
+  if (mimeType == 'application/pdf') return false;
+  if (mimeType.startsWith('text/')) return true;
+  if (mimeType == 'application/json' ||
+      mimeType.endsWith('+json') ||
+      mimeType == 'application/xml' ||
+      mimeType.endsWith('+xml') ||
+      mimeType == 'application/javascript' ||
+      mimeType == 'application/x-yaml') {
+    return true;
+  }
+  return _textExtensions.contains(attachmentExtensionFromName(filename));
 }
 
 AttachedFile buildAttachedFile({

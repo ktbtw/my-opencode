@@ -1423,6 +1423,132 @@ describe("session.message-v2.toModelMessage", () => {
     const texts = (result[0].content as any[]).filter((p) => p.type === "text")
     expect(texts.map((t) => t.text)).toStrictEqual(["", "hello"])
   })
+
+  test("inlines non-media attachments instead of forwarding an unsupported file part", async () => {
+    // Regression: attachments mislabelled as application/octet-stream (old
+    // clients, already stored history) used to be forwarded as file parts, and
+    // OpenAI compatible providers threw "functionality not supported" which
+    // failed the whole task — including messages sent without any attachment.
+    const messageID = "m-octet-user"
+    const content = "-->BrowserInfo.info=Mozilla/5.0"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          { ...basePart(messageID, "p1"), type: "text", text: "11" },
+          {
+            ...basePart(messageID, "p2"),
+            type: "file",
+            mime: "application/octet-stream",
+            filename: "新建文本文档.txt",
+            url: `data:application/octet-stream;base64,${Buffer.from(content, "utf8").toString("base64")}`,
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, model)
+
+    expect(result).toHaveLength(1)
+    const parts = result[0].content as any[]
+    expect(parts.some((part) => part.type === "file")).toBe(false)
+    expect(parts.map((part) => part.text)).toStrictEqual(["11", `[附件 新建文本文档.txt]\n${content}`])
+  })
+
+  test("degrades non-media binary attachments to a readable notice", async () => {
+    const messageID = "m-binary-user"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          { ...basePart(messageID, "p1"), type: "text", text: "看下这个" },
+          {
+            ...basePart(messageID, "p2"),
+            type: "file",
+            mime: "application/octet-stream",
+            filename: "payload.bin",
+            url: `data:application/octet-stream;base64,${Buffer.from([0x00, 0x01, 0xff, 0xfe]).toString("base64")}`,
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, model)
+
+    const parts = result[0].content as any[]
+    expect(parts.some((part) => part.type === "file")).toBe(false)
+    expect(parts[1].text).toBe("[附件 payload.bin 为二进制内容，无法作为文本读取]")
+  })
+
+  test("keeps image attachments as file parts", async () => {
+    const messageID = "m-image-user"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          { ...basePart(messageID, "p1"), type: "text", text: "看图" },
+          {
+            ...basePart(messageID, "p2"),
+            type: "file",
+            mime: "image/png",
+            filename: "shot.png",
+            url: `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64")}`,
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, model)
+
+    const parts = result[0].content as any[]
+    expect(parts.some((part) => part.type === "file" && part.mediaType === "image/png")).toBe(true)
+  })
+
+  test("provider transform degrades unmappable file parts instead of forwarding them", () => {
+    const msgs = [
+      {
+        role: "user" as const,
+        content: [
+          { type: "text" as const, text: "hello" },
+          {
+            type: "file" as const,
+            mediaType: "application/octet-stream",
+            data: new Uint8Array([1, 2, 3]),
+            filename: "payload.zip",
+          },
+        ],
+      },
+    ]
+
+    const result = ProviderTransform.message(msgs as any, model, {})
+
+    const parts = result[0].content as any[]
+    expect(parts.some((part) => part.type === "file")).toBe(false)
+    expect(parts[1].text).toContain("payload.zip")
+  })
+
+  test("provider transform notices an unsupported modality without English error text", () => {
+    const msgs = [
+      {
+        role: "user" as const,
+        content: [
+          {
+            type: "file" as const,
+            mediaType: "application/pdf",
+            data: new Uint8Array([1, 2, 3]),
+            filename: "doc.pdf",
+          },
+        ],
+      },
+    ]
+
+    const result = ProviderTransform.message(msgs as any, model, {})
+
+    const parts = result[0].content as any[]
+    expect(parts).toHaveLength(1)
+    expect(parts[0].text).toContain("doc.pdf")
+    expect(parts[0].text).not.toContain("ERROR: Cannot read")
+  })
 })
 
 describe("session.message-v2.fromError", () => {

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'reply_statistics.dart';
 export 'reply_statistics.dart';
@@ -952,6 +953,7 @@ class TaskModel {
   final String? result;
   final String? error;
   final String? userText;
+  final List<AttachedFile> attachedFiles;
   final List<AiArtifact> artifacts;
   final ApprovalInfo? approval;
   final QuestionRequestInfo? question;
@@ -967,6 +969,7 @@ class TaskModel {
     this.result,
     this.error,
     this.userText,
+    this.attachedFiles = const [],
     this.artifacts = const [],
     this.approval,
     this.question,
@@ -1002,6 +1005,7 @@ class TaskModel {
           .toList();
       if (textParts.isNotEmpty) userText = textParts.join('\n');
     }
+    final attachedFiles = attachedFilesFromParts(parts);
     final artifacts = (j['artifacts'] as List<dynamic>? ?? [])
         .whereType<Map<String, dynamic>>()
         .map(AiArtifact.fromJson)
@@ -1015,6 +1019,7 @@ class TaskModel {
       result: j['result'] as String?,
       error: j['error'] as String?,
       userText: userText,
+      attachedFiles: attachedFiles,
       artifacts: artifacts,
       approval: approval,
       question: question,
@@ -1791,4 +1796,55 @@ class AttachedFile {
 
   bool get isImage => mimeType.startsWith('image/');
   bool get isPdf => mimeType == 'application/pdf';
+}
+
+// 历史消息回填附件预览时，过大的 base64 不再驻留内存：仍保留文件名与类型用于
+// 展示，只是打开时提示内容未保留，避免长会话里附件把内存撑爆。
+const _maxRestoredAttachmentChars = 4 * 1024 * 1024;
+
+List<AttachedFile> attachedFilesFromParts(List<dynamic>? parts) {
+  if (parts == null || parts.isEmpty) return const [];
+  final files = <AttachedFile>[];
+  for (var index = 0; index < parts.length; index++) {
+    final raw = parts[index];
+    if (raw is! Map) continue;
+    final part = Map<String, dynamic>.from(raw);
+    if (part['type']?.toString() != 'file') continue;
+    final file = attachedFileFromPart(part, index: index);
+    if (file != null) files.add(file);
+  }
+  return files;
+}
+
+AttachedFile? attachedFileFromPart(
+  Map<String, dynamic> part, {
+  int index = 0,
+}) {
+  final url = part['url']?.toString().trim() ?? '';
+  final filename = part['filename']?.toString().trim() ?? '';
+  if (url.isEmpty && filename.isEmpty) return null;
+
+  final comma = url.indexOf(',');
+  final header = comma > 0 ? url.substring(0, comma) : '';
+  final body = comma > 0 ? url.substring(comma + 1) : '';
+  var mime = part['mime']?.toString().trim() ?? '';
+  if (mime.isEmpty && header.length > 5) {
+    mime = header.substring(5).split(';').first.trim();
+  }
+  if (mime.isEmpty) mime = 'application/octet-stream';
+
+  var base64 = '';
+  if (body.isNotEmpty && url.length <= _maxRestoredAttachmentChars) {
+    base64 = header.contains(';base64')
+        ? body
+        : base64Encode(utf8.encode(Uri.decodeComponent(body)));
+  }
+
+  return AttachedFile(
+    id: part['id']?.toString() ?? 'part_${index}_$filename',
+    filename: filename.isEmpty ? '未命名文件' : filename,
+    mimeType: mime,
+    base64Data: base64,
+    sizeBytes: (base64.length * 3) ~/ 4,
+  );
 }

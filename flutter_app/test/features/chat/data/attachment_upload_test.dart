@@ -9,9 +9,9 @@ void main() {
     expect(attachmentExtensionFromName('no_extension'), '');
   });
 
-  test('attachmentMimeFromName prefers known extension mapping', () {
+  test('attachmentMimeFromName keeps binary mappings and fallback', () {
     expect(attachmentMimeFromName('demo.jpg'), 'image/jpeg');
-    expect(attachmentMimeFromName('demo.json'), 'application/json');
+    expect(attachmentMimeFromName('demo.pdf'), 'application/pdf');
     expect(
       attachmentMimeFromName(
         'demo.unknown',
@@ -19,6 +19,27 @@ void main() {
       ),
       'application/octet-stream',
     );
+  });
+
+  test('text attachments stay text/plain even with a binary drop fallback', () {
+    // 拖拽/网页入口会以 application/octet-stream 兜底；文本文件必须仍然归类为
+    // text/plain，否则 Agent 会把它当不透明 file part 交给模型并报英文错误。
+    const fallback = 'application/octet-stream';
+    for (final name in [
+      'notes.txt',
+      'README.md',
+      'data.csv',
+      'app.log',
+      'conf.yaml',
+      'main.dart',
+      'a.json',
+    ]) {
+      expect(
+        attachmentMimeFromName(name, fallbackMimeType: fallback),
+        'text/plain',
+        reason: name,
+      );
+    }
   });
 
   test('buildAttachedFile encodes payload and size', () {

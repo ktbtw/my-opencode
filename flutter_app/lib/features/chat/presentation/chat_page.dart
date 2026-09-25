@@ -35,6 +35,7 @@ import 'attachment_drop_support.dart';
 import 'attachment_drop_target.dart';
 import 'chat_provider.dart';
 import 'artifact_image_viewer_page.dart';
+import 'attachment_viewer_page.dart';
 import 'artifact_download_notification.dart';
 import 'chat_target_picker.dart';
 import 'message_renderer.dart';
@@ -4076,23 +4077,35 @@ class _AttachmentChip extends StatelessWidget {
   final AttachedFile file;
   const _AttachmentChip({super.key, required this.file});
 
+  void _open(BuildContext context) {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(builder: (_) => AttachmentViewerPage(file: file)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bytes = file.imageBytes;
-    if (file.isImage && bytes != null) {
-      return ClipRRect(
-        borderRadius: AppRadius.smRadius,
-        child: Image.memory(
-          bytes,
-          width: 100,
-          height: 100,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          errorBuilder: (_, __, ___) => _FileChip(file: file),
-        ),
-      );
-    }
-    return _FileChip(file: file);
+    final child = file.isImage && bytes != null
+        ? ClipRRect(
+            borderRadius: AppRadius.smRadius,
+            child: Image.memory(
+              bytes,
+              width: 100,
+              height: 100,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (_, __, ___) => _FileChip(file: file),
+            ),
+          )
+        : _FileChip(file: file);
+    return GestureDetector(
+      onTap: () => _open(context),
+      child: Tooltip(
+        message: '${file.filename} · 点击查看',
+        child: child,
+      ),
+    );
   }
 }
 
@@ -8284,25 +8297,32 @@ class _FilePreviewChip extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: AppColors.inputBackground,
-              borderRadius: AppRadius.smRadius,
-              border: Border.all(color: AppColors.border),
+          GestureDetector(
+            onTap: () => Navigator.of(context, rootNavigator: true).push(
+              MaterialPageRoute(
+                builder: (_) => AttachmentViewerPage(file: file),
+              ),
             ),
-            child: bytes != null
-                ? ClipRRect(
-                    borderRadius: AppRadius.smRadius,
-                    child: Image.memory(
-                      bytes,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, __, ___) => _fileIcon(file),
-                    ),
-                  )
-                : _fileIcon(file),
+            child: Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.inputBackground,
+                borderRadius: AppRadius.smRadius,
+                border: Border.all(color: AppColors.border),
+              ),
+              child: bytes != null
+                  ? ClipRRect(
+                      borderRadius: AppRadius.smRadius,
+                      child: Image.memory(
+                        bytes,
+                        fit: BoxFit.cover,
+                        gaplessPlayback: true,
+                        errorBuilder: (_, __, ___) => _fileIcon(file),
+                      ),
+                    )
+                  : _fileIcon(file),
+            ),
           ),
           // 文件名（底部）
           Positioned(

@@ -18,6 +18,7 @@ import * as ProviderError from "@/provider/error"
 import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
+import { decodeTextDataUrl } from "@/util/data-url"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
@@ -736,7 +737,20 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
-          if (options?.stripMedia && isMedia(part.mime)) {
+          if (!isMedia(part.mime)) {
+            // Providers reject non-media file parts (OpenAI compatible ones throw
+            // UnsupportedFunctionalityError and fail the whole task). Attachments
+            // mislabelled as application/octet-stream — old clients and already
+            // stored history — are inlined as text so the content stays readable.
+            const text = decodeTextDataUrl(part.url)
+            userMessage.parts.push({
+              type: "text",
+              text:
+                text === undefined
+                  ? `[附件 ${part.filename ?? "file"} 为二进制内容，无法作为文本读取]`
+                  : `[附件 ${part.filename ?? "file"}]\n${text}`,
+            })
+          } else if (options?.stripMedia) {
             userMessage.parts.push({
               type: "text",
               text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,
