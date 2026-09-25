@@ -9,3 +9,4 @@
 - Wants responsive layouts (adaptive to mobile and PC/web). Confidence: 0.75
 - Dislikes pages assembled from several separate stacked cards; prefers one cohesive surface ("更整体") where sections are grouped by whitespace and heading hierarchy rather than nested borders/cards. Confidence: 0.7
 - Dislikes UI overflow/occlusion; wants consistent component heights, alignment, and unified icon styling (icons redrawn in the primary color, same style). Confidence: 0.65
+- Does not accept English error messages surfacing in the UI — raw third-party/backend error strings (e.g. "unsupported content type", "invalid ...", "file too large") must not be passed through untranslated; user-visible error/diagnostic text should be Chinese and user-friendly, consistent with the otherwise-Chinese UI. Confidence: 0.6
