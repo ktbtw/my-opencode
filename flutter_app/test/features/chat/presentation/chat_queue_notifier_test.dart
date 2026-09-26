@@ -748,6 +748,383 @@ void main() {
     expect(_agentMessage(notifier, 'task-1').content, expected.toString());
   });
 
+  test('stopping keeps body, thinking and tool history', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('stop-keep', status: TaskStatus.running)]
+      ..snapshots['stop-keep'] = const TaskEventSnapshot();
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('stop-keep');
+    events.add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '已有正文',
+      'sequence': 1,
+    });
+    events.add({
+      'type': 'delta',
+      'field': 'reasoning',
+      'content': '已有思考',
+      'sequence': 2,
+    });
+    events.add(
+      _toolUpdated(
+        id: 'tool-1',
+        callId: 'call-1',
+        tool: 'bash',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:03Z',
+      ),
+    );
+    await _eventually(
+      () => _agentMessage(notifier, 'stop-keep').toolCalls.isNotEmpty,
+    );
+    expect(_agentMessage(notifier, 'stop-keep').content, '已有正文');
+
+    await notifier.cancelCurrentTask();
+    events.add({'type': 'cancelling', 'sequence': 10});
+    events.add({'type': 'cancelled', 'sequence': 11});
+    await _eventually(
+      () => _agentMessage(notifier, 'stop-keep').state == MessageState.done,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    final message = _agentMessage(notifier, 'stop-keep');
+    expect(message.content, '已有正文');
+    expect(message.thinkingContent, '已有思考');
+    expect(message.toolCalls, isNotEmpty);
+  });
+
+  test(
+    'stopping then background and resume keeps the reply content',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('stop-resume', status: TaskStatus.running)]
+        ..snapshots['stop-resume'] = const TaskEventSnapshot();
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      repository.taskEvents('stop-resume').add({
+        'type': 'delta',
+        'field': 'text',
+        'content': '停止前的正文',
+        'sequence': 1,
+      });
+      await _eventually(
+        () => _agentMessage(notifier, 'stop-resume').content == '停止前的正文',
+      );
+
+      await notifier.cancelCurrentTask();
+      repository.taskEvents('stop-resume').add({
+        'type': 'cancelled',
+        'sequence': 2,
+      });
+      await _eventually(
+        () => _agentMessage(notifier, 'stop-resume').state == MessageState.done,
+      );
+
+      // 用户描述的路径：停止后切后台 → 回前台 → 再进对话页。
+      notifier.markAppBackgrounded();
+      notifier.setPageVisible(false);
+      notifier.setPageVisible(true);
+      await notifier.reconcileAfterResume();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(_agentMessage(notifier, 'stop-resume').content, '停止前的正文');
+    },
+  );
+
+  test('a failed event keeps a body that only lived in content', () async {
+    // 历史恢复得到的正文只写在 content（blocks 为空）。失败事件曾经无条件
+    // 覆盖 content，导致整段正文消失、气泡只剩失败文案。
+    final repository = _FakeChatRepository()
+      ..history = [
+        _task('fail-body', status: TaskStatus.running, result: '此前已恢复的正文'),
+      ];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    expect(_agentMessage(notifier, 'fail-body').content, '此前已恢复的正文');
+
+    repository.taskEvents('fail-body').add({
+      'type': 'failed',
+      'error': '任务执行失败',
+      'sequence': 5,
+    });
+    await _eventually(
+      () => _agentMessage(notifier, 'fail-body').state == MessageState.failed,
+    );
+
+    final blocks = _agentMessage(notifier, 'fail-body').blocks;
+    expect(
+      blocks.where((block) => block.type == ChatMessageBlockType.text).map(
+        (block) => block.text,
+      ),
+      contains('此前已恢复的正文'),
+    );
+  });
+
+  test('a stop reported as failed keeps the reply and shows a stop hint', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('stop-failed', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('stop-failed');
+    events.add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '停止前的正文',
+      'sequence': 1,
+    });
+    events.add({
+      'type': 'delta',
+      'field': 'reasoning',
+      'content': '停止前的思考',
+      'sequence': 2,
+    });
+    events.add(
+      _toolUpdated(
+        id: 'tool-stop',
+        callId: 'call-stop',
+        tool: 'bash',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:03Z',
+      ),
+    );
+    await _eventually(
+      () => _agentMessage(notifier, 'stop-failed').toolCalls.isNotEmpty,
+    );
+
+    await notifier.cancelCurrentTask();
+    // 服务端把「用户停止」上报成 failed，而不是 cancelled。
+    events.add({'type': 'failed', 'error': '请求已被中止', 'sequence': 9});
+    await _eventually(() => !notifier.state.taskActive);
+
+    final message = _agentMessage(notifier, 'stop-failed');
+    expect(message.state, MessageState.done);
+    expect(message.statusHint, '任务已停止');
+    expect(message.content, '停止前的正文');
+    expect(message.thinkingContent, '停止前的思考');
+    expect(message.toolCalls, isNotEmpty);
+  });
+
+  test('a genuine failure keeps thinking and tool history', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('fail-tools', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('fail-tools');
+    events.add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '失败前的正文',
+      'sequence': 1,
+    });
+    events.add({
+      'type': 'delta',
+      'field': 'reasoning',
+      'content': '失败前的思考',
+      'sequence': 2,
+    });
+    events.add(
+      _toolUpdated(
+        id: 'tool-fail',
+        callId: 'call-fail',
+        tool: 'bash',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:03Z',
+      ),
+    );
+    await _eventually(
+      () => _agentMessage(notifier, 'fail-tools').toolCalls.isNotEmpty,
+    );
+
+    events.add({'type': 'failed', 'error': '模型调用失败', 'sequence': 9});
+    await _eventually(
+      () => _agentMessage(notifier, 'fail-tools').state == MessageState.failed,
+    );
+
+    final message = _agentMessage(notifier, 'fail-tools');
+    // 失败时正文会被失败文案替换（既有设计），但思考与工具记录必须保留。
+    expect(message.thinkingContent, '失败前的思考');
+    expect(message.toolCalls, isNotEmpty);
+    expect(
+      message.blocks.where((block) => block.type == ChatMessageBlockType.text),
+      isNotEmpty,
+    );
+  });
+
+  test('rebuilding a session keeps the live content of an active task', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('live-keep', status: TaskStatus.running)];
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    final events = repository.taskEvents('live-keep');
+    events.add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '直播间正文',
+      'sequence': 1,
+    });
+    events.add({
+      'type': 'delta',
+      'field': 'reasoning',
+      'content': '直播间思考',
+      'sequence': 2,
+    });
+    events.add(
+      _toolUpdated(
+        id: 'tool-live',
+        callId: 'call-live',
+        tool: 'bash',
+        status: 'running',
+        sentAt: '2026-07-28T08:00:03Z',
+      ),
+    );
+    await _eventually(
+      () => _agentMessage(notifier, 'live-keep').toolCalls.isNotEmpty,
+    );
+
+    // 进入会话 / 切回会话会重建消息列表，任务仍在运行时重建不能清空已产出的内容。
+    await notifier.loadSession('session-1');
+
+    final message = _agentMessage(notifier, 'live-keep');
+    expect(message.content, '直播间正文');
+    expect(message.thinkingContent, '直播间思考');
+    expect(message.toolCalls, isNotEmpty);
+  });
+
+  test('a stale-history guard still merges thinking and tools', () async {
+    // 重连补发先到会让 owner 守卫不再整份丢弃快照：思考/工具照常合并，
+    // 只有直播间正文优先保留。
+    final repository = _FakeChatRepository()
+      ..history = [_task('merge-snap', status: TaskStatus.running)]
+      ..snapshotCompleter = Completer<TaskEventSnapshot>();
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    final loading = notifier.loadSession('session-1');
+    await _eventually(
+      () => repository.snapshotReads.contains('merge-snap'),
+    );
+    repository.taskEvents('merge-snap').add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '直播间正文',
+      'sequence': 1,
+    });
+    await _eventually(
+      () => _agentMessage(notifier, 'merge-snap').content == '直播间正文',
+    );
+
+    repository.snapshotCompleter!.complete(
+      const TaskEventSnapshot(complete: false, reasoning: '历史思考'),
+    );
+    repository.snapshotCompleter = null;
+    await loading;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    final message = _agentMessage(notifier, 'merge-snap');
+    expect(message.content, '直播间正文');
+    expect(message.thinkingContent, '历史思考');
+  });
+
+  test('an empty hydration retries once on its own', () async {
+    final repository = _FakeChatRepository()
+      ..history = [_task('retry-snap', status: TaskStatus.running)]
+      ..snapshotCompleter = Completer<TaskEventSnapshot>()
+      ..snapshots['retry-snap'] = const TaskEventSnapshot(
+        reasoning: '重试后的思考',
+      );
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    final loading = notifier.loadSession('session-1');
+    await _eventually(
+      () => repository.snapshotReads.contains('retry-snap'),
+    );
+    repository.taskEvents('retry-snap').add({
+      'type': 'delta',
+      'field': 'text',
+      'content': '直播间正文',
+      'sequence': 1,
+    });
+    await _eventually(
+      () => _agentMessage(notifier, 'retry-snap').content == '直播间正文',
+    );
+    repository.snapshotCompleter!.complete(const TaskEventSnapshot());
+    repository.snapshotCompleter = null;
+    await loading;
+
+    await _eventually(
+      () => repository.snapshotReads.length >= 2,
+      timeout: const Duration(seconds: 5),
+    );
+    await _eventually(
+      () => _agentMessage(notifier, 'retry-snap').thinkingContent.isNotEmpty,
+      timeout: const Duration(seconds: 5),
+    );
+    expect(_agentMessage(notifier, 'retry-snap').thinkingContent, '重试后的思考');
+  });
+
   test(
     'a second foreground recovery supersedes a stalled old task read',
     () async {
@@ -3336,8 +3713,11 @@ ChatQueueItem _queueItem(
   );
 }
 
-Future<void> _eventually(bool Function() predicate) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 2));
+Future<void> _eventually(
+  bool Function() predicate, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
   while (!predicate()) {
     if (DateTime.now().isAfter(deadline)) {
       fail('condition was not met before timeout');

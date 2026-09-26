@@ -168,6 +168,77 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  test('adjacent same-task replies merge into one surface', () {
+    // 目标模式轮次、子代理唤醒轮次之间没有 background 事件，
+    // 之前会因为「紧邻」被拆成多个气泡。
+    final messages = [
+      reply('round1'),
+      reply('round2'),
+      reply('round3', live: true),
+      reply('other', task: 'other'),
+      event('job', user: true),
+      reply('after-user'),
+    ];
+    final groups = groupReplyDisplay(messages, continuous: true);
+    expect(groups.map((g) => g.map((m) => m.id).toList()), [
+      ['round1', 'round2', 'round3'],
+      ['other'],
+      ['job'],
+      ['after-user'],
+    ]);
+  });
+
+  testWidgets('one group renders a single merged thinking block', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final first = reply('第一轮正文')
+      ..thinkingContent = '第一轮推理';
+    final last = reply('第二轮正文', live: true)
+      ..thinkingContent = '第二轮推理';
+    await tester.pumpWidget(surface([first, event('检查文件'), last]));
+    await tester.pump();
+
+    // 合并前：两段各渲染一个思考块，第二块夹在两条正文之间。
+    expect(find.text('思考中...'), findsOneWidget);
+    expect(find.text('已完成思考'), findsNothing);
+
+    await tester.tap(find.text('思考中...'));
+    await tester.pump();
+    expect(find.text('第一轮推理\n\n第二轮推理'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('adjacent rounds share one thinking block too', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final first = reply('第一轮正文')..thinkingContent = '第一轮推理';
+    final second = reply('第二轮正文', live: true)..thinkingContent = '第二轮推理';
+    await tester.pumpWidget(surface([first, second]));
+    await tester.pump();
+
+    expect(find.text('思考中...'), findsOneWidget);
+    expect(find.text('已完成思考'), findsNothing);
+    await tester.tap(find.text('思考中...'));
+    await tester.pump();
+    expect(find.text('第一轮推理\n\n第二轮推理'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('one group renders the stats row once', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final messages = [
+      reply('第一轮正文'),
+      event('检查文件'),
+      reply('第二轮正文'),
+    ];
+    await tester.pumpWidget(surface(messages));
+    await tester.pump();
+
+    // 两条已完成正文合并成一段后，统计行/复制按钮不该出现两次。
+    expect(find.text('复制'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('restored events do not replay entry animation', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(surface([reply('A'), event('job'), reply('B')]));

@@ -3,7 +3,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { formatPatch, structuredPatch } from "diff"
 import path from "path"
 import { Glob } from "@opencode-ai/core/util/glob"
-import { readdir, stat, statfs } from "node:fs/promises"
+import { readdir, rm, stat, statfs } from "node:fs/promises"
 import { AppProcess } from "@opencode-ai/core/process"
 import { InstanceState } from "@/effect/instance-state"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
@@ -138,6 +138,47 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
             ),
           )
 
+          // git never removes an index.lock left behind by a killed process, and
+          // one stale lock used to fail every later snapshot write (including
+          // messages that only read). Retry index-lock contention and drop the
+          // lock file once it is old enough that no live git can still own it.
+          const indexLockPath = path.join(state.gitdir, "index.lock")
+          const staleIndexLockMs = 10_000
+          const isIndexLockError = (stderr: string) =>
+            stderr.includes("index.lock") &&
+            /(File exists|Unable to create|Another git process)/i.test(stderr)
+
+          const clearStaleIndexLock = Effect.fnUntraced(function* () {
+            const info = yield* Effect.promise(() => stat(indexLockPath).catch(() => undefined))
+            if (!info) return false
+            if (Date.now() - info.mtimeMs < staleIndexLockMs) return false
+            const removed = yield* Effect.promise(() =>
+              rm(indexLockPath, { force: true }).then(
+                () => true,
+                () => false,
+              ),
+            )
+            if (removed) log.warn("removed stale snapshot index lock", { path: indexLockPath })
+            return removed
+          })
+
+          const gitIndex = Effect.fnUntraced(function* (
+            cmd: string[],
+            opts?: { cwd?: string; env?: Record<string, string>; stdin?: string },
+          ) {
+            let result = yield* git(cmd, opts)
+            for (let attempt = 0; attempt < 4 && result.code !== 0 && isIndexLockError(result.stderr); attempt++) {
+              if (!(yield* clearStaleIndexLock())) {
+                yield* Effect.sleep(`${150 * (attempt + 1)} millis`)
+              }
+              log.warn("retrying snapshot index write after lock contention", {
+                attempt: attempt + 1,
+              })
+              result = yield* git(cmd, opts)
+            }
+            return result
+          })
+
           const ignore = Effect.fnUntraced(function* (files: string[]) {
             if (!files.length) return new Set<string>()
             const check = yield* git(
@@ -164,7 +205,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
 
           const drop = Effect.fnUntraced(function* (files: string[]) {
             if (!files.length) return
-            const result = yield* git(
+            const result = yield* gitIndex(
               [
                 ...cfg,
                 ...args(["rm", "--cached", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"]),
@@ -181,7 +222,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
 
           const stage = Effect.fnUntraced(function* (files: string[]) {
             if (!files.length) return
-            const result = yield* git(
+            const result = yield* gitIndex(
               [...cfg, ...args(["add", "--all", "--sparse", "--pathspec-from-file=-", "--pathspec-file-nul"])],
               {
                 cwd: state.worktree,
@@ -416,10 +457,10 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
             return yield* locked(
               Effect.gen(function* () {
                 log.info("restore", { commit: snapshot })
-                const result = yield* git([...core, ...args(["read-tree", snapshot])], { cwd: state.worktree })
+                const result = yield* gitIndex([...core, ...args(["read-tree", snapshot])], { cwd: state.worktree })
                 if (result.code === 0) {
                   yield* dropSnapshotExcludedFiles()
-                  const checkout = yield* git([...core, ...args(["checkout-index", "-a", "-f"])], {
+                  const checkout = yield* gitIndex([...core, ...args(["checkout-index", "-a", "-f"])], {
                     cwd: state.worktree,
                   })
                   if (checkout.code === 0) return
@@ -458,7 +499,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProce
 
                 const single = Effect.fnUntraced(function* (op: (typeof ops)[number]) {
                   log.info("reverting", { file: op.file, hash: op.hash })
-                  const result = yield* git([...core, ...args(["checkout", op.hash, "--", op.file])], {
+                  const result = yield* gitIndex([...core, ...args(["checkout", op.hash, "--", op.file])], {
                     cwd: state.worktree,
                   })
                   if (result.code === 0) return

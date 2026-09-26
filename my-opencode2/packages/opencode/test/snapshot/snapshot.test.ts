@@ -1192,3 +1192,42 @@ it.instance(
     for (const name of names) expect(yield* readText(path.join(tmp.path, name))).toBe("current runtime")
   })), { git: true },
 )
+
+// A killed git (crash, forced agent restart, sleep) leaves index.lock behind and
+// git never clears it, so before this the project failed every later snapshot
+// write — and snapshot writes run on task start, each tool call and completion.
+const forceIndexedExcludedFile = Effect.fn("SnapshotTest.forceIndexedExcludedFile")(function* (dir: string) {
+  const ctx = yield* InstanceState.context
+  const gitdir = path.join(Global.Path.data, "snapshot", ctx.project.id, Hash.fast(ctx.worktree))
+  yield* write(path.join(dir, "node_modules/pkg/index.js"), "cached")
+  yield* exec(dir, ["git", "--git-dir", gitdir, "--work-tree", dir, "add", "-f", "--", "node_modules/pkg/index.js"])
+  return { gitdir, lock: path.join(gitdir, "index.lock") }
+})
+
+it.instance(
+  "clears a stale index lock instead of failing the snapshot",
+  withTrackedSnapshot(({ tmp, snapshot }) => Effect.gen(function* () {
+    const { lock } = yield* forceIndexedExcludedFile(tmp.path)
+    yield* write(lock, "")
+    const past = new Date(Date.now() - 60_000)
+    yield* Effect.promise(() => fs.utimes(lock, past, past))
+
+    const hash = yield* snapshot.track()
+
+    expect(hash).toBeTruthy()
+    expect(yield* exists(lock)).toBe(false)
+  })), { git: true },
+)
+
+it.instance(
+  "leaves a fresh index lock to its owner",
+  withTrackedSnapshot(({ tmp, snapshot }) => Effect.gen(function* () {
+    const { lock } = yield* forceIndexedExcludedFile(tmp.path)
+    yield* write(lock, "")
+
+    const result = yield* snapshot.track().pipe(Effect.exit)
+
+    expect(result._tag).toBe("Failure")
+    expect(yield* exists(lock)).toBe(true)
+  })), { git: true },
+)

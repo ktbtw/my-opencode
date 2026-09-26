@@ -1,14 +1,18 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
+
 import '../../../../core/theme/app_colors.dart';
 import '../../data/chat_model.dart';
+import '../chat_provider.dart';
+import 'inline_activity_hint.dart';
 
 /// A small live status within the conversation flow. Only the 18px glyph
 /// repaints on animation ticks; message text and Markdown are not rebuilt.
-class AgentActivityIndicator extends StatefulWidget {
+class AgentActivityIndicator extends StatelessWidget {
   final ChatMessage message;
   final bool stopping;
   final String statusHint;
+  final String? operationTitle;
+  final List<ChatOperationStep> operationSteps;
   final VoidCallback? onRetryHistory;
 
   const AgentActivityIndicator({
@@ -16,77 +20,49 @@ class AgentActivityIndicator extends StatefulWidget {
     required this.message,
     this.stopping = false,
     this.statusHint = '',
+    this.operationTitle,
+    this.operationSteps = const [],
     this.onRetryHistory,
   });
 
-  @override
-  State<AgentActivityIndicator> createState() => _AgentActivityIndicatorState();
-}
-
-class _AgentActivityIndicatorState extends State<AgentActivityIndicator>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
-  late final AnimationController _motion;
-  bool _foreground = true;
-  bool _reduceMotion = false;
-  bool _tickerEnabled = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _motion = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    );
-    final lifecycle = WidgetsBinding.instance.lifecycleState;
-    _foreground = lifecycle == null || lifecycle == AppLifecycleState.resumed;
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _reduceMotion = MediaQuery.disableAnimationsOf(context);
-    _tickerEnabled = TickerMode.of(context);
-    _updateMotion();
-  }
-
-  @override
-  void didUpdateWidget(covariant AgentActivityIndicator oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _updateMotion();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _foreground = state == AppLifecycleState.resumed;
-    _updateMotion();
-  }
-
-  void _updateMotion() {
-    final active =
-        (widget.message.state == MessageState.streaming &&
-            widget.message.historyDetails != HistoryDetailsState.deferred) ||
-        widget.message.historyDetails == HistoryDetailsState.loading;
-    if (active && _foreground && _tickerEnabled && !_reduceMotion) {
-      if (!_motion.isAnimating) _motion.repeat();
-    } else {
-      _motion.stop();
-      _motion.value = .25;
-    }
-  }
-
   bool get _hasText =>
-      widget.message.content.trim().isNotEmpty ||
-      widget.message.blocks.any(
+      message.content.trim().isNotEmpty ||
+      message.blocks.any(
         (block) =>
             block.type == ChatMessageBlockType.text &&
             block.text.trim().isNotEmpty,
       );
 
+  /// 当前最值得展示的那一步：失败 > 进行中 > 最后完成 > 第一步。
+  ChatOperationStep? get _flowStep {
+    if (operationSteps.isEmpty) return null;
+    for (final step in operationSteps) {
+      if (step.state == ChatOperationStepState.failed) return step;
+    }
+    for (final step in operationSteps) {
+      if (step.state == ChatOperationStepState.active) return step;
+    }
+    for (final step in operationSteps.reversed) {
+      if (step.state == ChatOperationStepState.done) return step;
+    }
+    return operationSteps.first;
+  }
+
+  bool get _flowFailed =>
+      operationSteps.any((step) => step.state == ChatOperationStepState.failed);
+
   String get _label {
-    final message = widget.message;
-    if (widget.stopping || message.statusHint == '正在停止') return '正在停止';
-    if (widget.statusHint.trim().isNotEmpty) return widget.statusHint.trim();
+    // 恢复 / 停止的流程状态直接写进这一行：标题 · 当前阶段，
+    // 不再在气泡下另铺一层阶段条目。
+    if (operationSteps.isNotEmpty) {
+      final title = operationTitle?.trim() ?? '';
+      final step = _flowStep;
+      final stage = step == null ? '' : '${step.label} ${step.detail}'.trim();
+      if (title.isEmpty) return stage.isEmpty ? '正在处理' : stage;
+      return stage.isEmpty ? title : '$title · $stage';
+    }
+    if (stopping || message.statusHint == '正在停止') return '正在停止';
+    if (statusHint.trim().isNotEmpty) return statusHint.trim();
     if (message.state != MessageState.streaming) {
       if (message.historyDetails == HistoryDetailsState.loading) {
         return '正在恢复工具调用历史';
@@ -119,15 +95,18 @@ class _AgentActivityIndicatorState extends State<AgentActivityIndicator>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.message.state != MessageState.streaming &&
-        widget.message.historyDetails == HistoryDetailsState.none) {
+    // 恢复 / 停止的流程阶段挂着时，即使气泡本身已收尾也要显示轻提示，
+    // 否则流程会随气泡一起消失（原先由顶部进度条兜底）。
+    if (operationSteps.isEmpty &&
+        message.state != MessageState.streaming &&
+        message.historyDetails == HistoryDetailsState.none) {
       return const SizedBox.shrink();
     }
-    if (widget.message.historyDetails == HistoryDetailsState.deferred) {
+    if (message.historyDetails == HistoryDetailsState.deferred) {
       return Align(
         alignment: Alignment.centerLeft,
         child: TextButton.icon(
-          onPressed: widget.onRetryHistory,
+          onPressed: onRetryHistory,
           icon: const Icon(Icons.history_rounded, size: 16),
           label: const Text('查看工具调用', style: TextStyle(fontSize: 12)),
           style: TextButton.styleFrom(
@@ -138,135 +117,30 @@ class _AgentActivityIndicatorState extends State<AgentActivityIndicator>
         ),
       );
     }
-    final label = _label;
-    final recovering = widget.message.streamRecovery == StreamRecovery.syncing;
-    final showHint =
-        recovering &&
-        widget.message.statusHint != '正在停止' &&
-        !widget.stopping &&
-        !_hasText &&
-        widget.message.thinkingContent.isEmpty;
 
+    final recovering = message.streamRecovery == StreamRecovery.syncing;
+    final caption =
+        recovering &&
+            message.statusHint != '正在停止' &&
+            !stopping &&
+            !_hasText &&
+            message.thinkingContent.isEmpty
+        ? '稍等片刻，接上刚才的进度'
+        : null;
     final canRetry =
-        widget.message.historyDetails == HistoryDetailsState.partial &&
-        widget.onRetryHistory != null;
-    return Semantics(
-      liveRegion: true,
-      label: canRetry ? '$label，重试' : label,
-      button: canRetry,
-      onTap: canRetry ? widget.onRetryHistory : null,
-      child: ExcludeSemantics(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 3),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  RepaintBoundary(
-                    child: CustomPaint(
-                      key: const ValueKey('agent-activity-glyph'),
-                      size: const Size(18, 18),
-                      painter: _ActivityGlyph(_motion),
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  Flexible(
-                    child: AnimatedSwitcher(
-                      duration: _reduceMotion
-                          ? Duration.zero
-                          : const Duration(milliseconds: 220),
-                      // Fade in place so switching states never shifts the baseline.
-                      layoutBuilder: (current, previous) => Stack(
-                        alignment: Alignment.centerLeft,
-                        children: [...previous, if (current != null) current],
-                      ),
-                      child: Text(
-                        label,
-                        key: ValueKey(label),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          height: 1.6,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (canRetry) ...[
-                    const SizedBox(width: 4),
-                    TextButton(
-                      onPressed: widget.onRetryHistory,
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        minimumSize: const Size(44, 44),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text(
-                        '重试',
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.6,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              if (showHint)
-                const Padding(
-                  padding: EdgeInsets.only(left: 27, top: 3),
-                  child: Text(
-                    '稍等片刻，接上刚才的进度',
-                    style: TextStyle(
-                      fontSize: 11,
-                      height: 1.6,
-                      color: AppColors.textMuted,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
+        message.historyDetails == HistoryDetailsState.partial &&
+        onRetryHistory != null;
+
+    return InlineActivityHint(
+      label: _label,
+      emphasizeError: _flowFailed,
+      caption: caption,
+      animate:
+          (message.state == MessageState.streaming &&
+              message.historyDetails != HistoryDetailsState.deferred) ||
+          message.historyDetails == HistoryDetailsState.loading ||
+          operationSteps.isNotEmpty,
+      onRetry: canRetry ? onRetryHistory : null,
     );
   }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _motion.dispose();
-    super.dispose();
-  }
-}
-
-class _ActivityGlyph extends CustomPainter {
-  final Animation<double> motion;
-  _ActivityGlyph(this.motion) : super(repaint: motion);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    for (var i = 0; i < 3; i++) {
-      final wave = (1 - math.cos((motion.value + i / 6) * math.pi * 2)) / 2;
-      final height = 4.5 + 6.5 * wave;
-      final x = size.width / 2 + (i - 1) * 5;
-      final paint = Paint()
-        ..color = AppColors.primary.withValues(alpha: .42 + .58 * wave)
-        ..strokeWidth = 2.5
-        ..strokeCap = StrokeCap.round;
-      canvas.drawLine(
-        Offset(x, (size.height - height) / 2),
-        Offset(x, (size.height + height) / 2),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ActivityGlyph oldDelegate) =>
-      oldDelegate.motion != motion;
 }

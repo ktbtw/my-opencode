@@ -1391,12 +1391,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
       },
     );
     if (_disposed) return;
+    // 重建会话前先留住直播间已经产出的内容：重建只依据任务索引（result），
+    // 对活动任务直接替换会把思考/工具/正文一次清空。
+    final previousMessages = state.messages;
     _cancelEventSub();
     _cancelQueueSub();
     replySyncProgress = null;
     final loadVersion = ++_sessionLoadVersion;
     _handledTaskEventKeys.clear();
     _activeTaskAgentMessageIds.clear();
+    _snapshotRetryKeys.clear();
     _historyCursorCreatedAt = null;
     _historyCursorTaskId = null;
     _authoritativeSessionLoadVersion = null;
@@ -1460,8 +1464,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
           latestTask != null && _isTaskActive(latestTask.status)
           ? latestTask
           : null;
+      final liveTaskIds = <String>{
+        for (final task in sortedTasks)
+          if (_isTaskActive(task.status) ||
+              task.status == TaskStatus.cancelling)
+            task.taskId,
+      };
       state = state.copyWith(
-        messages: history.messages,
+        messages: _mergeLiveTaskContent(
+          history.messages,
+          previousMessages,
+          liveTaskIds,
+        ),
         sending: latestActiveTask != null,
         taskActive: latestTaskIsActive,
         pendingApproval: latestActiveTask?.approval,
@@ -3280,10 +3294,29 @@ class ChatNotifier extends StateNotifier<ChatState> {
                   event['error'] as String? ?? '任务执行失败',
                 );
                 final errorDetail = _eventErrorDetail(event);
+                // 用户主动停止时服务端也可能上报 failed（请求被中止）。这种情况
+                // 必须保留已经产生的正文 / 思考 / 工具，只把停止作为中性提示，
+                // 否则气泡会被失败文案整段替换。
+                final stopped =
+                    _cancelRequestedTaskIds.contains(taskId) ||
+                    state.cancelRequested;
                 _updateMessage(activeAgentMessageId(), (m) {
                   m.statusHint = '';
                   m.imageGeneration = null;
                   m.finalDeliveryPhase = FinalDeliveryPhase.idle;
+                  if (stopped) {
+                    m.state = MessageState.done;
+                    m.statusHint = '任务已停止';
+                    m.errorDetail = errorDetail;
+                    _finalizeRunningTools(m);
+                    return;
+                  }
+                  // 历史恢复 / 任务结果得到的正文只写在 content（blocks 为空），
+                  // 直接覆盖会丢掉整段正文，先把它固化成块再追加失败文案。
+                  if (m.content.trim().isNotEmpty &&
+                      !_blocksHaveVisibleText(m.blocks)) {
+                    _appendTextBlock(m, m.content);
+                  }
                   m.state = MessageState.failed;
                   m.content = error;
                   m.errorDetail = errorDetail;
@@ -3856,7 +3889,54 @@ class ChatNotifier extends StateNotifier<ChatState> {
     return null;
   }
 
+  /// 会话重建时保留活动任务的直播间内容：重建只依据任务索引的 `result`，
+  /// 对仍在执行/正在终止的任务直接替换会把已产出的正文、思考、工具一次清空。
+  List<ChatMessage> _mergeLiveTaskContent(
+    List<ChatMessage> rebuilt,
+    List<ChatMessage> previous,
+    Set<String> activeTaskIds,
+  ) {
+    if (previous.isEmpty || activeTaskIds.isEmpty) return rebuilt;
+    final live = <String, ChatMessage>{};
+    for (final message in previous) {
+      if (message.role != MessageRole.agent) continue;
+      final taskId = message.taskId?.trim() ?? '';
+      if (taskId.isEmpty || !activeTaskIds.contains(taskId)) continue;
+      live[taskId] = message;
+    }
+    if (live.isEmpty) return rebuilt;
+    return [
+      for (final message in rebuilt)
+        _mergeLiveMessage(message, live[message.taskId?.trim()]),
+    ];
+  }
+
+  ChatMessage _mergeLiveMessage(ChatMessage rebuilt, ChatMessage? live) {
+    if (live == null || rebuilt.role != MessageRole.agent) return rebuilt;
+    final merged = rebuilt.copyForUpdate();
+    if (live.content.length > merged.content.length) {
+      merged.content = live.content;
+    }
+    if (live.thinkingContent.length > merged.thinkingContent.length) {
+      merged.thinkingContent = live.thinkingContent;
+    }
+    if (merged.toolCalls.isEmpty && live.toolCalls.isNotEmpty) {
+      merged.toolCalls = List<ToolCallInfo>.from(live.toolCalls);
+    }
+    if (merged.blocks.isEmpty && live.blocks.isNotEmpty) {
+      merged.blocks = List<ChatMessageBlock>.from(live.blocks);
+    }
+    if (merged.state != MessageState.streaming &&
+        live.state == MessageState.streaming) {
+      merged.state = MessageState.streaming;
+    }
+    return merged;
+  }
+
   final Map<String, Future<void>> _historyHydrations = {};
+
+  /// 快照恢复一次都没成功时的自动重试标记（每个会话加载只重试一次）。
+  final Set<String> _snapshotRetryKeys = {};
 
   Future<void> _hydrateSessionSnapshots({
     required String sessionId,
@@ -3927,7 +4007,16 @@ class ChatNotifier extends StateNotifier<ChatState> {
           (current!.content != owner.content ||
               current.blocks.length != owner.blocks.length ||
               current.state != owner.state)) {
+        // 重连补发先到，不代表历史没用：思考与工具记录照常合并进来，只保留
+        // 直播间的正文，避免整份快照被丢弃导致思考/工具记录全部消失。
+        final fallback = entry.value;
         _updateMessage(owner.id, (m) {
+          _applyHistorySnapshotToMessage(
+            m,
+            fallback,
+            finalizeTools: false,
+            keepLongerThinking: true,
+          );
           m.historyDetails = HistoryDetailsState.partial;
           if (m.streamRecovery == StreamRecovery.syncing) {
             m.streamRecovery = StreamRecovery.following;
@@ -3938,6 +4027,32 @@ class ChatNotifier extends StateNotifier<ChatState> {
       snapshotMap[entry.key] = entry.value;
     }
     if (snapshotMap.isEmpty) {
+      // 活动任务一份快照都没应用上（读不完整或被实时变更挡掉）时自动重试一次，
+      // 不再要求用户手动点「重试」才能看到思考与工具记录。
+      final needsRetry = taskIds.any((taskId) {
+        final message = _lastTaskReply(taskId);
+        if (message == null) return false;
+        if (message.state == MessageState.streaming) return true;
+        if (message.historyDetails == HistoryDetailsState.partial) return true;
+        return _messageNeedsCatchUp(message);
+      });
+      final retryKey = '$loadVersion:$sessionId:${taskIds.join(",")}';
+      if (needsRetry &&
+          _isCurrentSessionLoad(sessionId, loadVersion) &&
+          _snapshotRetryKeys.add(retryKey)) {
+        unawaited(
+          Future<void>.delayed(const Duration(milliseconds: 1200), () async {
+            if (_disposed || !_isCurrentSessionLoad(sessionId, loadVersion)) {
+              return;
+            }
+            await _applySessionSnapshot(
+              sessionId: sessionId,
+              loadVersion: loadVersion,
+              taskIds: taskIds,
+            );
+          }),
+        );
+      }
       if (taskIds.contains(_currentTaskId) &&
           state.operationTitle == '正在恢复回复') {
         replySyncProgress?.finish('实时回复已更新，历史详情可重试');
@@ -3953,6 +4068,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
       return;
     }
+    _snapshotRetryKeys.clear();
 
     final msgs = List<ChatMessage>.from(state.messages);
     var changed = false;
@@ -4758,6 +4874,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     ChatMessage message,
     TaskEventSnapshot snapshot, {
     required bool finalizeTools,
+    bool keepLongerThinking = false,
   }) {
     _applyReplyStatistics(message, _statisticsForMessage(message, snapshot));
     message.toolOrderKnown =
@@ -4767,6 +4884,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         ? _finalizedToolCalls(snapshot.toolCalls)
         : snapshot.toolCalls;
     if (snapshot.reasoning.isNotEmpty &&
+        (!keepLongerThinking ||
+            snapshot.reasoning.length > message.thinkingContent.length) &&
         message.thinkingContent != snapshot.reasoning) {
       message.thinkingContent = snapshot.reasoning;
     }

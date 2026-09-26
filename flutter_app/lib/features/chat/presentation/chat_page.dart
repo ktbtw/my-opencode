@@ -43,7 +43,7 @@ import 'reply_display_group.dart';
 import 'widgets/subagent_invocation_card.dart';
 import 'widgets/agent_activity_indicator.dart';
 import 'widgets/chat_connection_status.dart';
-import 'widgets/chat_operation_strip.dart';
+import 'widgets/inline_activity_hint.dart';
 import 'widgets/subagent_task_sheet.dart';
 import 'widgets/subagent_task_tree.dart';
 
@@ -1534,11 +1534,6 @@ class _ChatPageState extends ConsumerState<ChatPage>
                         projectId: widget.projectId,
                         visible: _routeVisible,
                       ),
-                    if (chat.operationSteps.isNotEmpty)
-                      ChatOperationStrip(
-                        title: chat.operationTitle,
-                        steps: chat.operationSteps,
-                      ),
                     Expanded(
                       child: Row(
                         children: [
@@ -1592,6 +1587,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                 Expanded(
                                   child: _MessageArea(
                                     messages: chat.messages,
+                                    operationTitle: chat.operationTitle,
+                                    operationSteps: chat.operationSteps,
                                     stoppingTaskId: chat.cancelRequested
                                         ? ref
                                               .read(
@@ -2113,6 +2110,10 @@ class _ContextChip extends StatelessWidget {
 // 消息区
 class _MessageArea extends ConsumerStatefulWidget {
   final List<ChatMessage> messages;
+
+  /// 恢复 / 停止的流程阶段：只在对应气泡下方的轻提示里展示。
+  final String? operationTitle;
+  final List<ChatOperationStep> operationSteps;
   final String? stoppingTaskId;
   final bool stopping;
   final ScrollController scrollController;
@@ -2124,6 +2125,8 @@ class _MessageArea extends ConsumerStatefulWidget {
 
   const _MessageArea({
     required this.messages,
+    this.operationTitle,
+    this.operationSteps = const [],
     this.stoppingTaskId,
     this.stopping = false,
     required this.scrollController,
@@ -2188,24 +2191,30 @@ class _MessageAreaState extends ConsumerState<_MessageArea> {
       settingsProvider.select((s) => s.continuousReply),
     );
     final boundaries = <String, (bool, bool, bool)>{};
-    if (continuous) {
-      for (final group in groupReplyDisplay(messages, continuous: true)) {
-        if (group.first.role != MessageRole.agent ||
-            group.first.isInsertedContext) {
-          continue;
-        }
-        final surfaces = group.where(_hasReplySurface).toList(growable: false);
-        for (var i = 0; i < group.length; i++) {
-          boundaries[group[i].id] = (
-            i == 0,
-            i == group.length - 1,
-            surfaces.isNotEmpty && identical(group[i], surfaces.last),
-          );
-        }
-      }
-    }
+    // 连续回复按「组」合并的内容：思考文本只渲染一次，统计行与工具记录标题同理。
+    final layout = continuous
+        ? ReplyDisplayLayout.of(messages)
+        : const ReplyDisplayLayout();
+    boundaries.addAll(layout.boundaries);
     if (!continuous) _animateEvents.clear();
     final showHistoryLoader = loadingEarlierHistory || hasEarlierHistory;
+    // 流程阶段只挂在当前正在进行的那个气泡上，避免每条消息都重复展示。
+    final operationSteps = widget.operationSteps;
+    var operationOwnerId = '';
+    if (operationSteps.isNotEmpty) {
+      ChatMessage? fallback;
+      for (final message in messages.reversed) {
+        if (message.role != MessageRole.agent || message.isInsertedContext) {
+          continue;
+        }
+        fallback ??= message;
+        if (message.state == MessageState.streaming) {
+          fallback = message;
+          break;
+        }
+      }
+      operationOwnerId = fallback?.id ?? '';
+    }
     final indexes = {
       for (var i = 0; i < messages.length; i++)
         messages[i].id: i + (showHistoryLoader ? 1 : 0),
@@ -2239,6 +2248,15 @@ class _MessageAreaState extends ConsumerState<_MessageArea> {
               surfaceLast: boundary.$3,
               animateEvent: _animateEvents.remove(msg.id),
               stopping: stopping && msg.taskId == stoppingTaskId,
+              groupThinking: layout.thinking[msg.id],
+              thinkingStreaming: layout.thinkingStreaming.contains(msg.id),
+              showToolHeader: layout.toolHeaderOwners.contains(msg.id),
+              operationTitle: msg.id == operationOwnerId
+                  ? widget.operationTitle
+                  : null,
+              operationSteps: msg.id == operationOwnerId
+                  ? operationSteps
+                  : const [],
               onRetryHistory: onRetryHistory,
             );
           }
@@ -2248,6 +2266,12 @@ class _MessageAreaState extends ConsumerState<_MessageArea> {
                 stopping &&
                 msg.state == MessageState.streaming &&
                 msg.taskId == stoppingTaskId,
+            operationTitle: msg.id == operationOwnerId
+                ? widget.operationTitle
+                : null,
+            operationSteps: msg.id == operationOwnerId
+                ? operationSteps
+                : const [],
             onResend: onResend,
             onRetryHistory: onRetryHistory,
             key: ValueKey(msg.id),
@@ -2265,16 +2289,12 @@ class _EarlierHistoryLoader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    if (!loading) return const SizedBox(height: 42);
+    return const SizedBox(
       height: 42,
-      child: Center(
-        child: loading
-            ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const SizedBox.shrink(),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: InlineActivityHint(label: '正在加载更早的对话'),
       ),
     );
   }
@@ -2283,11 +2303,15 @@ class _EarlierHistoryLoader extends StatelessWidget {
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
   final bool stopping;
+  final String? operationTitle;
+  final List<ChatOperationStep> operationSteps;
   final Future<void> Function(ChatMessage message) onResend;
   final ValueChanged<String>? onRetryHistory;
   const _MessageBubble({
     required this.message,
     this.stopping = false,
+    this.operationTitle,
+    this.operationSteps = const [],
     required this.onResend,
     this.onRetryHistory,
     super.key,
@@ -2326,7 +2350,8 @@ class _MessageBubble extends StatelessWidget {
             message.state == MessageState.failed)
           _BubbleContent(message: message, isUser: isUser),
         if (!isUser &&
-            (message.state == MessageState.streaming ||
+            (operationSteps.isNotEmpty ||
+                message.state == MessageState.streaming ||
                 (message.historyDetails != HistoryDetailsState.none &&
                     message.historyDetails != HistoryDetailsState.deferred) ||
                 (message.statusHint.isNotEmpty &&
@@ -2337,13 +2362,16 @@ class _MessageBubble extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child:
-                message.state == MessageState.streaming ||
+                operationSteps.isNotEmpty ||
+                    message.state == MessageState.streaming ||
                     (message.historyDetails != HistoryDetailsState.none &&
                         message.historyDetails != HistoryDetailsState.deferred)
                 ? AgentActivityIndicator(
                     message: message,
                     stopping: stopping,
                     statusHint: message.statusHint,
+                    operationTitle: operationTitle,
+                    operationSteps: operationSteps,
                     onRetryHistory:
                         message.taskId != null && onRetryHistory != null
                         ? () => onRetryHistory!(message.taskId!)
@@ -2380,17 +2408,6 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-bool _hasReplySurface(ChatMessage message) =>
-    isBackgroundReplyEvent(message) ||
-    message.content.isNotEmpty ||
-    message.blocks.isNotEmpty ||
-    message.toolCalls.isNotEmpty ||
-    message.imageGeneration != null ||
-    message.isFinalizingDelivery ||
-    message.artifacts.isNotEmpty ||
-    message.files.isNotEmpty ||
-    message.state == MessageState.failed;
-
 /// Adjacent lazy list rows share the reply surface. Operational hints remain
 /// siblings of the surface, like the original split-bubble presentation.
 class _ContinuousReplySegment extends StatelessWidget {
@@ -2400,6 +2417,11 @@ class _ContinuousReplySegment extends StatelessWidget {
   final bool? surfaceLast;
   final bool animateEvent;
   final bool stopping;
+  final String? groupThinking;
+  final bool thinkingStreaming;
+  final bool showToolHeader;
+  final String? operationTitle;
+  final List<ChatOperationStep> operationSteps;
   final ValueChanged<String>? onRetryHistory;
   const _ContinuousReplySegment({
     super.key,
@@ -2409,6 +2431,11 @@ class _ContinuousReplySegment extends StatelessWidget {
     this.surfaceLast,
     this.animateEvent = false,
     this.stopping = false,
+    this.groupThinking,
+    this.thinkingStreaming = false,
+    this.showToolHeader = true,
+    this.operationTitle,
+    this.operationSteps = const [],
     this.onRetryHistory,
   });
 
@@ -2420,7 +2447,8 @@ class _ContinuousReplySegment extends StatelessWidget {
     final showActivity =
         last &&
         !background &&
-        (message.state == MessageState.streaming ||
+        (operationSteps.isNotEmpty ||
+            message.state == MessageState.streaming ||
             message.historyDetails != HistoryDetailsState.none) &&
         message.imageGeneration == null &&
         !message.isFinalizingDelivery;
@@ -2437,14 +2465,14 @@ class _ContinuousReplySegment extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (!background && message.thinkingContent.isNotEmpty) ...[
+                  if (!background && (groupThinking?.isNotEmpty ?? false)) ...[
                     _ThinkingBlock(
-                      thinking: message.thinkingContent,
-                      isStreaming: message.state == MessageState.streaming,
+                      thinking: groupThinking!,
+                      isStreaming: thinkingStreaming,
                     ),
                     const SizedBox(height: 6),
                   ],
-                  if (_hasReplySurface(message))
+                  if (hasReplySurface(message))
                     Container(
                       key: first
                           ? const ValueKey('continuous-reply-surface')
@@ -2479,6 +2507,9 @@ class _ContinuousReplySegment extends StatelessWidget {
                               message: message,
                               isUser: false,
                               embedded: true,
+                              // 合并后统计行与复制按钮只出现在整段末尾。
+                              showStats: closesSurface,
+                              showToolHeader: showToolHeader,
                             ),
                     ),
                   if (last &&
@@ -2494,6 +2525,8 @@ class _ContinuousReplySegment extends StatelessWidget {
                         message: message,
                         stopping: stopping,
                         statusHint: message.statusHint,
+                        operationTitle: operationTitle,
+                        operationSteps: operationSteps,
                         onRetryHistory:
                             message.taskId != null && onRetryHistory != null
                             ? () => onRetryHistory!(message.taskId!)
@@ -2636,17 +2669,34 @@ class _InlineBackgroundEventState extends State<_InlineBackgroundEvent> {
 }
 
 @visibleForTesting
-Widget buildContinuousReplyTestSurface(List<ChatMessage> messages) => Column(
-  children: [
-    for (var i = 0; i < messages.length; i++)
-      _ContinuousReplySegment(
-        key: ValueKey(messages[i].id),
-        message: messages[i],
-        first: i == 0,
-        last: i == messages.length - 1,
-      ),
-  ],
-);
+Widget buildContinuousReplyTestSurface(List<ChatMessage> messages) {
+  final layout = ReplyDisplayLayout.of(messages);
+  return Column(
+    children: [
+      for (var i = 0; i < messages.length; i++)
+        if (layout.boundaries.containsKey(messages[i].id))
+          _ContinuousReplySegment(
+            key: ValueKey(messages[i].id),
+            message: messages[i],
+            first: layout.boundaries[messages[i].id]!.$1,
+            last: layout.boundaries[messages[i].id]!.$2,
+            surfaceLast: layout.boundaries[messages[i].id]!.$3,
+            groupThinking: layout.thinking[messages[i].id],
+            thinkingStreaming: layout.thinkingStreaming.contains(
+              messages[i].id,
+            ),
+            showToolHeader: layout.toolHeaderOwners.contains(messages[i].id),
+          )
+        else
+          _ContinuousReplySegment(
+            key: ValueKey(messages[i].id),
+            message: messages[i],
+            first: i == 0,
+            last: i == messages.length - 1,
+          ),
+    ],
+  );
+}
 
 class _InsertedContextNode extends StatelessWidget {
   final ChatMessage message;
@@ -3304,10 +3354,35 @@ Widget buildChatMessageHistoryTestSurface(ChatMessage message) =>
     _MessageBubble(message: message, onResend: (_) async {});
 
 @visibleForTesting
-Widget buildChatStreamingProgressTestSurface(ChatMessage message) =>
-    MaterialApp(
-      home: Scaffold(body: AgentActivityIndicator(message: message)),
-    );
+Widget buildChatStreamingProgressTestSurface(
+  ChatMessage message, {
+  String? operationTitle,
+  List<ChatOperationStep> operationSteps = const [],
+}) => MaterialApp(
+  home: Scaffold(
+    body: AgentActivityIndicator(
+      message: message,
+      operationTitle: operationTitle,
+      operationSteps: operationSteps,
+    ),
+  ),
+);
+
+@visibleForTesting
+Widget buildChatMessageBubbleTestSurface(
+  ChatMessage message, {
+  String? operationTitle,
+  List<ChatOperationStep> operationSteps = const [],
+}) => MaterialApp(
+  home: Scaffold(
+    body: _MessageBubble(
+      message: message,
+      operationTitle: operationTitle,
+      operationSteps: operationSteps,
+      onResend: (_) async {},
+    ),
+  ),
+);
 
 // 附件预览（气泡下方）
 class _AttachmentPreview extends StatelessWidget {
@@ -4269,10 +4344,18 @@ class _BubbleContent extends ConsumerWidget {
   final ChatMessage message;
   final bool isUser;
   final bool embedded;
+
+  /// 连续回复合并成一段时，统计行与复制按钮只在段末渲染一次。
+  final bool showStats;
+
+  /// 无定位工具记录的标题在合并段里只出现一次。
+  final bool showToolHeader;
   const _BubbleContent({
     required this.message,
     required this.isUser,
     this.embedded = false,
+    this.showStats = true,
+    this.showToolHeader = true,
   });
 
   bool get _shouldShowPlanSummary {
@@ -4395,16 +4478,17 @@ class _BubbleContent extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 6),
-                    child: Text(
-                      '工具调用记录 · 原始位置未记录',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.textMuted,
+                  if (showToolHeader)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        '工具调用记录 · 原始位置未记录',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.textMuted,
+                        ),
                       ),
                     ),
-                  ),
                   _MessageBlockList(
                     blocks: [
                       for (final tool in message.toolCalls)
@@ -4511,7 +4595,8 @@ class _BubbleContent extends ConsumerWidget {
               child: _InlineFilePreview(files: message.files),
             ),
           // 统计信息 + 复制按钮（仅 agent 已完成消息）
-          if (!isUser &&
+          if (showStats &&
+              !isUser &&
               message.state == MessageState.done &&
               message.content.isNotEmpty)
             _buildStats(settings),
@@ -4695,10 +4780,7 @@ class _BubbleContent extends ConsumerWidget {
     );
   }
 
-  bool get _hasUnpositionedTools =>
-      message.toolCalls.isNotEmpty &&
-      (!message.toolOrderKnown ||
-          (message.blocks.isEmpty && message.content.isNotEmpty));
+  bool get _hasUnpositionedTools => hasUnpositionedTools(message);
 
   List<ChatMessageBlock> get _displayBlocks {
     if (isUser) {
