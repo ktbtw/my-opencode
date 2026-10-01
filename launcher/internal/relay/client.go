@@ -77,7 +77,7 @@ func connect(ctx context.Context, cfg config.Config, svc Service) error {
 			"hostname":     cfg.Relay.Hostname,
 			"operator_key": cfg.Relay.OperatorKey,
 			"version":      "launcher-" + launcherVersion.Value,
-			"capabilities": []string{"device_compaction_config_v1", "device_storage_v1"},
+			"capabilities": []string{"device_compaction_config_v1", "device_storage_v1", "device_runtime_v1"},
 			"projects":     []map[string]any{},
 		},
 	}
@@ -112,6 +112,10 @@ func connect(ctx context.Context, cfg config.Config, svc Service) error {
 		}
 		if env.Type == "device.launcher.agent_preflight.start" {
 			handleAgentSemanticPreflight(ctx, env, cfg, svc, writeEnvelope)
+			continue
+		}
+		if env.Type == "device.launcher.runtime_install" {
+			handleRuntimeInstall(ctx, env, cfg, svc, writeEnvelope)
 			continue
 		}
 		if env.Type == "device.launcher.tunnel.open" {
@@ -233,6 +237,7 @@ func buildHandlers() map[string]handlerFunc {
 		"device.launcher.diagnostics":              handleLauncher,
 		"device.launcher.storage":                  handleLauncher,
 		"device.launcher.storage_clear":            handleLauncher,
+		"device.launcher.runtime_status":           handleLauncher,
 		"device.launcher.ssh_status":               handleLauncher,
 		"device.launcher.ssh_setup":                handleLauncher,
 		"device.launcher.ssh_authorized_key":       handleLauncher,
@@ -315,6 +320,84 @@ func handleAgentSemanticPreflight(
 	})
 	go func() {
 		if err := svc.StartAgentSemanticPreflight(payload, sendStatus); err != nil {
+			_ = sendStatus(model.RuntimePreflightStatusPayload{
+				Status:          "failed",
+				CurrentStep:     "runtime",
+				ProgressPercent: 100,
+				Error:           err.Error(),
+				Events: []model.RuntimeInstallEvent{{
+					ItemType:        "job",
+					Phase:           "failed",
+					Status:          "error",
+					Message:         err.Error(),
+					ProgressPercent: 100,
+				}},
+			})
+		}
+	}()
+}
+
+// runtimeStatusPayload 返回单个运行时组件的安装状态。
+func runtimeStatusPayload(requestID string, status *model.DeviceRuntimeStatus, success bool, errText string) envelope {
+	payload := map[string]any{
+		"action":  "runtime_status",
+		"success": success,
+		"error":   errText,
+	}
+	if status != nil {
+		payload["runtime"] = status
+	}
+	return envelope{
+		Type:      "device.launcher.result",
+		RequestID: requestID,
+		SentAt:    time.Now().UTC().Format(time.RFC3339),
+		Payload:   payload,
+	}
+}
+
+// handleRuntimeInstall 处理「只装一个运行时」的请求：立即确认，随后异步安装
+// 并把进度按语义预检同款状态上报，后端与客户端可复用同一套进度通道。
+func handleRuntimeInstall(
+	ctx context.Context,
+	env envelope,
+	cfg config.Config,
+	svc Service,
+	write func(context.Context, envelope) error,
+) {
+	var payload model.RuntimePreflightStartPayload
+	blob, _ := json.Marshal(env.Payload)
+	_ = json.Unmarshal(blob, &payload)
+	if strings.TrimSpace(payload.JobID) == "" {
+		payload.JobID = env.RequestID
+	}
+	payload.RuntimeOnly = true
+	sendStatus := func(status model.RuntimePreflightStatusPayload) error {
+		status.JobID = firstNonEmpty(status.JobID, payload.JobID)
+		status.MachineID = firstNonEmpty(status.MachineID, cfg.Relay.MachineID)
+		status.LauncherAgentID = firstNonEmpty(status.LauncherAgentID, payload.LauncherAgentID)
+		sendCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		return write(sendCtx, envelope{
+			Type:      "device.launcher.agent_preflight.status",
+			RequestID: status.JobID,
+			SentAt:    time.Now().UTC().Format(time.RFC3339),
+			Payload:   status,
+		})
+	}
+	_ = sendStatus(model.RuntimePreflightStatusPayload{
+		Status:          "running",
+		CurrentStep:     "runtime",
+		ProgressPercent: 2,
+		Events: []model.RuntimeInstallEvent{{
+			ItemType:        "job",
+			Phase:           "accepted",
+			Status:          "info",
+			Message:         "launcher 已接收运行时安装任务",
+			ProgressPercent: 2,
+		}},
+	})
+	go func() {
+		if err := svc.InstallRuntimes(payload, sendStatus); err != nil {
 			_ = sendStatus(model.RuntimePreflightStatusPayload{
 				Status:          "failed",
 				CurrentStep:     "runtime",
@@ -693,6 +776,15 @@ func handleLauncher(env envelope, cfg config.Config, svc Service) envelope {
 			return diagnosticsPayload(nil, false, err.Error())
 		}
 		return diagnosticsPayload(&result, true, "")
+	case "device.launcher.runtime_status":
+		var payload model.DeviceRuntimeRequestPayload
+		blob, _ := json.Marshal(env.Payload)
+		_ = json.Unmarshal(blob, &payload)
+		status, err := svc.RuntimeStatus(payload.RuntimeID)
+		if err != nil {
+			return runtimeStatusPayload(env.RequestID, nil, false, err.Error())
+		}
+		return runtimeStatusPayload(env.RequestID, &status, true, "")
 	case "device.launcher.storage":
 		usage, err := svc.StorageUsage()
 		if err != nil {

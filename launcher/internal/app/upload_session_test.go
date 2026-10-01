@@ -1,7 +1,6 @@
 package app
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,16 +80,63 @@ func TestUploadSessionResumeKeepsExistingData(t *testing.T) {
 	}
 }
 
-func TestUploadSessionWithoutResumeRejectsDuplicate(t *testing.T) {
+// 未声明续传的重复 create 不能失败：App 被杀后重试时可能拿不到续传标志，
+// 报错会让用户卡在「上传会话已存在」，既看不到进度也无法继续。
+// 同大小同分块数的重复 create 必须保留既有会话（分块已写入的数据不能丢）。
+func TestUploadSessionDuplicateWithoutResumeKeepsSession(t *testing.T) {
 	dir := t.TempDir()
 	tempPath := filepath.Join(dir, "payload.bin")
 
 	if err := prepareUploadSession(tempPath, 10, 2, false); err != nil {
 		t.Fatalf("首次创建失败: %v", err)
 	}
-	// 未声明续传时，重复创建必须被拒绝，避免两个上传互相覆盖。
-	if err := prepareUploadSession(tempPath, 10, 2, false); !errors.Is(err, errUploadSessionExists) {
-		t.Fatalf("重复创建应返回上传会话已存在，实际 %v", err)
+	file, err := os.OpenFile(tempPath, os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteAt([]byte("hello"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordUploadChunk(tempPath, 10, 2, 0); err != nil {
+		t.Fatalf("记录分块失败: %v", err)
+	}
+
+	if err := prepareUploadSession(tempPath, 10, 2, false); err != nil {
+		t.Fatalf("重复创建不应报错，实际 %v", err)
+	}
+	data, err := os.ReadFile(tempPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data[:5]) != "hello" {
+		t.Fatalf("重复创建不应清空已写入的分块，实际前 5 字节为 %q", string(data[:5]))
+	}
+	status := uploadStatusFor(tempPath, "a.txt", "up_1", 10, 2)
+	if len(status.ReceivedChunks) != 1 || status.ReceivedChunks[0] != 0 {
+		t.Fatalf("重复创建后应保留已收分块，实际 %v", status.ReceivedChunks)
+	}
+}
+
+// 大小不一致时即使未声明续传也要重建，避免把不同文件拼进同一会话。
+func TestUploadSessionDuplicateWithMismatchRebuilds(t *testing.T) {
+	dir := t.TempDir()
+	tempPath := filepath.Join(dir, "payload.bin")
+
+	if err := prepareUploadSession(tempPath, 10, 2, false); err != nil {
+		t.Fatalf("首次创建失败: %v", err)
+	}
+	if err := prepareUploadSession(tempPath, 20, 2, false); err != nil {
+		t.Fatalf("大小不一致时应重建而不是报错，实际 %v", err)
+	}
+	status := uploadStatusFor(tempPath, "a.txt", "up_1", 20, 2)
+	if len(status.ReceivedChunks) != 0 {
+		t.Fatalf("重建后不应保留已收分块，实际 %v", status.ReceivedChunks)
+	}
+	if status.Size != 20 {
+		t.Fatalf("重建后会话大小应为 20，实际 %d", status.Size)
 	}
 }
 

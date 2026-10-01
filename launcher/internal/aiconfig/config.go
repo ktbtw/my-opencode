@@ -58,9 +58,22 @@ type RuntimeModelLimit struct {
 }
 
 type RuntimeModelCapabilities struct {
-	Reasoning bool            `json:"reasoning"`
-	Input     map[string]bool `json:"input"`
-	Output    map[string]bool `json:"output"`
+	Reasoning bool                  `json:"reasoning"`
+	Input     map[string]bool       `json:"input"`
+	Output    map[string]bool       `json:"output"`
+	Image     *RuntimeImageCapability `json:"image,omitempty"`
+}
+
+// RuntimeImageCapability 是 opencode 按生图方言下发的参数能力，
+// 客户端参数条据此渲染（OpenAI 是 size/quality，xAI 是 aspect_ratio/resolution）。
+type RuntimeImageCapability struct {
+	Sizes        []string `json:"sizes,omitempty"`
+	AspectRatios []string `json:"aspectRatios,omitempty"`
+	Resolutions  []string `json:"resolutions,omitempty"`
+	Qualities    []string `json:"qualities,omitempty"`
+	Formats      []string `json:"formats,omitempty"`
+	MaxCount     int      `json:"maxCount,omitempty"`
+	MaxReferences int     `json:"maxReferences,omitempty"`
 }
 
 const (
@@ -272,6 +285,11 @@ func enrichDeviceAIModel(item *model.DeviceAIModelInfo, providerID string, model
 			item.Modalities = modalities
 		}
 	}
+	// 生图参数能力只在用户没保存手动值时由 runtime 补入，
+	// 与生图参数条的取值保持一致。
+	if item.Image == nil {
+		item.Image = runtimeModelImage(meta.Capabilities.Image)
+	}
 	// 手填的窗口值必须优先，runtime 上报只用于补空值：否则会把用户设置覆盖成
 	// 上报值，再以 context_limit 回传给客户端，被当成「供应商返回值」压住手填值。
 	if item.ManualContext <= 0 && meta.Limit.Context > 0 {
@@ -308,6 +326,23 @@ func runtimeModelModalities(meta RuntimeModelMetadata) *model.DeviceAIModalities
 	return normalizeModalities(&model.DeviceAIModalities{Input: input, Output: output})
 }
 
+// runtimeModelImage 只在模型确实按生图方言工作时才返回参数能力；
+// 同时要求 output.modalities 含 image（与「支持生图」的判定一致）。
+func runtimeModelImage(capability *RuntimeImageCapability) *model.DeviceAIImageCapability {
+	if capability == nil {
+		return nil
+	}
+	return &model.DeviceAIImageCapability{
+		Sizes:         compactStrings(capability.Sizes),
+		AspectRatios:  compactStrings(capability.AspectRatios),
+		Resolutions:   compactStrings(capability.Resolutions),
+		Qualities:     compactStrings(capability.Qualities),
+		Formats:       compactStrings(capability.Formats),
+		MaxCount:      capability.MaxCount,
+		MaxReferences: capability.MaxReferences,
+	}
+}
+
 func boolKeys(items map[string]bool) []string {
 	if len(items) == 0 {
 		return nil
@@ -325,6 +360,24 @@ func boolKeys(items map[string]bool) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func compactStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func parseInfo(configPath string, raw string) (*model.DeviceAIConfigInfo, error) {

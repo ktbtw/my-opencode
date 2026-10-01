@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>恢复/停止内容丢失 · 修复前后对照</title>
+<style>
+  :root{
+    --bg:#F2F6FC; --surface:#FFFFFF; --surface-elevated:#FAFCFF; --border:#D0DDEF; --border-light:#E8EFF8;
+    --primary:#2563EB; --primary-light:#EFF6FF;
+    --text-primary:#0F1729; --text-secondary:#4A5D7A; --text-muted:#8FA3BF;
+    --ok:#16A34A; --err:#DC2626; --green:#35806A;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 24px 60px;background:var(--bg);color:var(--text-primary);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  h1{font-size:19px;margin:0 0 6px}
+  h2{font-size:15px;margin:32px 0 10px}
+  .sub{font-size:13px;color:var(--text-secondary);margin:0 0 18px;line-height:1.7;max-width:980px}
+  .caption{font-size:13px;font-weight:600;color:var(--text-secondary);margin:0 0 10px}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);margin-left:8px}
+  .badge.old{border-color:#FCA5A5;background:#FEF2F2;color:#B91C1C}
+  .badge.new{border-color:#86EFAC;background:#F0FDF4;color:#15803D}
+  .cols{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:1 1 470px;min-width:390px}
+  .phone{width:100%;max-width:470px;background:var(--bg);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,41,.06)}
+  .topbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-secondary)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .msgs{padding:16px 14px 20px;display:flex;flex-direction:column;gap:16px}
+  .row{display:flex;gap:10px;align-items:flex-start}
+  .avatar{width:26px;height:26px;border-radius:50%;background:var(--primary-light);color:var(--primary);font-size:11px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-weight:600}
+  .stack{flex:1;min-width:0}
+
+  /* 思考块 */
+  .think{max-width:520px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .think .head{display:flex;align-items:center;gap:5px;padding:8px 12px;font-size:12px;font-weight:500;color:var(--text-muted)}
+  .think .body{padding:0 12px 10px;border-top:1px solid var(--border);font-size:12px;line-height:1.6;color:var(--text-secondary);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+  .spin{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--primary);border-right-color:transparent;animation:spin 1s linear infinite;display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .gap6{height:6px}
+
+  /* 正文面 */
+  .surface{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+  .surface .body{padding:10px 14px;font-size:13px;line-height:1.7}
+  .surface .body.muted{color:var(--text-muted)}
+  .surface.failed{background:#FEF2F2;border-color:rgba(220,38,38,.3)}
+  .surface.failed .body{color:var(--err)}
+
+  /* 工具卡片 */
+  .tool{margin:0 14px 10px;border:1px solid var(--border);border-radius:8px;background:#fff}
+  .tool .t-head{display:flex;align-items:center;gap:7px;padding:8px 10px;font-size:12px;color:var(--text-secondary)}
+  .tool .t-out{padding:0 10px 8px;font-size:11px;color:var(--text-muted)}
+  .icon-ok{color:var(--ok)}.icon-run{color:var(--primary)}.icon-err{color:var(--err)}
+
+  /* 轻提示 */
+  .hint{margin-top:4px;display:flex;align-items:center;gap:9px}
+  .hint .label{font-size:12px;font-weight:500;color:var(--text-secondary)}
+  .hint .label.err{color:var(--err)}
+  .glyph{width:18px;height:18px;position:relative;flex:0 0 auto}
+  .glyph i{position:absolute;top:50%;width:2.5px;border-radius:2px;background:var(--primary);transform:translateY(-50%);animation:wave 1.6s infinite ease-in-out}
+  .glyph i:nth-child(1){left:2.5px}.glyph i:nth-child(2){left:7.75px;animation-delay:.27s}.glyph i:nth-child(3){left:13px;animation-delay:.54s}
+  @keyframes wave{0%,100%{height:4.5px;opacity:.42}50%{height:11px;opacity:1}}
+
+  .empty{border:1px dashed #FCA5A5;background:#FEF2F2;border-radius:10px;padding:14px;text-align:center;color:#B91C1C;font-size:12px}
+  .note{font-size:11px;color:var(--text-muted);margin-top:8px}
+  .legend{margin-top:30px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;max-width:1000px}
+  .legend h3{font-size:13px;margin:0 0 10px}
+  table{border-collapse:collapse;font-size:12px;width:100%}
+  th,td{border-bottom:1px solid var(--border-light);padding:6px 8px;text-align:left;vertical-align:top}
+  th{color:var(--text-muted);font-weight:600}
+  .keep{color:#15803D}.del{color:#B91C1C}.muted{color:var(--text-muted)}
+</style>
+</head>
+<body>
+  <h1>恢复 / 停止后内容丢失：修复前后对照</h1>
+  <p class="sub">
+    这三处修复都来自你机器上的真实记录（agent 侧 110 轮思考+208 次工具、客户端 <code>history_hydrate_end tasks:0</code>、停止后服务端上报 <code>failed</code>）。<br>
+    下面两组：① 进入会话（消息重建 + 历史恢复）时的差异；② 点停止后的差异。
+  </p>
+
+  <!-- ============ 场景一：进入会话 ============ -->
+  <h2>场景一：进入会话时（消息重建 + 历史快照恢复）</h2>
+  <div class="cols">
+    <div class="col">
+      <p class="caption">修复前<span class="badge old">快照被整份丢弃，只剩补发的一小段</span></p>
+      <div class="phone">
+        <div class="topbar"><span class="dot"></span> verfiy · 全局回参大小限制</div>
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="empty">气泡里没有思考、没有工具记录，正文也没有<br>（历史恢复返回 tasks:0，快照被 owner 守卫丢弃）</div>
+              <div class="hint">
+                <span class="glyph"><i></i><i></i><i></i></span>
+                <span class="label">工具调用历史尚未完整载入</span>
+                <span style="font-size:12px;color:var(--primary)">重试</span>
+              </div>
+              <div class="note">agent 侧明明有 110 轮思考 / 208 次工具记录，要用户手动点「重试」才可能补回来。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <p class="caption">修复后<span class="badge new">思考与工具照常合并 + 自动重试</span></p>
+      <div class="phone">
+        <div class="topbar"><span class="dot"></span> verfiy · 全局回参大小限制</div>
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head"><span class="spin"></span> 思考中...<span style="margin-left:6px">▾</span></div>
+                <div class="body">The user asks: 当前全局回参和 js 回参的大小限制是多少……
+…（110 轮思考按顺序合并，不再被丢弃）</div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface">
+                <div class="tool">
+                  <div class="t-head"><span class="icon-ok">✓</span> Check July DB dump application columns</div>
+                  <div class="t-out">完成 · 输出略</div>
+                </div>
+                <div class="tool" style="margin-top:0">
+                  <div class="t-head"><span class="icon-run">⟳</span> Find card extra update endpoints</div>
+                  <div class="t-out">运行中…</div>
+                </div>
+                <div class="body muted">（正文由实时通道保留；历史详情后台继续补）</div>
+              </div>
+              <div class="hint">
+                <span class="glyph"><i></i><i></i><i></i></span>
+                <span class="label">正在补齐历史回复</span>
+              </div>
+              <div class="note">快照不再被一票否决：思考/工具合并进来；<code>tasks:0</code> 时 1.2 秒后自动重试一次。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 场景二：点停止 ============ -->
+  <h2>场景二：点「停止任务」之后（服务端最后上报的是 failed）</h2>
+  <div class="cols">
+    <div class="col">
+      <p class="caption">修复前<span class="badge old">气泡只剩失败文案</span></p>
+      <div class="phone">
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="surface failed">
+                <div class="body">任务执行失败</div>
+              </div>
+              <div class="note">此前看到的正文/思考/工具全部不显示：失败分支无条件用失败文案覆盖正文，消息被标成失败态。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <p class="caption">修复后<span class="badge new">内容保留 + 中性「任务已停止」提示</span></p>
+      <div class="phone">
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head">💡 已完成思考<span style="margin-left:6px">▾</span></div>
+                <div class="body">停止前的思考内容保留在这里……</div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface">
+                <div class="body">停止前的正文保留在这里……</div>
+                <div class="tool">
+                  <div class="t-head"><span class="icon-ok">✓</span> 停止前完成的工具调用</div>
+                  <div class="t-out">已收尾 · 结果保留</div>
+                </div>
+              </div>
+              <div class="hint">
+                <span class="glyph"><i></i><i></i><i></i></span>
+                <span class="label">任务已停止</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <h3>修复清单（都带回归用例，且已验证"修复前必失败"）</h3>
+    <table>
+      <tr><th>问题</th><th>修复前</th><th>修复后</th></tr>
+      <tr>
+        <td>进入会话重建，活动任务内容被清空</td>
+        <td class="del">直接替换成历史消息（result 为空 → 空气泡）</td>
+        <td class="keep">保留直播间已产出的正文/思考/工具，与历史消息合并</td>
+      </tr>
+      <tr>
+        <td>历史快照被 owner 守卫整份丢弃</td>
+        <td class="del">一票否决：思考与工具记录全部不恢复</td>
+        <td class="keep">只保留直播间正文，思考与工具照常合并进来</td>
+      </tr>
+      <tr>
+        <td>快照一份都没应用上（tasks: 0）</td>
+        <td class="del">停留在此，等用户手动点「重试」</td>
+        <td class="keep">1.2 秒后自动重试一次</td>
+      </tr>
+      <tr>
+        <td>用户停止被服务端上报成 failed</td>
+        <td class="del">按失败处理：消息变失败态、正文被失败文案覆盖</td>
+        <td class="keep">按停止处理：内容全保留，轻提示「任务已停止」</td>
+      </tr>
+      <tr>
+        <td>真正的失败（非用户停止）</td>
+        <td class="muted" colspan="2">正文仍会被失败文案替换（既有设计），但思考与工具记录本来就会保留</td>
+      </tr>
+    </table>
+  </div>
+</body>
+</html>

@@ -1125,6 +1125,71 @@ void main() {
     expect(_agentMessage(notifier, 'retry-snap').thinkingContent, '重试后的思考');
   });
 
+  test('rebuilding restores the image generation state', () async {
+    // 生图轮次重建后必须仍是生图态：否则没有进度卡片，气泡停在流式态，
+    // 表现为「连接后一直等待新的回复」。
+    final repository = _FakeChatRepository();
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await _loadRawHistory(notifier, repository, [
+      {
+        'task_id': 'image-task',
+        'agent_id': 'agent-1',
+        'project_id': 'project-1',
+        'session_id': 'session-1',
+        'status': 'running',
+        'parts': [
+          {'type': 'text', 'text': '画一只猫'},
+        ],
+        'metadata': {'model': '北洛生图/gpt-image-1'},
+        'created_at': '2026-07-28T08:00:00Z',
+        'updated_at': '2026-07-28T08:00:00Z',
+      },
+    ]);
+
+    final message = _agentMessage(notifier, 'image-task');
+    expect(message.imageGeneration, isNotNull);
+    expect(message.imageGeneration!.providerID, '北洛生图');
+    expect(message.imageGeneration!.modelID, 'gpt-image-1');
+  });
+
+  test('non-image rounds are not marked as image generation', () async {
+    final repository = _FakeChatRepository();
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'agent-1',
+      projectId: 'project-1',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await _loadRawHistory(notifier, repository, [
+      {
+        'task_id': 'text-task',
+        'agent_id': 'agent-1',
+        'project_id': 'project-1',
+        'session_id': 'session-1',
+        'status': 'running',
+        'parts': [
+          {'type': 'text', 'text': '普通对话'},
+        ],
+        'metadata': {'model': '订阅ds/deepseek-v4.1-flash'},
+        'created_at': '2026-07-28T08:00:00Z',
+        'updated_at': '2026-07-28T08:00:00Z',
+      },
+    ]);
+
+    expect(_agentMessage(notifier, 'text-task').imageGeneration, isNull);
+  });
+
   test(
     'a second foreground recovery supersedes a stalled old task read',
     () async {
@@ -1929,6 +1994,109 @@ void main() {
             .isInsertedContext,
         isTrue,
       );
+    },
+  );
+
+  test(
+    'historical snapshot keeps multiple insertions in their own rounds',
+    () async {
+      final repository = _FakeChatRepository();
+      repository.history = [
+        _task('task-multi', status: TaskStatus.completed, result: '一二三'),
+      ];
+      repository.snapshots['task-multi'] = TaskEventSnapshot(
+        text: '一二三',
+        rounds: const [
+          TaskEventRoundSnapshot(text: '一'),
+          TaskEventRoundSnapshot(text: '二'),
+          TaskEventRoundSnapshot(text: '三'),
+        ],
+        appliedInputs: [
+          TaskInputAppliedInfo(
+            queueItemId: 'q1',
+            content: '第一句插入',
+            injectionVersion: 1,
+            afterRoundIndex: 0,
+          ),
+          TaskInputAppliedInfo(
+            queueItemId: 'q2',
+            content: '第二句插入',
+            injectionVersion: 2,
+            afterRoundIndex: 1,
+          ),
+        ],
+      );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+
+      await notifier.loadSession('session-1');
+      await _eventually(
+        () => notifier.state.messages.any(
+          (message) => message.id == 'user_insert_q2',
+        ),
+      );
+
+      // 两次插入各自跟在对应轮次之后，不能挤在一起或跑到末尾。
+      expect(notifier.state.messages.map((message) => message.content), [
+        '原始问题',
+        '一',
+        '第一句插入',
+        '二',
+        '第二句插入',
+        '三',
+      ]);
+    },
+  );
+
+  test(
+    'historical snapshot keeps an insertion that precedes every round',
+    () async {
+      final repository = _FakeChatRepository();
+      repository.history = [
+        _task('task-leading', status: TaskStatus.completed, result: '第一轮'),
+      ];
+      repository.snapshots['task-leading'] = TaskEventSnapshot(
+        text: '第一轮',
+        rounds: const [TaskEventRoundSnapshot(text: '第一轮')],
+        appliedInputs: [
+          // afterRoundIndex == -1 表示在任何一轮之前插入。
+          TaskInputAppliedInfo(
+            queueItemId: 'q0',
+            content: '开头的插入',
+            injectionVersion: 1,
+            afterRoundIndex: -1,
+          ),
+        ],
+      );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+
+      await notifier.loadSession('session-1');
+      await _eventually(
+        () => notifier.state.messages.any(
+          (message) => message.id == 'user_insert_q0',
+        ),
+      );
+
+      expect(notifier.state.messages.map((message) => message.content), [
+        '原始问题',
+        '开头的插入',
+        '第一轮',
+      ]);
     },
   );
 
@@ -3852,6 +4020,7 @@ class _FakeChatRepository extends ChatRepository {
     String? variant,
     String? goal,
     int goalMaxIterations = 30,
+    ImageGenerationOptions? imageOptions,
     Map<String, String>? extraMetadata,
   }) {
     return createTaskCompleter.future;
@@ -3869,6 +4038,7 @@ class _FakeChatRepository extends ChatRepository {
     String? variant,
     String? goal,
     int goalMaxIterations = 30,
+    ImageGenerationOptions? imageOptions,
     Map<String, String>? extraMetadata,
   }) async {
     queuedTexts.add(text);

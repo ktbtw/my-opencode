@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>连续回复：合并思考块 · 前后对照</title>
+<style>
+  :root{
+    --bg:#F2F6FC; --surface:#FFFFFF; --surface-elevated:#FAFCFF; --border:#D0DDEF; --border-light:#E8EFF8;
+    --primary:#2563EB; --primary-light:#EFF6FF;
+    --text-primary:#0F1729; --text-secondary:#4A5D7A; --text-muted:#8FA3BF;
+    --ok:#16A34A; --err:#DC2626; --green:#35806A;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 24px 60px;background:var(--bg);color:var(--text-primary);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  h1{font-size:19px;margin:0 0 6px}
+  h2{font-size:15px;margin:34px 0 12px}
+  .sub{font-size:13px;color:var(--text-secondary);margin:0 0 20px;line-height:1.7;max-width:980px}
+  .caption{font-size:13px;font-weight:600;color:var(--text-secondary);margin:0 0 10px}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);margin-left:8px}
+  .badge.old{border-color:#FCA5A5;background:#FEF2F2;color:#B91C1C}
+  .badge.new{border-color:#86EFAC;background:#F0FDF4;color:#15803D}
+  .cols{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:1 1 470px;min-width:390px}
+  .phone{width:100%;max-width:470px;background:var(--bg);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,41,.06)}
+  .topbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-secondary)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .msgs{padding:16px 14px 20px;display:flex;flex-direction:column;gap:14px}
+  .row{display:flex;gap:10px;align-items:flex-start}
+  .avatar{width:26px;height:26px;border-radius:50%;background:var(--primary-light);color:var(--primary);font-size:11px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-weight:600}
+  .stack{flex:1;min-width:0}
+
+  /* 思考块（_ThinkingBlock） */
+  .think{max-width:520px;background:var(--surface-elevated);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .think .head{display:flex;align-items:center;gap:5px;padding:8px 12px;font-size:12px;font-weight:500;color:var(--text-muted)}
+  .think .head .chev{margin-left:6px;font-size:12px}
+  .think .body{padding:0 12px 10px;border-top:1px solid var(--border);font-size:12px;line-height:1.6;color:var(--text-secondary);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+  .spin{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--primary);border-right-color:transparent;animation:spin 1s linear infinite;display:inline-block}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .gap6{height:6px}
+  .badge-extra{display:inline-block;font-size:10px;color:#B91C1C;background:#FEF2F2;border:1px dashed #FCA5A5;border-radius:6px;padding:1px 6px;margin-left:6px}
+  .badge-ok{display:inline-block;font-size:10px;color:#15803D;background:#F0FDF4;border:1px dashed #86EFAC;border-radius:6px;padding:1px 6px;margin-left:6px}
+
+  /* 连续正文面（连续回复时相邻段拼成一个面） */
+  .surface{background:var(--surface);border:1px solid var(--border);overflow:hidden}
+  .surface.only{border-radius:14px}
+  .surface.top{border-radius:14px 14px 0 0}
+  .surface.mid{border-radius:0;border-top:none}
+  .surface.bottom{border-radius:0 0 14px 14px;border-top:none}
+  .surface .body{padding:8px 14px;font-size:13px;line-height:1.7}
+  .surface .body.first{padding-top:12px}
+  .surface .body.last{padding-bottom:12px}
+
+  /* 后台事件内联行 */
+  .bgevent{border-top:1px solid var(--border);padding:10px 14px}
+  .bgevent .line{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)}
+  .bgevent .dot2{width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .bgevent .more{margin-left:auto;font-size:12px;color:var(--primary)}
+
+  /* 统计行 */
+  .stats{display:flex;align-items:center;gap:10px;padding:0 14px 8px;font-size:11px;color:var(--text-muted)}
+  .stats .copy{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);border:1px solid var(--border);border-radius:8px;padding:2px 8px;background:#fff}
+  .stats.dup{border-top:1px dashed #FCA5A5}
+
+  .legend{margin-top:30px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;max-width:980px}
+  .legend h3{font-size:13px;margin:0 0 10px}
+  table{border-collapse:collapse;font-size:12px;width:100%}
+  th,td{border-bottom:1px solid var(--border-light);padding:6px 8px;text-align:left;vertical-align:top}
+  th{color:var(--text-muted);font-weight:600}
+  .keep{color:#15803D}.del{color:#B91C1C}.muted{color:var(--text-muted)}
+</style>
+</head>
+<body>
+  <h1>连续回复：思考块合并前后对照</h1>
+  <p class="sub">
+    同一个会话内容，在「连续回复」开启下的渲染结果。<b>改动后</b>：整段只保留一个思考块，组内各轮的思考文本按顺序拼在一起（空行分隔）；
+    原来每组末尾都会重复的统计行 / 复制按钮，也只保留一次。
+  </p>
+
+  <!-- ============ 场景 A：后台任务续轮 ============ -->
+  <h2>场景 A：后台任务续轮（中间有「后台任务已完成」那一行）</h2>
+  <div class="cols">
+    <div class="col">
+      <p class="caption">改动前<span class="badge old">两个思考块 + 统计行重复</span></p>
+      <div class="phone">
+        <div class="topbar"><span class="dot"></span> zm · 北洛国模/glm-5.3-flash</div>
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head">💡 已完成思考<span class="chev">▾</span></div>
+                <div class="body">第一轮推理：先看目录结构，再确认入口文件……</div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface top"><div class="body first">第一轮正文：我已经定位到问题入口。</div></div>
+            </div>
+          </div>
+
+          <div class="surface mid">
+            <div class="bgevent">
+              <div class="line"><span class="dot2"></span> 后台任务已完成 · 检查文件<span class="more">展开</span></div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head"><span class="spin"></span> 思考中...<span class="chev">▸</span></div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface bottom">
+                <div class="body">第二轮正文：检查结果确认了判断，我继续给出修复方案。</div>
+                <div class="stats dup">首字 820ms · 1284 tokens · 96 字符<span class="copy">⧉ 复制</span><span class="badge-extra">重复</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <p class="caption">改动后<span class="badge new">一个思考块，正文连成一条</span></p>
+      <div class="phone">
+        <div class="topbar"><span class="dot"></span> zm · 北洛国模/glm-5.3-flash</div>
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head"><span class="spin"></span> 思考中...<span class="chev">▾</span> <span class="badge-ok">两轮合并</span></div>
+                <div class="body">第一轮推理：先看目录结构，再确认入口文件……
+
+第二轮推理：检查结果确认了判断，继续给出修复方案。</div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface top">
+                <div class="body first">第一轮正文：我已经定位到问题入口。</div>
+                <div class="bgevent">
+                  <div class="line"><span class="dot2"></span> 后台任务已完成 · 检查文件<span class="more">展开</span></div>
+                </div>
+                <div class="body last">第二轮正文：检查结果确认了判断，我继续给出修复方案。</div>
+                <div class="stats">首字 820ms · 1284 tokens · 96 字符<span class="copy">⧉ 复制</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 场景 B：相邻轮次 ============ -->
+  <h2>场景 B：相邻轮次（目标模式 / 子代理唤醒，中间没有后台事件行）</h2>
+  <p class="sub" style="margin:-6px 0 14px">
+    这种两轮之前<b>完全没有被合并</b>：分组逻辑要求中间必须夹一条后台事件。结果是两个独立气泡，各自顶着一个思考块——看起来就是「两条消息之间多出一个思考气泡」。
+  </p>
+  <div class="cols">
+    <div class="col">
+      <p class="caption">改动前<span class="badge old">两个气泡 · 两个思考块</span></p>
+      <div class="phone">
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head">💡 已完成思考<span class="chev">▸</span></div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface only"><div class="body">第一轮正文：……</div></div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head"><span class="spin"></span> 思考中...<span class="chev">▸</span></div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface only"><div class="body">第二轮正文：……</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <p class="caption">改动后<span class="badge new">一个气泡 · 一个思考块</span></p>
+      <div class="phone">
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div class="stack">
+              <div class="think">
+                <div class="head"><span class="spin"></span> 思考中...<span class="chev">▾</span> <span class="badge-ok">两轮合并</span></div>
+                <div class="body">第一轮推理……
+
+第二轮推理……</div>
+              </div>
+              <div class="gap6"></div>
+              <div class="surface only">
+                <div class="body first">第一轮正文：……</div>
+                <div class="body last">第二轮正文：……</div>
+                <div class="stats">首字 820ms · 1284 tokens · 96 字符<span class="copy">⧉ 复制</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <h3>这一版改了什么</h3>
+    <table>
+      <tr><th>项目</th><th>改动前</th><th>改动后</th></tr>
+      <tr>
+        <td>思考块</td>
+        <td class="del">每条消息各自一个（第二轮夹在两条正文之间）</td>
+        <td class="keep">整段一个，组内思考文本按顺序合并（空行分隔）</td>
+      </tr>
+      <tr>
+        <td>相邻轮次</td>
+        <td class="del">不合并，仍是两个独立气泡</td>
+        <td class="keep">合并成一条连续正文面</td>
+      </tr>
+      <tr>
+        <td>统计行 / 复制按钮</td>
+        <td class="del">每段末尾一个，一段里会出现多次</td>
+        <td class="keep">整段只在末尾出现一次</td>
+      </tr>
+      <tr>
+        <td>「工具调用记录 · 原始位置未记录」标题</td>
+        <td class="del">每条带此类工具的消息各一个</td>
+        <td class="keep">整段只出现一次</td>
+      </tr>
+      <tr>
+        <td>思考块的展开状态</td>
+        <td class="muted" colspan="2">各自独立展开；合并后一个块展开即可看到全部思考内容</td>
+      </tr>
+    </table>
+  </div>
+</body>
+</html>

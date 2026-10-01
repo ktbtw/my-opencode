@@ -9,6 +9,7 @@ import { Hash } from "@opencode-ai/core/util/hash"
 import { Plugin } from "../plugin"
 import { type LanguageModelV3 } from "@ai-sdk/provider"
 import * as ModelsDev from "@opencode-ai/core/models-dev"
+import { resolveDialect } from "@/image/dialect"
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -124,7 +125,9 @@ type CustomModelLoader = (sdk: any, modelID: string, options?: Record<string, an
 type CustomVarsLoader = (options: Record<string, any>) => Record<string, string>
 type CustomDiscoverModels = () => Promise<Record<string, Model>>
 
-const imageOutputModelPattern = /(^|[-_/])(gpt-image|dall-e|imagen|flux|recraft|sdxl|stable-diffusion)([-_/]|$)/i
+const imageOutputModelPattern =
+  /(^|[-_/])(gpt-image|dall-e|imagen|flux|recraft|sdxl|stable-diffusion)([-_/]|$)|image/i
+const videoOutputModelPattern = /video/i
 const modelAliasPrefixPattern = /^(?:gpt|claude)/
 const visionModelAliasPrefixPattern = /^(?:gpt|claude|grok|gemini|kimi)/
 
@@ -205,8 +208,29 @@ export function inferConfigModelCapabilities(
   existing?: Model,
   providerID = "",
 ) {
-  if ((existing?.limit.context ?? 0) > 0) return
   const label = `${modelID} ${modelName}`
+  // 生图 / 生视频与上下文窗口无关，必须在对 limit 缓存短路之前判定：
+  // 带 image / video 的模型往往能从目录匹配到 context，一旦被那句短路挡掉，
+  // 就不会被识别成生图/视频模型，请求会走成普通对话（上游对这类模型只提供
+  // 生图/生视频接口，于是直接失败）。
+  const isVideoOutputModel = videoOutputModelPattern.test(label)
+  const isImageOutputModel = !isVideoOutputModel && imageOutputModelPattern.test(label)
+  if (isImageOutputModel || isVideoOutputModel) {
+    return isVideoOutputModel
+      ? {
+          input: { text: true, audio: false, image: true, video: false, pdf: false },
+          output: { text: false, audio: false, image: false, video: true, pdf: false },
+          attachment: false,
+          toolcall: false,
+        }
+      : {
+          input: { text: true, audio: false, image: false, video: false, pdf: false },
+          output: { text: false, audio: false, image: true, video: false, pdf: false },
+          attachment: false,
+          toolcall: false,
+        }
+  }
+  if ((existing?.limit.context ?? 0) > 0) return
   const lowerModelID = modelID.toLowerCase()
   const aliases = [
     modelID,
@@ -220,15 +244,8 @@ export function inferConfigModelCapabilities(
   const isVisionFamily = aliases.some((value) => visionModelAliasPrefixPattern.test(value))
   const grokLimit = aliases.map((alias) => inferGrokLimit(alias, providerID)).find((limit) => limit !== undefined)
   const isGrokFamily = Boolean(grokLimit) || aliases.some((value) => value.startsWith("grok"))
-  const isImageOutputModel = imageOutputModelPattern.test(label)
   const inferred: InferredCapabilities = {}
-  if (isImageOutputModel) {
-    inferred.input = { text: true, audio: false, image: false, video: false, pdf: false }
-    inferred.output = { text: false, audio: false, image: true, video: false, pdf: false }
-    inferred.attachment = false
-    inferred.toolcall = false
-  }
-  if (!isImageOutputModel && isGptOrClaudeFamily) {
+  if (isGptOrClaudeFamily) {
     inferred.reasoning = true
     inferred.attachment = true
     inferred.input = { ...inferred.input, text: true, audio: false, image: true, video: false, pdf: false }
@@ -238,7 +255,7 @@ export function inferConfigModelCapabilities(
       aliases.map((alias) => inferGptLimit(alias) ?? inferClaudeLimit(alias)).find((limit) => limit !== undefined) ??
       inferred.limit
   }
-  if (!isImageOutputModel && (isVisionFamily || isGrokFamily)) {
+  if (isVisionFamily || isGrokFamily) {
     inferred.attachment = true
     inferred.input = { ...inferred.input, text: true, audio: false, image: true, video: false, pdf: false }
     inferred.output = { ...inferred.output, text: true, audio: false, image: false, video: false, pdf: false }
@@ -884,6 +901,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
                       pdf: false,
                     },
                     interleaved: false,
+                    image: undefined,
                   },
                   release_date: "",
                   variants: {},
@@ -1069,6 +1087,16 @@ const ProviderInterleaved = Schema.Union([
   }),
 ])
 
+const ImageCapabilities = Schema.Struct({
+  sizes: Schema.Array(Schema.String),
+  aspectRatios: Schema.Array(Schema.String),
+  resolutions: Schema.Array(Schema.String),
+  qualities: Schema.Array(Schema.String),
+  formats: Schema.Array(Schema.String),
+  maxCount: Schema.Finite,
+  maxReferences: Schema.Finite,
+})
+
 const ProviderCapabilities = Schema.Struct({
   temperature: Schema.Boolean,
   reasoning: Schema.Boolean,
@@ -1077,6 +1105,9 @@ const ProviderCapabilities = Schema.Struct({
   input: ProviderModalities,
   output: ProviderModalities,
   interleaved: ProviderInterleaved,
+  // 生图能力由方言命中决定（见 src/image/dialect.ts），只表示"支持生图"，
+  // 不是每族 API 的真实形状——真正请求时仍由方言构造。
+  image: optionalOmitUndefined(ImageCapabilities),
 })
 
 const ProviderCacheCost = Schema.Struct({
@@ -1250,6 +1281,14 @@ function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
   return result
 }
 
+// 生图能力由方言命中决定。只支持的模型（output.image 且 output.text 为假）
+// 才下发 image 能力；它反映该族 API 的真实参数集合。
+function imageCapabilities(providerID: string, npm: string, modelID: string, model: Model) {
+  if (!(model.capabilities.output.image && !model.capabilities.output.text)) return undefined
+  const dialect = resolveDialect({ providerID, npm, modelID })
+  return dialect?.capabilities(modelID)
+}
+
 function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
   const base: Model = {
     id: ModelID.make(model.id),
@@ -1290,10 +1329,12 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
         pdf: model.modalities?.output?.includes("pdf") ?? false,
       },
       interleaved: model.interleaved ?? false,
+      image: undefined,
     },
     release_date: model.release_date ?? "",
     variants: {},
   }
+  base.capabilities.image = imageCapabilities(ProviderID.make(provider.id), base.api.npm, model.id, base)
 
   return {
     ...base,
@@ -1510,6 +1551,7 @@ export const layer = Layer.effect(
               existingModel,
               providerID,
             )
+            const mediaOutput = inferred?.output?.image === true || inferred?.output?.video === true
             const parsedModel: Model = {
               id: ModelID.make(modelID),
               api: {
@@ -1553,26 +1595,32 @@ export const layer = Layer.effect(
                     false,
                 },
                 output: {
-                  text:
-                    model.modalities?.output?.includes("text") ??
-                    inferred?.output?.text ??
-                    existingModel?.capabilities.output.text ??
-                    true,
+                  // 名称已明确是生图/生视频时，输出模态以名称为准：配置里
+                  // 自动生成的 modalities 常写成 output: ["text"]，那会把这类
+                  // 模型压回对话模型，请求走成 chat 而失败。
+                  text: mediaOutput
+                    ? false
+                    : model.modalities?.output?.includes("text") ??
+                      inferred?.output?.text ??
+                      existingModel?.capabilities.output.text ??
+                      true,
                   audio:
                     model.modalities?.output?.includes("audio") ??
                     inferred?.output?.audio ??
                     existingModel?.capabilities.output.audio ??
                     false,
-                  image:
-                    model.modalities?.output?.includes("image") ??
-                    inferred?.output?.image ??
-                    existingModel?.capabilities.output.image ??
-                    false,
-                  video:
-                    model.modalities?.output?.includes("video") ??
-                    inferred?.output?.video ??
-                    existingModel?.capabilities.output.video ??
-                    false,
+                  image: mediaOutput
+                    ? inferred?.output?.image === true
+                    : model.modalities?.output?.includes("image") ??
+                      inferred?.output?.image ??
+                      existingModel?.capabilities.output.image ??
+                      false,
+                  video: mediaOutput
+                    ? inferred?.output?.video === true
+                    : model.modalities?.output?.includes("video") ??
+                      inferred?.output?.video ??
+                      existingModel?.capabilities.output.video ??
+                      false,
                   pdf:
                     model.modalities?.output?.includes("pdf") ??
                     inferred?.output?.pdf ??
@@ -1618,6 +1666,7 @@ export const layer = Layer.effect(
               release_date: model.release_date ?? existingModel?.release_date ?? "",
               variants: {},
             }
+            parsedModel.capabilities.image = imageCapabilities(providerID, apiNpm, apiID, parsedModel)
             // Explicit model variants are the complete contract for this model.
             // Mixing them with inferred variants can send unsupported reasoning
             // parameters to a provider, so only infer when no config was given.
@@ -2069,7 +2118,12 @@ export const layer = Layer.effect(
           if (unprefixed) return provider.models[unprefixed]
         } else {
           for (const model of Object.keys(provider.models)) {
-            if (model.includes(item)) return provider.models[model]
+            if (!model.includes(item)) continue
+            const candidate = provider.models[model]
+            // 生图 / 生视频模型不能当小模型用：它们只有生成接口。
+            if ((candidate.capabilities.output.image || candidate.capabilities.output.video) && !candidate.capabilities.output.text)
+              continue
+            return candidate
           }
         }
       }

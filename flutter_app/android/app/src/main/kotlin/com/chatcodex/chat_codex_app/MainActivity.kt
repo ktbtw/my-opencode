@@ -49,6 +49,37 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chat_codex/artifact_directory")
             .setMethodCallHandler(artifactDirectory::handle)
+        // 画中画：视频播放页请求进入 / 退出。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chat_codex/pip")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isSupported" -> result.success(
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                            packageManager.hasSystemFeature(
+                                android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE,
+                            ),
+                    )
+                    "enter" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            try {
+                                enterPictureInPictureMode(
+                                    android.app.PictureInPictureParams.Builder().build(),
+                                )
+                                result.success(true)
+                            } catch (error: Throwable) {
+                                Log.w(tag, "enterPictureInPictureMode failed", error)
+                                result.success(false)
+                            }
+                        } else {
+                            result.success(false)
+                        }
+                    }
+                    "exit" -> {
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
             when (call.method) {
                 "initialize" -> {

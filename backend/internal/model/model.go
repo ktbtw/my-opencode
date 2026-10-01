@@ -794,6 +794,18 @@ type DeviceAIModalities struct {
 	Output []string `json:"output,omitempty"`
 }
 
+// DeviceAIImageCapability 是生图参数能力，客户端参数条据此渲染：
+// OpenAI 用 sizes/qualities/formats，xAI 用 aspect_ratios/resolutions/qualities。
+type DeviceAIImageCapability struct {
+	Sizes         []string `json:"sizes,omitempty"`
+	AspectRatios  []string `json:"aspect_ratios,omitempty"`
+	Resolutions   []string `json:"resolutions,omitempty"`
+	Qualities     []string `json:"qualities,omitempty"`
+	Formats       []string `json:"formats,omitempty"`
+	MaxCount      int      `json:"max_count,omitempty"`
+	MaxReferences int      `json:"max_references,omitempty"`
+}
+
 type DeviceAIThinking struct {
 	Supported           bool           `json:"supported"`
 	Source              string         `json:"source,omitempty"`
@@ -819,6 +831,7 @@ type DeviceAIModel struct {
 	ManualOutput    int64             `json:"manual_output_limit,omitempty"`
 	Variants        map[string]any    `json:"variants,omitempty"`
 	Thinking        *DeviceAIThinking `json:"thinking,omitempty"`
+	Image           *DeviceAIImageCapability `json:"image,omitempty"`
 }
 
 type DeviceAIProvider struct {
@@ -1316,6 +1329,22 @@ type RuntimePreflightStartPayload struct {
 	RestartAfterApply   bool                  `json:"restart_after_apply,omitempty"`
 	SemanticAgent       *SemanticAgentProfile `json:"semantic_agent,omitempty"`
 	Runtimes            []RuntimeCatalogItem  `json:"runtimes,omitempty"`
+	// RuntimeOnly 表示只安装 Runtimes 里列出的运行时，不涉及语义 Agent 切换。
+	RuntimeOnly bool `json:"runtime_only,omitempty"`
+}
+
+// DeviceRuntimeStatus 描述某个受管运行时组件在设备上的安装情况。
+type DeviceRuntimeStatus struct {
+	RuntimeID  string `json:"runtime_id"`
+	Installed  bool   `json:"installed"`
+	Version    string `json:"version,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Executable string `json:"executable,omitempty"`
+}
+
+// DeviceRuntimeRequestPayload 查询单个运行时组件的安装状态。
+type DeviceRuntimeRequestPayload struct {
+	RuntimeID string `json:"runtime_id"`
 }
 
 type RuntimePreflightStatusPayload struct {
@@ -1504,6 +1533,7 @@ type DeviceLauncherResultPayload struct {
 	Permission        *DeviceDirectoryPermissionResult `json:"permission,omitempty"`
 	Identity          *ProjectIdentityCorrectionResult `json:"identity,omitempty"`
 	Diagnostics       any                              `json:"diagnostics,omitempty"`
+	Runtime           *DeviceRuntimeStatus             `json:"runtime,omitempty"`
 	Storage           any                              `json:"storage,omitempty"`
 	SSH               *SSHStatus                       `json:"ssh,omitempty"`
 	SSHSetup          any                              `json:"setup,omitempty"`

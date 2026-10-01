@@ -278,6 +278,18 @@ JADX_TOOL_LOCAL="$RUNTIME_TOOL_DIR/$JADX_TOOL_FILENAME"
 APKTOOL_TOOL_FILENAME="apktool_3.0.2.jar"
 APKTOOL_TOOL_SHA256="eee4669a704a14e0623407e6701b0b91887e61e1e4049cb7a82833e14ae8b5fd"
 APKTOOL_TOOL_LOCAL="$RUNTIME_TOOL_DIR/$APKTOOL_TOOL_FILENAME"
+FFMPEG_DARWIN_ARM64_FILENAME="ffmpeg-6.0-darwin-arm64.tar.gz"
+FFMPEG_DARWIN_ARM64_SHA256="3d58c8f6a0053c004199f457d87fc49f55d4246e26c3ebd60ea3fd14045bc36b"
+FFMPEG_DARWIN_ARM64_LOCAL="$RUNTIME_TOOL_DIR/$FFMPEG_DARWIN_ARM64_FILENAME"
+FFMPEG_DARWIN_X64_FILENAME="ffmpeg-6.0-darwin-x64.tar.gz"
+FFMPEG_DARWIN_X64_SHA256="657dbfbc39badde296ff8d93a27148c8098f8d0541a22e0cad4b1c728707e215"
+FFMPEG_DARWIN_X64_LOCAL="$RUNTIME_TOOL_DIR/$FFMPEG_DARWIN_X64_FILENAME"
+FFMPEG_LINUX_X64_FILENAME="ffmpeg-6.0-linux-x64.tar.gz"
+FFMPEG_LINUX_X64_SHA256="ac583e94d5b67b8c7e22326fb784134899c9759fab0d71ecba597c53d8c47698"
+FFMPEG_LINUX_X64_LOCAL="$RUNTIME_TOOL_DIR/$FFMPEG_LINUX_X64_FILENAME"
+FFMPEG_WIN32_X64_FILENAME="ffmpeg-6.0-win32-x64.zip"
+FFMPEG_WIN32_X64_SHA256="5fbfc2b653e1d6c21b50d5588c3ed4611d548c5cf744d89bf41869e6913ade7a"
+FFMPEG_WIN32_X64_LOCAL="$RUNTIME_TOOL_DIR/$FFMPEG_WIN32_X64_FILENAME"
 MCP_JADX_LOCAL="$RUNTIME_MCP_DIR/jadx-mcp-server.tar.gz"
 MCP_APKTOOL_LOCAL="$RUNTIME_MCP_DIR/apktool-mcp-server.tar.gz"
 MCP_FRIDA_LOCAL="$RUNTIME_MCP_DIR/frida-analykit.tar.gz"
@@ -859,9 +871,7 @@ payload = {
     "channel": "latest",
     # 用 chr(10) 拼换行，避免在多层引号里写转义序列出错。
     "changelog": chr(10).join([
-        "- 修复手填的模型上下文窗口被运行时上报值覆盖，设置后界面仍显示旧值的问题",
-        "- 上传中断后重选同一文件不再整份重传，只补传缺失分块",
-        "- 自动清理中断上传残留的临时目录",
+        "- 修复单独安装运行时（例如 FFmpeg）时报「agent not found」的问题：运行时安装是设备级操作，此前却按项目 Agent 校验 launcher 设备标识，导致安装直接被拒；现在不再要求存在项目 Agent",
     ]),
     "downloads": [
         {
@@ -1514,6 +1524,14 @@ if [ "$DEPLOY_RUNTIME" -eq 1 ]; then
   upload_file_if_changed "$APKTOOL_TOOL_LOCAL" "$RUNTIME_DIR/tool/$APKTOOL_TOOL_FILENAME"
   verify_remote_file_sha256 "$RUNTIME_DIR/tool/$JADX_TOOL_FILENAME" "$JADX_TOOL_SHA256"
   verify_remote_file_sha256 "$RUNTIME_DIR/tool/$APKTOOL_TOOL_FILENAME" "$APKTOOL_TOOL_SHA256"
+  upload_file_if_changed "$FFMPEG_DARWIN_ARM64_LOCAL" "$RUNTIME_DIR/tool/$FFMPEG_DARWIN_ARM64_FILENAME"
+  upload_file_if_changed "$FFMPEG_DARWIN_X64_LOCAL" "$RUNTIME_DIR/tool/$FFMPEG_DARWIN_X64_FILENAME"
+  upload_file_if_changed "$FFMPEG_LINUX_X64_LOCAL" "$RUNTIME_DIR/tool/$FFMPEG_LINUX_X64_FILENAME"
+  upload_file_if_changed "$FFMPEG_WIN32_X64_LOCAL" "$RUNTIME_DIR/tool/$FFMPEG_WIN32_X64_FILENAME"
+  verify_remote_file_sha256 "$RUNTIME_DIR/tool/$FFMPEG_DARWIN_ARM64_FILENAME" "$FFMPEG_DARWIN_ARM64_SHA256"
+  verify_remote_file_sha256 "$RUNTIME_DIR/tool/$FFMPEG_DARWIN_X64_FILENAME" "$FFMPEG_DARWIN_X64_SHA256"
+  verify_remote_file_sha256 "$RUNTIME_DIR/tool/$FFMPEG_LINUX_X64_FILENAME" "$FFMPEG_LINUX_X64_SHA256"
+  verify_remote_file_sha256 "$RUNTIME_DIR/tool/$FFMPEG_WIN32_X64_FILENAME" "$FFMPEG_WIN32_X64_SHA256"
   upload_file_if_changed "$MCP_JADX_LOCAL" "$RUNTIME_DIR/mcp/jadx-mcp-server.tar.gz"
   upload_file_if_changed "$MCP_APKTOOL_LOCAL" "$RUNTIME_DIR/mcp/apktool-mcp-server.tar.gz"
   upload_file_if_changed "$MCP_FRIDA_LOCAL" "$RUNTIME_DIR/mcp/frida-analykit.tar.gz"

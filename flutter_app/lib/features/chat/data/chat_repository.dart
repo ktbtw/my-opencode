@@ -65,6 +65,7 @@ class ChatRepository {
     String? variant,
     String? goal,
     int goalMaxIterations = 30,
+    ImageGenerationOptions? imageOptions,
     Map<String, String>? extraMetadata,
   }) async {
     final parts = _buildParts(text, attachedFiles);
@@ -74,6 +75,7 @@ class ChatRepository {
       variant: variant,
       goal: goal,
       goalMaxIterations: goalMaxIterations,
+      imageOptions: imageOptions,
       extraMetadata: extraMetadata,
     );
     final body = <String, dynamic>{
@@ -141,6 +143,7 @@ class ChatRepository {
     String? variant,
     String? goal,
     int goalMaxIterations = 30,
+    ImageGenerationOptions? imageOptions,
     Map<String, String>? extraMetadata,
   }) async {
     final data = await ApiClient.post(
@@ -155,6 +158,7 @@ class ChatRepository {
           variant: variant,
           goal: goal,
           goalMaxIterations: goalMaxIterations,
+          imageOptions: imageOptions,
           extraMetadata: extraMetadata,
         ),
       },
@@ -226,6 +230,7 @@ class ChatRepository {
     String? variant,
     String? goal,
     int goalMaxIterations = 30,
+    ImageGenerationOptions? imageOptions,
     Map<String, String>? extraMetadata,
   }) => {
     'permission_mode': permissionMode,
@@ -234,6 +239,7 @@ class ChatRepository {
     if (goal != null && goal.trim().isNotEmpty) 'goal': goal.trim(),
     if (goal != null && goal.trim().isNotEmpty)
       'goal_max_iterations': goalMaxIterations.toString(),
+    ...?imageOptions?.toMetadata(),
     ...?extraMetadata,
   };
 
@@ -1627,6 +1633,11 @@ class ChatRepository {
         final modalities = m['modalities'] as Map<String, dynamic>? ?? {};
         final inputModalities = _stringList(modalities['input']);
         final outputModalities = _stringList(modalities['output']);
+        final imageCapabilitiesJson =
+            m['image_capabilities'] as Map<String, dynamic>?;
+        final imageCapabilities = imageCapabilitiesJson == null
+            ? null
+            : ImageGenerationCapabilities.fromJson(imageCapabilitiesJson);
         final contextLimit =
             _modelContextLimit(m) ??
             inferGrokContextLimit(
@@ -1646,6 +1657,7 @@ class ChatRepository {
             inputModalities: inputModalities,
             outputModalities: outputModalities,
             contextLimit: contextLimit,
+            imageCapabilities: imageCapabilities,
           ),
         );
       }

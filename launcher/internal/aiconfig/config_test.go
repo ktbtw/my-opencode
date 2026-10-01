@@ -1550,3 +1550,58 @@ func TestSaveWritesOutputLimitAndManualMarkers(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeModelImageKeepsCapabilityValues(t *testing.T) {
+	cap := runtimeModelImage(&RuntimeImageCapability{
+		Sizes:         []string{"1024x1024", " 1536x1024 "},
+		AspectRatios:  []string{"1:1", "16:9"},
+		Resolutions:   []string{"1k", "2k"},
+		Qualities:     []string{"low", "medium"},
+		Formats:       []string{"jpeg"},
+		MaxCount:      4,
+		MaxReferences: 3,
+	})
+
+	if cap == nil {
+		t.Fatal("expected image capability")
+	}
+	if len(cap.Sizes) != 2 || cap.Sizes[1] != "1536x1024" {
+		t.Fatalf("sizes not normalized: %+v", cap.Sizes)
+	}
+	if cap.MaxCount != 4 || cap.MaxReferences != 3 {
+		t.Fatalf("limits lost: %+v", cap)
+	}
+}
+
+func TestRuntimeModelImageReturnsNilForNil(t *testing.T) {
+	if runtimeModelImage(nil) != nil {
+		t.Fatal("expected nil for nil input")
+	}
+}
+
+func TestEnrichDeviceAIModelAddsImageCapabilityWhenMissing(t *testing.T) {
+	item := &model.DeviceAIModelInfo{ID: "Kun"}
+	enrichDeviceAIModel(item, "订阅grok", "Kun", RuntimeModelMetadata{
+		Capabilities: RuntimeModelCapabilities{
+			Image: &RuntimeImageCapability{Sizes: []string{"1024x1024"}},
+		},
+	})
+
+	if item.Image == nil || len(item.Image.Sizes) != 1 {
+		t.Fatalf("expected image capability to be enriched, got %+v", item.Image)
+	}
+}
+
+func TestEnrichDeviceAIModelKeepsManualImageCapability(t *testing.T) {
+	manual := &model.DeviceAIImageCapability{Sizes: []string{"1792x1024"}}
+	item := &model.DeviceAIModelInfo{ID: "Kun", Image: manual}
+	enrichDeviceAIModel(item, "订阅grok", "Kun", RuntimeModelMetadata{
+		Capabilities: RuntimeModelCapabilities{
+			Image: &RuntimeImageCapability{Sizes: []string{"1024x1024"}},
+		},
+	})
+
+	if item.Image != manual {
+		t.Fatal("manual image capability must win over runtime metadata")
+	}
+}

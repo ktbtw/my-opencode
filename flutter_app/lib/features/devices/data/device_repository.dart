@@ -486,6 +486,33 @@ class DeviceRepository {
         .toList();
   }
 
+  /// 查询设备上某个受管运行时组件（例如 ffmpeg）是否已安装。
+  Future<DeviceRuntimeStatus> getDeviceRuntimeStatus({
+    required String machineId,
+    required String runtimeId,
+  }) async {
+    final data = await ApiClient.get(
+      '/api/devices/${Uri.encodeComponent(machineId)}/runtimes/${Uri.encodeComponent(runtimeId)}/status',
+    );
+    return DeviceRuntimeStatus.fromJson(
+      (data['runtime'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{},
+    );
+  }
+
+  /// 请求设备安装某个运行时组件，返回可轮询的安装任务。
+  Future<RuntimePreflightJob> installDeviceRuntime({
+    required String machineId,
+    required String runtimeId,
+  }) async {
+    final data = await ApiClient.post(
+      '/api/devices/${Uri.encodeComponent(machineId)}/runtimes/${Uri.encodeComponent(runtimeId)}/install',
+      const <String, dynamic>{},
+    );
+    return RuntimePreflightJob.fromJson(
+      (data['job'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{},
+    );
+  }
+
   Future<DeviceEnvConfigInfo> getDeviceEnvConfig(String machineId) async {
     final data = await ApiClient.get('/api/devices/$machineId/env-config');
     final cfg = (data['config'] as Map<String, dynamic>?) ?? data;
@@ -1080,13 +1107,15 @@ class DeviceRepository {
 
   /// 查询设备侧某次上传已收到的分块，用于断点续传。
   /// 查询失败返回空集合，调用方按全新上传处理。
-  Future<Set<int>> _queryReceivedChunks({
+  Future<({Set<int> received, int receivedBytes, bool resumable})>
+  _queryUploadStatus({
     required String basePath,
     required String path,
     required String uploadId,
     required int size,
     required int totalChunks,
   }) async {
+    const empty = (received: <int>{}, receivedBytes: 0, resumable: false);
     try {
       final data = await ApiClient.post(
         '$basePath/status',
@@ -1104,24 +1133,51 @@ class DeviceRepository {
           : (data['file'] is Map<String, dynamic>
                 ? (data['file'] as Map<String, dynamic>)['status']
                 : null);
-      if (status is! Map<String, dynamic>) return <int>{};
+      if (status is! Map<String, dynamic>) return empty;
       // 会话必须与本次文件一致，否则不能复用已有分块。
       final statusSize = status['size'];
       final statusTotal = status['total_chunks'];
-      if (statusSize is num && statusSize.toInt() != size) return <int>{};
+      if (statusSize is num && statusSize.toInt() != size) return empty;
       if (statusTotal is num && statusTotal.toInt() != totalChunks) {
-        return <int>{};
+        return empty;
       }
       final received = status['received_chunks'];
-      if (received is! List) return <int>{};
+      if (received is! List) return empty;
       final result = <int>{};
       for (final item in received) {
         if (item is num) result.add(item.toInt());
       }
-      return result;
+      final bytes = status['received_bytes'];
+      return (
+        received: result,
+        receivedBytes: bytes is num ? bytes.toInt() : 0,
+        resumable: status['resumable'] == true || result.isNotEmpty,
+      );
     } catch (_) {
-      return <int>{};
+      return empty;
     }
+  }
+
+  /// 按已收到的分块下标计算已传字节数。
+  ///
+  /// 不能用设备上报的 `received_bytes`：临时文件在 create 阶段就按声明大小
+  /// 预分配（Truncate），其大小恒等于总大小，会算出 100%。这里按分块下标
+  /// 累加，末块按剩余字节数计算，保证与真实进度一致。
+  int _receivedBytesFor({
+    required Set<int> received,
+    required int totalBytes,
+    required int totalChunks,
+    required int chunkSize,
+  }) {
+    if (received.isEmpty || totalBytes <= 0) return 0;
+    var bytes = 0;
+    for (final index in received) {
+      if (index < 0 || index >= totalChunks) continue;
+      final start = index * chunkSize;
+      final end = (start + chunkSize).clamp(0, totalBytes);
+      if (end > start) bytes += end - start;
+    }
+    return bytes.clamp(0, totalBytes);
   }
 
   /// 上传单个分块，失败时按指数退避重试。
@@ -1212,17 +1268,36 @@ class DeviceRepository {
     }
 
     // 续传：查询设备侧已收到的分块，跳过这些分块的上传。
-    final received = resume
-        ? await _queryReceivedChunks(
+    // 设备侧已经存在同一会话时必须声明续传，否则 create 会直接报
+    // 「上传会话已存在」，用户既看不到进度也无法继续。
+    final status = resume
+        ? await _queryUploadStatus(
             basePath: basePath,
             path: path,
             uploadId: actualUploadId,
             size: totalBytes,
             totalChunks: totalChunks,
           )
-        : <int>{};
+        : (received: <int>{}, receivedBytes: 0, resumable: false);
+    final received = status.received;
 
-    progress(uploadedBytes: 0, completedChunks: 0, stage: '准备上传');
+    // 续传时从设备侧真实进度起步，让用户看到「已传多少」而不是从 0 开始。
+    // 注意不能用设备上报的 received_bytes：临时文件按声明大小预分配，它的
+    // 大小恒等于总大小，会算出 100%。按已收到的分块下标累加才准确。
+    uploadedBytes = _receivedBytesFor(
+      received: received,
+      totalBytes: totalBytes,
+      totalChunks: totalChunks,
+      chunkSize: effectiveChunkSize,
+    );
+    completedChunks = received.length;
+    progress(
+      uploadedBytes: uploadedBytes,
+      completedChunks: completedChunks,
+      stage: status.resumable
+          ? '续传：设备已有 ${received.length}/$totalChunks 分块'
+          : '准备上传',
+    );
     await ApiClient.post(
       '$basePath/create',
       {
@@ -1230,7 +1305,9 @@ class DeviceRepository {
         'upload_id': actualUploadId,
         'size': totalBytes,
         'total_chunks': totalChunks,
-        if (resume && received.isNotEmpty) 'resume': true,
+        // 只要设备侧已有同一会话就声明续传（即使还没收到分块），
+        // 避免 create 被当成重复创建而失败。
+        if (resume && status.resumable) 'resume': true,
       },
       timeout: const Duration(seconds: 60),
     );
@@ -1246,8 +1323,7 @@ class DeviceRepository {
 
     Future<void> uploadChunk(int chunkIndex, Uint8List chunk) async {
       if (received.contains(chunkIndex)) {
-        uploadedBytes += chunk.length;
-        completedChunks += 1;
+        // 续传时这些分块已经在起始进度里计过，这里只报告进度，不再累加。
         progress(
           uploadedBytes: uploadedBytes,
           completedChunks: completedChunks,
@@ -1281,7 +1357,12 @@ class DeviceRepository {
       );
     }
 
-    progress(uploadedBytes: 0, completedChunks: 0, stage: '上传分块');
+    // 续传时保留设备侧已有进度，不要重置为 0。
+    progress(
+      uploadedBytes: uploadedBytes,
+      completedChunks: completedChunks,
+      stage: '上传分块',
+    );
     var pending = <int>[];
     // 窗口内并发上传，内存占用上限约为 concurrency * chunkSize。
     var window = <(int, Uint8List)>[];

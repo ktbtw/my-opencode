@@ -1044,6 +1044,80 @@ void main() {
     await loading;
     expect(completed, isTrue);
   });
+
+  test('resumeGoal re-dispatches paused goal with resume metadata', () async {
+    await _initTestAppLog();
+    final repo = _FakeGoalRoundRepo();
+    final notifier = ChatNotifier(
+      repo: repo,
+      agentId: 'agent_test',
+      projectId: 'project_test',
+    );
+
+    // 先正常启动目标，建立任务与 watch；然后模拟用户停止：
+    // goal 变 paused（user_cancelled）+ 任务收口。
+    await notifier.sendMessage('/goal 完成目标');
+    repo.emit({
+      'type': 'goal_created',
+      'task_id': 'task_goal',
+      'goal_id': 'goal_resume_1',
+      'iteration': 3,
+      'max': 30,
+    });
+    repo.emit({
+      'type': 'goal_paused',
+      'task_id': 'task_goal',
+      'goal_id': 'goal_resume_1',
+      'reason': 'user_cancelled',
+      'iteration': 3,
+      'max': 30,
+    });
+    repo.emit({'type': 'cancelled', 'error': '任务已停止'});
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(notifier.state.taskActive, isFalse);
+
+    const settings = GoalSettings(
+      content: '完成目标',
+      enabled: false,
+      maxIterations: 30,
+    );
+    final started = await notifier.resumeGoal(settings: settings);
+    expect(started, isTrue);
+    expect(repo.lastGoal, '完成目标');
+    expect(repo.lastExtraMetadata?['goal_resume'], 'true');
+    expect(repo.lastExtraMetadata?['goal_id'], 'goal_resume_1');
+    expect(repo.lastExtraMetadata?['goal_iteration'], '4');
+
+    await repo.close();
+  });
+
+  test('resumeGoal refuses while transient provider retry is pending', () async {
+    await _initTestAppLog();
+    final repo = _FakeGoalRoundRepo();
+    final notifier = ChatNotifier(
+      repo: repo,
+      agentId: 'agent_test',
+      projectId: 'project_test',
+    );
+
+    await notifier.sendMessage('/goal 完成目标');
+    repo.emit({
+      'type': 'goal_paused',
+      'task_id': 'task_goal',
+      'goal_id': 'goal_retry_1',
+      'reason': 'provider_connection_retry',
+      'iteration': 1,
+      'max': 30,
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    const settings = GoalSettings(content: '完成目标', enabled: true);
+    final started = await notifier.resumeGoal(settings: settings);
+    expect(started, isFalse);
+    expect(repo.createTaskCount, 1);
+
+    await repo.close();
+  });
 }
 
 Future<Directory> _initTestAppLog() async {
@@ -1065,6 +1139,7 @@ class _FakeGoalRoundRepo extends ChatRepository {
   String? lastText;
   String? lastGoal;
   int? lastGoalMaxIterations;
+  Map<String, String>? lastExtraMetadata;
   TaskStatus taskStatus = TaskStatus.running;
   String taskResult = '';
   TaskEventSnapshot? snapshotOverride;
@@ -1083,12 +1158,14 @@ class _FakeGoalRoundRepo extends ChatRepository {
     String? variant,
     String? goal,
     int goalMaxIterations = 30,
+    ImageGenerationOptions? imageOptions,
     Map<String, String>? extraMetadata,
   }) async {
     createTaskCount += 1;
     lastText = text;
     lastGoal = goal;
     lastGoalMaxIterations = goalMaxIterations;
+    lastExtraMetadata = extraMetadata;
     return TaskModel(
       taskId: 'task_goal',
       agentId: agentId,

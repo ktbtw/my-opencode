@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/notifications/app_notification_feedback.dart';
@@ -22,6 +23,22 @@ class SettingsPage extends ConsumerWidget {
   ) async {
     final notifier = ref.read(settingsProvider.notifier);
     try {
+      // Android 必须拿 SAF 授权目录（content://）。FilePicker 只返回普通路径，
+      // 分区存储下没有写权限，下载交付文件会报「没有权限」。
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        final picked = await const MethodChannel(
+          'chat_codex/artifact_directory',
+        ).invokeMapMethod<String, dynamic>('pickDirectory');
+        final uri = picked?['uri'] as String?;
+        if (uri == null || uri.isEmpty) return;
+        await notifier.setDownloadDirectory(
+          uri,
+          label: picked?['label'] as String? ?? uri,
+        );
+        if (!context.mounted) return;
+        showAppFeedback(context, message: '下载目录已更新');
+        return;
+      }
       final selected = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择下载目录',
       );
@@ -592,7 +609,7 @@ class SettingsPage extends ConsumerWidget {
             icon: Icons.folder_outlined,
             title: '下载目录',
             subtitle: settings.hasCustomDownloadDirectory
-                ? settings.downloadDirectory!
+                ? settings.downloadDirectoryLabel
                 : _supportsDirectoryPicker
                 ? '当前使用系统默认下载目录'
                 : '当前使用浏览器默认下载目录',

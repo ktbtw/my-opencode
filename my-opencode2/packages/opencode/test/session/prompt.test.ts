@@ -772,6 +772,120 @@ noLLMServer.instance(
   { git: true },
 )
 
+const imageTurnParts = (id: string, role: "user" | "assistant", types: string[]) =>
+  ({
+    info: { id: MessageID.make(id), role },
+    parts: types.map((type, i) => ({ id: `${id}_p${i}`, type, text: "", url: "" })),
+  }) as unknown as MessageV2.WithParts
+
+// 纯逻辑用例：不需要服务，直接断言「生图只用本次输入」的选取规则。
+noLLMServer.instance("currentImageTurn keeps only the latest user message", () =>
+  Effect.sync(() => {
+    const history = [
+      imageTurnParts("msg_u1", "user", ["text"]),
+      imageTurnParts("msg_a1", "assistant", ["file"]),
+      imageTurnParts("msg_u2", "user", ["text"]),
+    ]
+
+    const current = SessionPrompt.currentImageTurn(history)
+
+    expect(current).toHaveLength(1)
+    expect(String(current[0]?.info.id)).toBe("msg_u2")
+  }),
+)
+
+noLLMServer.instance("currentImageTurn drops historical images so generation is used again", () =>
+  Effect.sync(() => {
+    // 上一轮生成过图片：历史里有 file part，但本次输入没有参考图。
+    const history = [
+      imageTurnParts("msg_u1", "user", ["text"]),
+      imageTurnParts("msg_a1", "assistant", ["file"]),
+    ]
+    const current = SessionPrompt.currentImageTurn([
+      ...history,
+      imageTurnParts("msg_u2", "user", ["text"]),
+    ])
+
+    const images = current
+      .flatMap((item) => item.parts)
+      .filter((part) => part.type === "file")
+    expect(images).toHaveLength(0)
+  }),
+)
+
+noLLMServer.instance("currentImageTurn keeps a reference image on the current turn", () =>
+  Effect.sync(() => {
+    const history = [imageTurnParts("msg_u1", "user", ["text"])]
+    const current = SessionPrompt.currentImageTurn([
+      ...history,
+      imageTurnParts("msg_u2", "user", ["text", "file"]),
+    ])
+
+    const images = current
+      .flatMap((item) => item.parts)
+      .filter((part) => part.type === "file")
+    expect(images).toHaveLength(1)
+  }),
+)
+
+noLLMServer.instance("currentImageTurn returns nothing without a user message", () =>
+  Effect.sync(() => {
+    expect(
+      SessionPrompt.currentImageTurn([imageTurnParts("msg_a1", "assistant", ["text"])]),
+    ).toHaveLength(0)
+  }),
+)
+
+noLLMServer.instance(
+  "image model sends only the current turn and keeps using the generation endpoint",
+  () =>
+    Effect.gen(function* () {
+      const bodies: Record<string, unknown>[] = []
+      const hits: string[] = []
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url)
+          hits.push(url.pathname)
+          if (!url.pathname.endsWith("/images/generations") && !url.pathname.endsWith("/images/edits")) {
+            return new Response("not found", { status: 404 })
+          }
+          bodies.push((await req.json()) as Record<string, unknown>)
+          return new Response(JSON.stringify({ data: [{ b64_json: png }] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        },
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(() => server.stop(true)))
+
+      const { directory } = yield* TestInstance
+      yield* writeConfig(directory, imageConfig(`${server.url.origin}/v1`))
+
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({ title: "Image second turn" })
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        parts: [{ type: "text", text: "draw a red fox" }],
+      })
+      // 第二轮：生图是单轮请求，不能把上一轮的要求或上一轮生成的图片带上。
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        parts: [{ type: "text", text: "draw a blue whale" }],
+      })
+
+      expect(bodies).toHaveLength(2)
+      expect(bodies[0]?.prompt).toBe("draw a red fox")
+      expect(bodies[1]?.prompt).toBe("draw a blue whale")
+      // 历史里有上一轮生成的图片，但本次没有参考图，必须仍然走 generations。
+      expect(hits.every((path) => path.endsWith("/images/generations"))).toBe(true)
+    }),
+  { git: true },
+)
+
 noLLMServer.instance(
   "image model infers legacy gpt-image config and uses generation endpoint",
   () =>

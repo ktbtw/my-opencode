@@ -38,6 +38,8 @@ import {
   type SubagentPlan,
   type SubagentResult,
 } from "@/orchestration"
+import { Provider } from "@/provider/provider"
+import { Auth } from "@/auth"
 import { artifactAbsolutePath, buildArtifact, type Artifact } from "./artifact"
 import {
   beginCompletionRound,
@@ -380,6 +382,8 @@ type GoalState = {
   iteration: number
   status: "active" | "paused" | "completed" | "failed"
   reviewInstruction?: string
+  /** 继续目标时上次已跑的轮数：本轮可用轮数 = max，判定上限 = max + resumedFrom */
+  resumedFrom?: number
 }
 
 type GoalCompletionReview = {
@@ -1248,14 +1252,24 @@ Rules:
     )
   }
 
-  function image(part: unknown): part is { type: "file"; id?: string; mime?: string; filename?: string; url: string } {
-    return file(part) && typeof part.mime === "string" && part.mime.startsWith("image/")
+  type MediaFile = { type: "file"; id?: string; mime?: string; filename?: string; url: string }
+
+  /**
+   * 可展示的生成结果：图片和视频都算。只认 image/* 会把生视频的结果当成
+   * 「没有输出」，任务被判空正文，视频也下发不到客户端。
+   */
+  function media(part: unknown): part is MediaFile {
+    return (
+      file(part) &&
+      typeof part.mime === "string" &&
+      (part.mime.startsWith("image/") || part.mime.startsWith("video/"))
+    )
   }
 
   export function files(...groups: unknown[][]) {
     const out = new Map<string, { type: "file"; id?: string; mime?: string; filename?: string; url: string }>()
     for (const group of groups) {
-      for (const part of group.filter(image)) {
+      for (const part of group.filter(media)) {
         const key = part.id || `${part.filename ?? ""}:${part.url}`
         if (out.has(key)) continue
         out.set(key, {
@@ -1275,6 +1289,10 @@ Rules:
     if (mime === "image/webp") return ".webp"
     if (mime === "image/gif") return ".gif"
     if (mime === "image/svg+xml") return ".svg"
+    if (mime === "video/mp4") return ".mp4"
+    if (mime === "video/webm") return ".webm"
+    if (mime === "video/quicktime") return ".mov"
+    if (mime?.startsWith("video/")) return ".mp4"
     return ".png"
   }
 
@@ -1285,7 +1303,7 @@ Rules:
   }
 
   function artifactName(part: { id?: string; filename?: string; mime?: string }, i: number) {
-    const raw = part.filename?.trim() || `image-${i + 1}${ext(part.mime)}`
+    const raw = part.filename?.trim() || `media-${i + 1}${ext(part.mime)}`
     const base = safe(path.basename(raw, path.extname(raw)))
     const suffix = path.extname(raw) || ext(part.mime)
     const prefix = part.id ? `${safe(part.id)}-` : ""
@@ -1310,11 +1328,18 @@ Rules:
     }
   }
 
-  export async function persistArtifacts(root: string, task: Pick<Task, "id" | "artifactDirAbs">, parts: unknown[]) {
+  export async function persistArtifacts(
+    root: string,
+    task: Pick<Task, "id" | "artifactDirAbs">,
+    parts: unknown[],
+    headers?: Record<string, string>,
+  ) {
     if (!task.artifactDirAbs) return [] as Artifact[]
 
     const out: Artifact[] = []
-    const list = parts.filter(image).slice(0, MAX_ARTIFACTS)
+    // 图片与视频都落成交付文件：客户端通过我们的下载通道播放视频，
+    // 不去打开上游中转站地址。视频首帧封面一并落盘，供播放卡片当封面用。
+    const list = parts.filter(media).slice(0, MAX_ARTIFACTS)
     for (const [i, part] of list.entries()) {
       try {
         const file = path.join(task.artifactDirAbs, artifactName(part, i))
@@ -1330,7 +1355,10 @@ Rules:
           continue
         }
 
-        const res = await fetch(part.url)
+        // 上游媒体地址通常需要鉴权（视频尤其如此）：必须带上供应商的
+        // 请求头，否则会被 401 拒绝，产物落不了盘、客户端也就拿不到
+        // 可播放的地址，只能退回中转站的临时链接。
+        const res = await fetch(part.url, headers ? { headers } : undefined)
         if (!res.ok) throw new Error(`download failed with status ${res.status}`)
         await Bun.write(file, Buffer.from(await res.arrayBuffer()))
         out.push(
@@ -1339,7 +1367,7 @@ Rules:
           }),
         )
       } catch (error) {
-        log.warn("failed to persist relay image artifact", {
+        log.warn("failed to persist relay media artifact", {
           taskID: task.id,
           partID: part.id,
           url: part.url,
@@ -1506,6 +1534,42 @@ Rules:
   async function runTaskEffect<A, E, R>(root: string, task: Task, effect: Effect.Effect<A, E, R>): Promise<A> {
     if (task.ctx) return runWithContext(task.ctx, effect)
     return runEffect(root, effect)
+  }
+
+  // 上游媒体地址（视频尤其）需要鉴权才能下载：用本次任务的模型解析出
+  // 与生视频请求一致的请求头，产物才能落盘给客户端播放。
+  async function mediaAuthHeaders(root: string, task: Task): Promise<Record<string, string> | undefined> {
+    const model = task.model
+    if (!model) return undefined
+    try {
+      return await runTaskEffect(
+        root,
+        task,
+        Effect.gen(function* () {
+          const provider = yield* Provider.Service
+          const auth = yield* Auth.Service
+          const info = yield* provider.getProvider(model.providerID)
+          const saved = yield* auth.get(model.providerID)
+          const key =
+            info.key ??
+            (saved?.type === "api" ? saved.key : undefined) ??
+            (typeof info.options?.apiKey === "string" && info.options.apiKey.trim() ? info.options.apiKey : undefined)
+          const resolved = yield* provider
+            .getModel(model.providerID, model.modelID)
+            .pipe(Effect.orElseSucceed(() => undefined))
+          if (!key) return resolved?.headers
+          return { Authorization: `Bearer ${key}`, ...resolved?.headers }
+        }),
+      )
+    } catch (error) {
+      log.warn("failed to resolve media auth headers", {
+        taskID: task.id,
+        providerID: model.providerID,
+        modelID: model.modelID,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return undefined
+    }
   }
 
   async function session(ctx: InstanceContext, run: Run) {
@@ -1992,18 +2056,52 @@ Rules:
     return agent || undefined
   }
 
+  /**
+   * 生图 / 生视频参数走任务 metadata 的独立字段，客户端不再把它们拼进
+   * 提示词。这里翻成会话消息上的 media，随消息持久化，重建后仍可读。
+   */
+  function relayMedia(run: Run): MessageV2.MessageMedia | undefined {
+    const meta = run.metadata
+    if (!meta) return undefined
+    const text = (value?: string) => {
+      const trimmed = value?.trim()
+      return trimmed ? trimmed : undefined
+    }
+    const number = (value?: string) => {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+    }
+    const media: MessageV2.MessageMedia = {
+      count: number(meta.image_count),
+      size: text(meta.image_size),
+      quality: text(meta.image_quality),
+      format: text(meta.image_format),
+      background: text(meta.image_background),
+      fidelity: text(meta.image_fidelity),
+      aspectRatio: text(meta.image_aspect_ratio),
+      resolution: text(meta.image_resolution),
+      duration: number(meta.image_duration),
+    }
+    return Object.values(media).some((value) => value !== undefined) ? media : undefined
+  }
+
   function relayGoal(run: Run): GoalState | undefined {
     const objective = (run.metadata?.goal ?? run.metadata?.goal_objective)?.trim()
     if (!objective) return
     const max = parseGoalMaxIterations(run.metadata?.goal_max_iterations)
     const parsedIteration = Number(run.metadata?.goal_iteration)
+    // 继续目标：客户端带 goal_resume=true + 原 goal_id + 下一次的 iteration。
+    // iteration 保留为「上次已完成的轮数」，跑满本轮额度后停在新上限（max + resumedFrom）。
+    const isResume = run.metadata?.goal_resume === "true"
     const iteration = Number.isFinite(parsedIteration) && parsedIteration >= 1 ? Math.floor(parsedIteration) : 1
+    const clamped = isResume ? iteration : Math.min(iteration, max)
     return {
       id: run.metadata?.goal_id?.trim() || `goal_${crypto.randomUUID()}`,
       objective,
       max,
-      iteration: Math.min(iteration, max),
+      iteration: clamped,
       status: "active",
+      resumedFrom: isResume ? clamped : undefined,
     }
   }
 
@@ -2015,6 +2113,7 @@ Rules:
   export const testInternals = {
     parseGoalMaxIterations,
     relayGoal,
+    relayMedia,
     deliveryRequired,
     clean,
     finalTaskResult,
@@ -2028,6 +2127,7 @@ Rules:
     incrementCompletionRetry,
     rememberCompletionModel,
     waitForTerminalHandoff,
+    mediaAuthHeaders,
   }
 
   async function waitForTerminalHandoff(state: State) {
@@ -3980,6 +4080,13 @@ Rules:
 
       // A terminal cancellation must not wait forever on a permission prompt or provider call.
       // The outstanding cancellation keeps running below, but the relay slot is released now.
+      if (task.goal?.status === "active") {
+        task.goal.status = "paused"
+        sendTaskGoal(state, task, "paused", {
+          status: "paused",
+          reason: "user_cancelled",
+        })
+      }
       sendState(state, "task.cancelled", {
         task_id: task.id,
         session_id: task.session,
@@ -4738,6 +4845,7 @@ Rules:
               model: relayModel(job),
               agent: relayAgent(job),
               variant: job.metadata?.variant,
+              media: relayMedia(job),
             }),
           ),
         )
@@ -4872,7 +4980,8 @@ Rules:
       const reviewGoalCandidate = async (candidate: MessageV2.WithParts) => {
         if (!task.goal) return false
         const pics = files(candidate.parts)
-        const saved = await persistArtifacts(cfg.project.root, task, pics)
+        const mediaHeaders = await mediaAuthHeaders(cfg.project.root, task)
+        const saved = await persistArtifacts(cfg.project.root, task, pics, mediaHeaders)
         const disk = await collectArtifacts(cfg.project.root, task)
         const artifacts = mergeArtifacts(saved, disk)
         const summary = goalCompleteSummary(candidate.parts)
@@ -4914,7 +5023,8 @@ Rules:
       let completedGoal = completedGoalCandidate ? await reviewGoalCandidate(completedGoalCandidate) : false
       while (!task.cancelled && task.goal?.status === "active" && !completedGoal) {
         if (msg.info.role === "assistant" && msg.info.error) break
-        if (task.goal.iteration >= task.goal.max) {
+        const goalCeiling = task.goal.max + (task.goal.resumedFrom ?? 0)
+        if (task.goal.iteration >= goalCeiling) {
           task.goal.status = "paused"
           sendTaskGoal(state, task, "paused", { reason: "max_iterations_reached" })
           break
@@ -4971,7 +5081,8 @@ Rules:
           ),
         )
         const pics = files(msg.parts, last?.parts ?? [])
-        const saved = await persistArtifacts(cfg.project.root, task, pics)
+        const mediaHeaders = await mediaAuthHeaders(cfg.project.root, task)
+        const saved = await persistArtifacts(cfg.project.root, task, pics, mediaHeaders)
         const disk = await collectArtifacts(cfg.project.root, task)
         const artifacts = mergeArtifacts(saved, disk)
         if (task.completion) rememberCompletionArtifacts(task.completion, artifacts, pics)

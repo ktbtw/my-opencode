@@ -39,9 +39,12 @@ import { ShellID } from "@/tool/shell/id"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
+import { resolveDialect } from "@/image/dialect"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
 import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
+import { rm } from "node:fs/promises"
+import { existsSync, readdirSync } from "node:fs"
 import * as EffectLogger from "@opencode-ai/core/effect/logger"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
@@ -457,6 +460,8 @@ export const layer = Layer.effect(
         ? yield* provider.getModel(ag.model.providerID, ag.model.modelID)
         : ((yield* provider.getSmallModel(input.providerID)) ??
           (yield* provider.getModel(input.providerID, input.modelID)))
+      // 生图 / 生视频模型只提供生成接口，用来生成标题必然失败，直接跳过。
+      if (isMediaOnlyModel(mdl)) return
       const msgs = onlySubtasks
         ? [{ role: "user" as const, content: subtasks.map((p) => p.prompt).join("\n") }]
         : yield* MessageV2.toModelMessagesEffect(context, mdl)
@@ -863,16 +868,15 @@ export const layer = Layer.effect(
     })
 
     const isImageModel = (model: Provider.Model) => model.capabilities.output.image && !model.capabilities.output.text
-    const isOpenAIImageProvider = (model: Provider.Model) =>
-      model.api.npm === "@ai-sdk/openai" || model.api.npm === "@ai-sdk/openai-compatible"
+    const isVideoModel = (model: Provider.Model) => model.capabilities.output.video && !model.capabilities.output.text
     const IMAGE_REQUEST_TIMEOUT_MS = 120_000
     const IMAGE_REQUEST_MAX_ATTEMPTS = 3
     const IMAGE_COUNT_MAX = 10
-    const imageSizes = new Set(["1024x1024", "1024x1536", "1536x1024", "auto"])
-    const imageQualities = new Set(["auto", "low", "medium", "high"])
+    const imageSizes = new Set(["1024x1024", "1024x1536", "1536x1024", "1792x1024", "1024x1792", "auto"])
     const imageBackgrounds = new Set(["auto", "opaque", "transparent"])
     const imageFormats = new Set(["png", "jpeg", "jpg", "webp"])
     const imageFidelities = new Set(["low", "high"])
+    const videoAspectRatios = new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"])
 
     const imageMime = (format?: string, url?: string) => {
       if (format === "jpeg" || format === "jpg") return "image/jpeg"
@@ -896,14 +900,17 @@ export const layer = Layer.effect(
     const imageArgs = (text: string) => {
       const opts: {
         n?: number
-        size?: "1024x1024" | "1024x1536" | "1536x1024" | "auto"
-        quality?: "auto" | "low" | "medium" | "high"
+        size?: "1024x1024" | "1024x1536" | "1536x1024" | "1792x1024" | "1024x1792" | "auto"
+        quality?: string
         background?: "auto" | "opaque" | "transparent"
         format?: "png" | "jpeg" | "webp"
         fidelity?: "low" | "high"
+        aspectRatio?: string
+        resolution?: "1k" | "2k" | "480p" | "720p"
+        duration?: number
       } = {}
       const out = text.replace(
-        /(^|\s)--(n|count|size|quality|background|format|fidelity)(?:=(\S+)|\s+(\S+))(?=\s|$)/g,
+        /(^|\s)--(n|count|size|quality|background|format|fidelity|aspect-ratio|ratio|resolution|duration)(?:=(\S+)|\s+(\S+))(?=\s|$)/g,
         (all, lead, key, a, b) => {
           const val = (a ?? b ?? "").trim().toLowerCase()
           if (!val) return all
@@ -916,8 +923,8 @@ export const layer = Layer.effect(
             opts.size = val as typeof opts.size
             return lead
           }
-          if (key === "quality" && imageQualities.has(val)) {
-            opts.quality = val as typeof opts.quality
+          if (key === "quality") {
+            opts.quality = val
             return lead
           }
           if (key === "background" && imageBackgrounds.has(val)) {
@@ -932,12 +939,46 @@ export const layer = Layer.effect(
             opts.fidelity = val as typeof opts.fidelity
             return lead
           }
+          if (key === "aspect-ratio" || key === "ratio") {
+            opts.aspectRatio = val
+            return lead
+          }
+          if (key === "resolution") {
+            opts.resolution = val === "720p" || val === "480p" ? val : val === "2k" ? "2k" : "1k"
+            return lead
+          }
+          if (key === "duration") {
+            const seconds = Number.parseInt(val, 10)
+            if (Number.isFinite(seconds) && seconds >= 1 && seconds <= 15) opts.duration = seconds
+            return lead
+          }
           return all
         },
       )
       return {
         text: out.replace(/\s{2,}/g, " ").trim(),
         opts,
+      }
+    }
+
+    // 合并两个来源：消息上的 media 字段（新链路）优先，文本里的 --size/--n
+    // 次之（兼容旧客户端）。两者都没有时参数为空，由方言取默认值。
+    const mediaArgs = (turn: MessageV2.WithParts | undefined) => {
+      const base = imageTextParts(turn?.parts ?? [], true).opts
+      const info = turn?.info
+      const media = info && info.role === "user" ? info.media : undefined
+      if (!media) return base
+      return {
+        ...base,
+        n: media.count ?? base.n,
+        size: media.size ?? base.size,
+        quality: media.quality ?? base.quality,
+        format: media.format ?? base.format,
+        background: media.background ?? base.background,
+        fidelity: media.fidelity ?? base.fidelity,
+        aspectRatio: media.aspectRatio ?? base.aspectRatio,
+        resolution: (media.resolution as typeof base.resolution) ?? base.resolution,
+        duration: media.duration ?? base.duration,
       }
     }
 
@@ -1083,7 +1124,14 @@ export const layer = Layer.effect(
       parts: MessageV2.WithParts[]
     }) {
       const exit = yield* Effect.gen(function* () {
-        if (!isOpenAIImageProvider(input.model)) {
+        // 能不能生图由方言命中决定，不再用 npm 白名单：
+        // OpenAI 走 /images/*，xAI Grok Imagine 走同名路由但换一套参数。
+        const dialect = resolveDialect({
+          providerID: input.model.providerID,
+          npm: input.model.api.npm,
+          modelID: input.model.api.id,
+        })
+        if (!dialect) {
           throw new Error(`Image generation is not supported for provider: ${input.model.providerID}`)
         }
 
@@ -1094,57 +1142,51 @@ export const layer = Layer.effect(
           (saved?.type === "api" ? saved.key : undefined) ??
           (typeof info.options?.apiKey === "string" && info.options.apiKey.trim() ? info.options.apiKey : undefined)
         if (!key) {
-          throw new Error("OpenAI API key is required for image generation")
+          throw new Error(`API key is required for image generation (${input.model.providerID})`)
         }
 
         const base = resolveImageBaseURL(input.model, info)
-        const last = input.parts.findLast((item) => item.info.role === "user" && item.info.id === input.user.id)
-        const opts = imageTextParts(last?.parts ?? [], true).opts
-        const text = input.parts
+        // 生图是单轮请求：只用本次用户输入（见 currentImageTurn 的说明）。
+        const current = currentImageTurn(input.parts)
+        // 参数优先取消息上的 media 字段（客户端不再拼进提示词）；
+        // 旧客户端仍会把 --size/--n 拼在文本里，文本解析保留作兼容。
+        const opts = mediaArgs(current[0])
+        const text = current
           .map((item) => imageTextParts(item.parts).text)
           .filter(Boolean)
           .join("\n\n")
-        const imgs = imageFiles(input.parts)
-        const endpoint = `${base}/images/${imgs.length ? "edits" : "generations"}`
-        const req = {
-          model: input.model.api.id,
-          prompt: text || input.user.id,
-          size: opts.size ?? "1024x1024",
-          response_format: "b64_json",
-          ...(opts.n ? { n: opts.n } : {}),
-          ...(opts.quality ? { quality: opts.quality } : {}),
-          ...(opts.background ? { background: opts.background } : {}),
-          ...(opts.format ? { output_format: opts.format } : {}),
-          ...(opts.fidelity && imgs.length ? { input_fidelity: opts.fidelity } : {}),
-        }
-        const body = imgs.length
-          ? yield* Effect.promise(async () => {
-              const form = new FormData()
-              form.append("model", req.model)
-              form.append("prompt", req.prompt)
-              form.append("size", req.size)
-              form.append("response_format", req.response_format)
-              if (req.n) form.append("n", String(req.n))
-              if (req.quality) form.append("quality", req.quality)
-              if (req.background) form.append("background", req.background)
-              if (req.output_format) form.append("output_format", req.output_format)
-              if (req.input_fidelity) form.append("input_fidelity", req.input_fidelity)
-              await Promise.all(
-                imgs.map(async (part, i) => {
-                  const res = await fetch(part.url)
-                  if (!res.ok) throw new Error(`Failed to load image part: ${part.filename ?? i}`)
-                  const blob = await res.blob()
-                  form.append(
-                    imgs.length > 1 ? "image[]" : "image",
-                    new File([blob], part.filename ?? `${input.model.id}-${i + 1}.${imageExt(part.mime)}`, {
-                      type: part.mime || blob.type || "application/octet-stream",
-                    }),
-                  )
-                }),
-              )
-              return form
-            })
-          : JSON.stringify(req)
+        const imgs = imageFiles(current)
+        // 请求体由方言构建：OpenAI 是 JSON/multipart 两态、xAI 一律 JSON，
+        // 各自的参数集合也不同（见 src/image/dialect.ts）。
+        const request = yield* Effect.promise(() =>
+          dialect.build({
+            modelID: input.model.api.id,
+            prompt: text || input.user.id,
+            args: opts,
+            images: imgs.map((part) => ({
+              url: part.url,
+              mime: part.mime,
+              filename: part.filename,
+            })),
+            loadImage: async (part) => {
+              const res = await fetch(part.url)
+              if (!res.ok) throw new Error(`Failed to load image part: ${part.filename ?? part.url}`)
+              return await res.blob()
+            },
+          }),
+        )
+        const endpoint = `${base}${request.path}`
+        const isMultipart = request.transport === "multipart"
+        const body = request.transport === "multipart" ? request.form : JSON.stringify(request.body)
+
+        // 中转站（以及部分官方实现）对 `n>1` 经常只返回一张图；
+        // 数量在客户端侧保证：n>1 时把请求体的 n 归一成 1，
+        // 并发发 n 次独立请求并聚合结果，选几张就出几张。
+        const requestedCount = opts.n && opts.n > 1 ? opts.n : 0
+        const singleBody =
+          requestedCount && request.transport === "json"
+            ? JSON.stringify({ ...request.body, n: 1 })
+            : body
 
         const shouldRetryImageRequest = (status?: number, error?: Error) => {
           if (status !== undefined) {
@@ -1170,88 +1212,114 @@ export const layer = Layer.effect(
               error?: { message?: string }
             }
           | undefined
-        for (let attempt = 1; attempt <= IMAGE_REQUEST_MAX_ATTEMPTS; attempt++) {
-          const result = yield* Effect.tryPromise({
-            try: async () => {
-              const headers = new Headers({
-                Authorization: `Bearer ${key}`,
-                ...input.model.headers,
-              })
-              if (imgs.length) headers.delete("Content-Type")
-              else headers.set("Content-Type", "application/json")
-              const res = await fetch(endpoint, {
-                method: "POST",
-                headers,
-                body,
-                signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
-              })
-              const parsed = await parseImageResponse(res)
-              return { res, ...parsed }
-            },
-            catch: (err) => (err instanceof Error ? err : new Error(String(err))),
-          }).pipe(Effect.exit)
 
-          if (Exit.isSuccess(result)) {
-            const { res, json, text } = result.value
-            if (res.ok) {
-              finalBody = json
-              break
+        const requestOnce = Effect.fn("SessionPrompt.image.request")(function* () {
+          for (let attempt = 1; attempt <= IMAGE_REQUEST_MAX_ATTEMPTS; attempt++) {
+            const result = yield* Effect.tryPromise({
+              try: async () => {
+                const headers = new Headers({
+                  Authorization: `Bearer ${key}`,
+                  ...input.model.headers,
+                })
+                // multipart 的 Content-Type 必须由 FormData 自己带 boundary。
+                if (isMultipart) headers.delete("Content-Type")
+                else headers.set("Content-Type", "application/json")
+                const res = await fetch(endpoint, {
+                  method: "POST",
+                  headers,
+                  body: requestedCount ? singleBody : body,
+                  signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
+                })
+                const parsed = await parseImageResponse(res)
+                return { res, ...parsed }
+              },
+              catch: (err) => (err instanceof Error ? err : new Error(String(err))),
+            }).pipe(Effect.exit)
+
+            if (Exit.isSuccess(result)) {
+              const { res, json, text } = result.value
+              if (res.ok) return json
+
+              const message = json?.error?.message || text || `Image generation failed with status ${res.status}`
+              const retryable = shouldRetryImageRequest(res.status)
+              if (retryable && attempt < IMAGE_REQUEST_MAX_ATTEMPTS) {
+                const wait = SessionRetry.delay(attempt)
+                log.warn("retrying image generation request", {
+                  attempt,
+                  nextAttempt: attempt + 1,
+                  status: res.status,
+                  providerID: input.model.providerID,
+                  modelID: input.model.id,
+                  endpoint: describeImageEndpoint(endpoint),
+                  wait,
+                })
+                yield* Effect.sleep(wait)
+                continue
+              }
+
+              const kind = imageKind({ status: res.status, raw: message })
+              throw imageFail({
+                kind,
+                status: res.status,
+                attempt,
+                endpoint,
+                raw: message,
+              })
             }
 
-            const message = json?.error?.message || text || `Image generation failed with status ${res.status}`
-            const retryable = shouldRetryImageRequest(res.status)
+            const error = Cause.squash(result.cause)
+            const retryable = error instanceof Error && shouldRetryImageRequest(undefined, error)
             if (retryable && attempt < IMAGE_REQUEST_MAX_ATTEMPTS) {
               const wait = SessionRetry.delay(attempt)
-              log.warn("retrying image generation request", {
+              log.warn("retrying image generation request after network error", {
                 attempt,
                 nextAttempt: attempt + 1,
-                status: res.status,
                 providerID: input.model.providerID,
                 modelID: input.model.id,
                 endpoint: describeImageEndpoint(endpoint),
                 wait,
+                error: error instanceof Error ? error.message : String(error),
               })
               yield* Effect.sleep(wait)
               continue
             }
 
-            const kind = imageKind({ status: res.status, raw: message })
-            throw imageFail({
-              kind,
-              status: res.status,
-              attempt,
-              endpoint,
-              raw: message,
-            })
+            if (error instanceof Error) {
+              const kind = imageKind({ error })
+              throw imageFail({
+                kind,
+                attempt,
+                endpoint,
+                error,
+              })
+            }
+            throw error
           }
+          throw new Error("Image generation failed after retries")
+        })
 
-          const error = Cause.squash(result.cause)
-          const retryable = error instanceof Error && shouldRetryImageRequest(undefined, error)
-          if (retryable && attempt < IMAGE_REQUEST_MAX_ATTEMPTS) {
-            const wait = SessionRetry.delay(attempt)
-            log.warn("retrying image generation request after network error", {
-              attempt,
-              nextAttempt: attempt + 1,
-              providerID: input.model.providerID,
-              modelID: input.model.id,
-              endpoint: describeImageEndpoint(endpoint),
-              wait,
-              error: error instanceof Error ? error.message : String(error),
-            })
-            yield* Effect.sleep(wait)
-            continue
+        if (requestedCount) {
+          // 并发 n 张单图请求；只要有一张成功就交付成功张，全部失败才报错。
+          const results = yield* Effect.forEach(
+            Array.from({ length: requestedCount }, (_, i) => i),
+            () => Effect.exit(requestOnce()),
+            { concurrency: "unbounded" },
+          )
+          const succeeded = results
+            .filter((item) => Exit.isSuccess(item))
+            .map((item) => (item as Exit.Success<NonNullable<typeof finalBody>>).value)
+          if (succeeded.length === 0) {
+            const firstFailure = results.find((item) => Exit.isFailure(item))
+            const cause = firstFailure && Exit.isFailure(firstFailure) ? firstFailure.cause : undefined
+            const error = cause ? Cause.squash(cause) : undefined
+            if (error instanceof Error) throw error
+            throw new Error("Image generation returned no image data")
           }
-
-          if (error instanceof Error) {
-            const kind = imageKind({ error })
-            throw imageFail({
-              kind,
-              attempt,
-              endpoint,
-              error,
-            })
+          finalBody = {
+            data: succeeded.flatMap((entry) => entry.data ?? []),
           }
-          throw error
+        } else {
+          finalBody = yield* requestOnce()
         }
 
         const items = finalBody?.data?.filter((entry) => entry.b64_json || entry.url) ?? []
@@ -1272,7 +1340,8 @@ export const layer = Layer.effect(
         input.assistant.finish = "stop"
         input.assistant.time.completed = Date.now()
         yield* Effect.forEach(items, (item, i) => {
-          const mime = imageMime(opts.format, item.url)
+          // 方言决定默认 mime（xAI 出 jpeg，OpenAI 出 png）；显式 `--format` 优先。
+          const mime = imageMime(opts.format, item.url ?? request.mime)
           const ext = imageExt(mime)
           return sessions.updatePart({
             id: PartID.ascending(),
@@ -1295,6 +1364,254 @@ export const layer = Layer.effect(
         : new NamedError.Unknown({
             message: msg instanceof Error ? msg.message : String(msg),
           }).toObject()
+      input.assistant.time.completed = Date.now()
+      yield* bus.publish(Session.Event.Error, {
+        sessionID: input.sessionID,
+        error: input.assistant.error,
+      })
+      yield* sessions.updateMessage(input.assistant)
+    })
+
+    // 抽视频第一帧做封面：先把视频下载到临时文件（可能带鉴权），
+    // 再用本机 ffmpeg 抽帧。没装 ffmpeg、下载失败或抽帧失败都直接跳过，
+    // 封面只是锦上添花，任何环节出错都不能影响视频交付。
+    // 找 ffmpeg：先看 PATH，再看 launcher 托管的运行时目录
+    // （<LAUNCHER_MANAGED_RUNTIME_DIR>/ffmpeg/<version>/bin/ffmpeg）。
+    const resolveFfmpeg = (() => {
+      let cached: string | undefined
+      return () => {
+        // 只缓存「找到」的结果：找不到时不缓存，用户中途装上 FFmpeg 后
+        // 下一次抽帧就能用上，不必重启 agent。
+        if (cached) return cached
+        cached = Bun.which("ffmpeg") ?? undefined
+        if (cached) return cached
+        const managed = process.env.LAUNCHER_MANAGED_RUNTIME_DIR?.trim()
+        if (!managed) return undefined
+        try {
+          const root = path.join(managed, "ffmpeg")
+          for (const version of readdirSync(root)) {
+            for (const name of ["ffmpeg", "ffmpeg.exe"]) {
+              const candidate = path.join(root, version, "bin", name)
+              if (existsSync(candidate)) {
+                cached = candidate
+                return cached
+              }
+            }
+          }
+        } catch {
+          return undefined
+        }
+        return undefined
+      }
+    })()
+
+    const videoPoster = async (url: string, headers: Record<string, string>) => {
+      const ffmpeg = resolveFfmpeg()
+      if (!ffmpeg) return undefined
+      const tmp = path.join(os.tmpdir(), `opencode-video-${crypto.randomUUID()}.mp4`)
+      try {
+        const res = await fetch(url, { headers, signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS) })
+        if (!res.ok) return undefined
+        const bytes = Buffer.from(await res.arrayBuffer())
+        if (bytes.length === 0) return undefined
+        await Bun.write(tmp, bytes)
+        const out = await Process.run(
+          [ffmpeg, "-y", "-i", tmp, "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"],
+          { nothrow: true, timeout: 20_000 },
+        )
+        if (out.code !== 0 || out.stdout.byteLength === 0) return undefined
+        return out.stdout.toString("base64")
+      } catch {
+        return undefined
+      } finally {
+        await rm(tmp, { force: true }).catch(() => {})
+      }
+    }
+
+    // 上游异常时可能返回 HTML 错误页（例如 Cloudflare 502），
+    // 直接 JSON.parse 会抛出难以理解的解析错误，这里统一成可读文案。
+    const parseVideoJson = <T,>(text: string): T => {
+      if (!text) return {} as T
+      try {
+        return JSON.parse(text) as T
+      } catch {
+        return {} as T
+      }
+    }
+    const videoErrorDetail = (status: number, text: string, message?: string) => {
+      const trimmed = message?.trim()
+      if (trimmed) return trimmed
+      if (text.trimStart().startsWith("<")) return `上游返回了错误页面（HTTP ${status}），通常是上游服务暂时不可用`
+      return clipImageDetail(text, 200) || `HTTP ${status}`
+    }
+
+    // xAI 视频是异步的：POST /videos/generations 拿 request_id，
+    // 轮询 GET /videos/{id}，完成后从 /videos/{id}/content 下载 MP4。
+    const VIDEO_POLL_INTERVAL_MS = 5_000
+    const VIDEO_POLL_DEADLINE_MS = 10 * 60_000
+    const generateVideo = Effect.fn("SessionPrompt.video")(function* (input: {
+      sessionID: SessionID
+      user: MessageV2.User
+      assistant: MessageV2.Assistant
+      model: Provider.Model
+      parts: MessageV2.WithParts[]
+    }) {
+      const exit = yield* Effect.gen(function* () {
+        const info = yield* provider.getProvider(input.model.providerID)
+        const saved = yield* auth.get(input.model.providerID)
+        const key =
+          info.key ??
+          (saved?.type === "api" ? saved.key : undefined) ??
+          (typeof info.options?.apiKey === "string" && info.options.apiKey.trim() ? info.options.apiKey : undefined)
+        if (!key) throw new Error(`API key is required for video generation (${input.model.providerID})`)
+        const base = resolveImageBaseURL(input.model, info)
+        const current = currentImageTurn(input.parts)
+        const promptText = current
+          .map((item) => imageTextParts(item.parts).text)
+          .filter(Boolean)
+          .join("\n\n")
+        const reference = imageFiles(current)[0]
+        const opts = mediaArgs(current[0])
+        const duration = opts.duration && opts.duration >= 1 && opts.duration <= 15 ? opts.duration : undefined
+        const ratio = opts.aspectRatio && videoAspectRatios.has(opts.aspectRatio) ? opts.aspectRatio : undefined
+        const resolution = opts.resolution === "720p" || opts.resolution === "480p" ? opts.resolution : undefined
+        const body: Record<string, unknown> = {
+          model: input.model.api.id,
+          prompt: promptText || input.user.id,
+          ...(duration ? { duration } : {}),
+          ...(ratio ? { aspect_ratio: ratio } : {}),
+          ...(resolution ? { resolution } : {}),
+        }
+        if (reference) {
+          body.image = { url: reference.url }
+        }
+        const headers = {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          ...input.model.headers,
+        }
+        const created = yield* Effect.tryPromise({
+          try: async () => {
+            const res = await fetch(`${base}/videos/generations`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
+            })
+            const text = await res.text()
+            const json = parseVideoJson<{ request_id?: string; error?: { message?: string } }>(text)
+            if (!res.ok) {
+              throw new Error(`视频生成失败：${videoErrorDetail(res.status, text, json.error?.message)}`)
+            }
+            if (!json.request_id) throw new Error("视频生成未返回任务标识，请稍后重试")
+            return json.request_id
+          },
+          catch: (err) => (err instanceof Error ? err : new Error(String(err))),
+        })
+        log.info("video generation submitted", {
+          providerID: input.model.providerID,
+          modelID: input.model.api.id,
+          requestID: created,
+          duration: body.duration,
+          aspectRatio: body.aspect_ratio,
+          resolution: body.resolution,
+        })
+        const started = Date.now()
+        let videoUrl = ""
+        // 上游任务刚创建时，查询接口可能短暂查不到（异步注册/索引延迟），
+        // 这种「not found」在有限次数内不算致命，继续等即可。
+        const NOT_FOUND_TOLERANCE = 6
+        let notFoundStreak = 0
+        while (Date.now() - started < VIDEO_POLL_DEADLINE_MS) {
+          yield* Effect.sleep(`${VIDEO_POLL_INTERVAL_MS} millis`)
+          const status = yield* Effect.tryPromise({
+            try: async () => {
+              const res = await fetch(`${base}/videos/${created}`, {
+                headers,
+                signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
+              })
+              const text = await res.text()
+              const json = parseVideoJson<{
+                status?: string
+                video?: { url?: string }
+                error?: { message?: string }
+              }>(text)
+              if (!res.ok) {
+                const detail = videoErrorDetail(res.status, text, json.error?.message)
+                log.warn("video status query failed", {
+                  providerID: input.model.providerID,
+                  modelID: input.model.api.id,
+                  requestID: created,
+                  status: res.status,
+                  detail,
+                  elapsedMS: Date.now() - started,
+                })
+                if (/not\s*found/i.test(detail) && notFoundStreak < NOT_FOUND_TOLERANCE) {
+                  notFoundStreak += 1
+                  return { status: "pending" }
+                }
+                throw new Error(`视频状态查询失败：${detail}`)
+              }
+              return json
+            },
+            catch: (err) => (err instanceof Error ? err : new Error(String(err))),
+          })
+          notFoundStreak = 0
+          if (status.status === "failed" || status.status === "expired") {
+            throw new Error(status.error?.message?.trim() || `视频生成失败（${status.status}），请稍后重试`)
+          }
+          if (status.status === "done") {
+            videoUrl = status.video?.url || `${base}/videos/${created}/content`
+            break
+          }
+        }
+        if (!videoUrl) throw new Error("视频生成超时（等待超过 10 分钟），请稍后重试")
+        // 上游常常只回相对路径（/v1/videos/<id>/content）：必须补成绝对地址，
+        // 否则抽帧与客户端播放都会失败，视频看起来像没生成。
+        // 地址归一：已带协议（http/https/data）的原样保留；其余按 URL 规则
+        // 相对 base 解析——上游常回 "/v1/videos/<id>/content"，而 base 本身
+        // 已含 /v1，字符串拼接会拼出 /v1/v1/... 这种坏地址。
+        const absoluteVideoUrl = (() => {
+          if (/^[a-z][a-z0-9+.-]*:/i.test(videoUrl)) return videoUrl
+          try {
+            return new URL(videoUrl, `${base}/`).toString()
+          } catch {
+            return `${base}/${videoUrl.replace(/^\/+/, "")}`
+          }
+        })()
+        // 抽帧失败不应影响视频交付：连缺陷一起吞掉。
+        const posterExit = yield* Effect.exit(Effect.promise(() => videoPoster(absoluteVideoUrl, headers)))
+        const poster = Exit.isSuccess(posterExit) ? posterExit.value : undefined
+        input.assistant.finish = "stop"
+        input.assistant.time.completed = Date.now()
+        if (poster) {
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: input.assistant.id,
+            sessionID: input.sessionID,
+            type: "file",
+            mime: "image/jpeg",
+            filename: `${input.model.id}.poster.jpg`,
+            url: `data:image/jpeg;base64,${poster}`,
+          } satisfies MessageV2.FilePart)
+        }
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: input.assistant.id,
+          sessionID: input.sessionID,
+          type: "file",
+          mime: "video/mp4",
+          filename: `${input.model.id}.mp4`,
+          url: absoluteVideoUrl,
+        } satisfies MessageV2.FilePart)
+        yield* sessions.updateMessage(input.assistant)
+      }).pipe(Effect.exit)
+
+      if (Exit.isSuccess(exit)) return
+      const msg = Cause.squash(exit.cause)
+      input.assistant.error = new NamedError.Unknown({
+        message: msg instanceof Error ? msg.message : String(msg),
+      }).toObject()
       input.assistant.time.completed = Date.now()
       yield* bus.publish(Session.Event.Error, {
         sessionID: input.sessionID,
@@ -1363,6 +1680,7 @@ export const layer = Layer.effect(
         },
         system: input.system,
         format: input.format,
+        media: input.media,
       }
 
       if (current?.agent !== info.agent) {
@@ -2054,6 +2372,17 @@ export const layer = Layer.effect(
             break
           }
 
+          if (isVideoModel(model)) {
+            yield* generateVideo({
+              sessionID,
+              user: lastUser,
+              assistant: msg,
+              model,
+              parts: msgs,
+            })
+            break
+          }
+
           const finalizeInterruptedAssistant = Effect.gen(function* () {
             if (msg.time.completed) return
             msg.error ??= MessageV2.fromError(new DOMException("Aborted", "AbortError"), {
@@ -2499,6 +2828,7 @@ export const PromptInput = Schema.Struct({
   format: Schema.optional(MessageV2.Format),
   system: Schema.optional(Schema.String),
   variant: Schema.optional(Schema.String),
+  media: Schema.optional(MessageV2.MessageMedia),
   parts: Schema.Array(
     Schema.Union([
       MessageV2.TextPartInput,
@@ -2510,6 +2840,28 @@ export const PromptInput = Schema.Struct({
 })
 export type PromptInput = Schema.Schema.Type<typeof PromptInput>
 
+/**
+ * 只输出媒体（图片 / 视频）的模型：只能用生图/生视频接口，不能当对话模型用。
+ * 标题生成、小模型选择这类内部调用必须避开它们，否则必然失败。
+ */
+export function isMediaOnlyModel(model: Provider.Model) {
+  const output = model.capabilities.output
+  return (output.image || output.video) && !output.text
+}
+
+/**
+ * 生图只用「本次用户输入」这一条消息。
+ *
+ * 生图是单轮请求：把整段会话的文本拼进 prompt、把历史里的图片当输入图，会让
+ * 第二次生图带上上一轮的要求、并因为历史里有图而走成图生图（edits）。
+ *
+ * 注意不能用 `input.user.id` 过滤：`input.parts` 里的消息对象与 `input.user`
+ * 不是同一实例，按 id 比对会拿不到任何内容。这里取最后一条 user 消息。
+ */
+export function currentImageTurn(parts: MessageV2.WithParts[]): MessageV2.WithParts[] {
+  const current = [...parts].reverse().find((item) => item.info.role === "user")
+  return current ? [current] : []
+}
 export class LoopInput extends Schema.Class<LoopInput>("SessionPrompt.LoopInput")({
   sessionID: SessionID,
 }) {}

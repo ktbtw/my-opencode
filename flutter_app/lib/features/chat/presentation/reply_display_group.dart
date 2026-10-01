@@ -5,6 +5,19 @@ bool isBackgroundReplyEvent(ChatMessage message) =>
     (message.insertedContextType == 'backgroundJob' ||
         message.insertedContextSource == 'background_job');
 
+/// 用户在任务进行中插入的一句。连续回复里它嵌在同一段正文中间，
+/// 不另起气泡；后台任务和子代理结果不走这条。
+bool isInlineUserInsert(ChatMessage message) =>
+    message.isInsertedContext &&
+    message.insertedContextType == 'queueInsert' &&
+    message.insertedContextSource != 'background_job' &&
+    message.insertedContextSource != 'subagent';
+
+/// 能作为连续回复段起点的消息：Agent 回复本身，或是任务中插入的一句
+/// （插入后面往往接着同任务的回复，它们同属一个气泡）。
+bool startsReplyGroup(ChatMessage message) =>
+    message.role == MessageRole.agent || isInlineUserInsert(message);
+
 /// 工具调用没有顺序信息：连续回复合并成一段时标题只需出现一次。
 bool hasUnpositionedTools(ChatMessage message) =>
     message.toolCalls.isNotEmpty &&
@@ -20,6 +33,7 @@ bool hasReplySurface(ChatMessage message) =>
     message.isFinalizingDelivery ||
     message.artifacts.isNotEmpty ||
     message.files.isNotEmpty ||
+    message.plan != null ||
     message.state == MessageState.failed;
 
 /// Presentation only: keep message identities, tool positions and task data.
@@ -33,29 +47,37 @@ List<List<ChatMessage>> groupReplyDisplay(
     final first = messages[i];
     final group = <ChatMessage>[first];
     groups.add(group);
-    if (!continuous ||
-        first.role != MessageRole.agent ||
-        first.isInsertedContext ||
-        first.taskId == null) {
+    if (!continuous || first.taskId == null || !startsReplyGroup(first)) {
       continue;
     }
     while (i + 1 < messages.length) {
       var next = i + 1;
       while (next < messages.length &&
           messages[next].taskId == first.taskId &&
-          isBackgroundReplyEvent(messages[next])) {
+          (isBackgroundReplyEvent(messages[next]) ||
+              isInlineUserInsert(messages[next]))) {
         next++;
       }
       // 相邻的同任务回复同样合并：目标模式轮次、子代理唤醒轮次之间不会插入
       // background 事件，之前会因为 next == i + 1 被拆成多个气泡。
       if (next >= messages.length ||
           messages[next].role != MessageRole.agent ||
-          messages[next].isInsertedContext ||
           messages[next].taskId != first.taskId) {
+        break;
+      }
+      if (messages[next].isInsertedContext &&
+          !isInlineUserInsert(messages[next])) {
         break;
       }
       group.addAll(messages.getRange(i + 1, next + 1));
       i = next;
+    }
+    while (i + 1 < messages.length &&
+        messages[i + 1].taskId == first.taskId &&
+        (isInlineUserInsert(messages[i + 1]) ||
+            isBackgroundReplyEvent(messages[i + 1]))) {
+      i++;
+      group.add(messages[i]);
     }
   }
   return groups;
@@ -73,11 +95,16 @@ class ReplyDisplayLayout {
   /// 无定位工具记录的标题归属（组内第一条带此类工具的消息）。
   final Set<String> toolHeaderOwners;
 
+  /// 无定位任务卡片（执行计划）的归属：键为渲染位置的消息 id，值为该段
+  /// 要渲染的计划。位置固定在整段末尾，避免卡片插在两段正文中间。
+  final Map<String, PlanInfo> planCards;
+
   const ReplyDisplayLayout({
     this.boundaries = const {},
     this.thinking = const {},
     this.thinkingStreaming = const {},
     this.toolHeaderOwners = const {},
+    this.planCards = const {},
   });
 
   static ReplyDisplayLayout of(List<ChatMessage> messages) {
@@ -85,11 +112,9 @@ class ReplyDisplayLayout {
     final thinking = <String, String>{};
     final thinkingStreaming = <String>{};
     final toolHeaderOwners = <String>{};
+    final planCards = <String, PlanInfo>{};
     for (final group in groupReplyDisplay(messages, continuous: true)) {
-      if (group.first.role != MessageRole.agent ||
-          group.first.isInsertedContext) {
-        continue;
-      }
+      if (!startsReplyGroup(group.first)) continue;
       final members = group
           .where((item) => !isBackgroundReplyEvent(item))
           .toList(growable: false);
@@ -109,6 +134,26 @@ class ReplyDisplayLayout {
           break;
         }
       }
+      // 任务卡片（执行计划）属于整段且只渲染一次，位置固定在整段末尾：
+      // 计划往往只在靠前的轮次里出现，若按「最后一条带计划的消息」挂载，
+      // 卡片会插进两段正文中间。这里挂到最后一条会渲染正文的消息上，
+      // 计划内容取组内最后一份非空计划。
+      PlanInfo? groupPlan;
+      ChatMessage? anchor;
+      for (final item in members) {
+        final plan = item.plan;
+        if (plan != null && !plan.isEmpty) groupPlan = plan;
+        // 锚点必须是会走正文渲染的那条：后台事件与插入消息各自走别的分支，
+        // 挂到它们身上卡片不会渲染出来。
+        if (item.role == MessageRole.agent &&
+            !isInlineUserInsert(item) &&
+            hasReplySurface(item)) {
+          anchor = item;
+        }
+      }
+      if (groupPlan != null && anchor != null) {
+        planCards[anchor.id] = groupPlan;
+      }
       final surfaces = group.where(hasReplySurface).toList(growable: false);
       for (var i = 0; i < group.length; i++) {
         boundaries[group[i].id] = (
@@ -123,6 +168,7 @@ class ReplyDisplayLayout {
       thinking: thinking,
       thinkingStreaming: thinkingStreaming,
       toolHeaderOwners: toolHeaderOwners,
+      planCards: planCards,
     );
   }
 }

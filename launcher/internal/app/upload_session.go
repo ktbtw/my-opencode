@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -184,12 +183,14 @@ func recreateUploadTempFile(tempPath string, size int64) error {
 	return file.Close()
 }
 
-// errUploadSessionExists 表示同一 upload_id 的会话已存在且未声明续传。
-var errUploadSessionExists = errors.New("上传会话已存在")
-
 // prepareUploadSession 准备上传临时文件与分块清单。
-// 既有会话必须与本次请求（大小、分块数）完全一致且显式声明续传才保留，
-// 否则一律按全新上传重建，避免不同文件误用同一会话。
+// 既有会话与本次请求（大小、分块数）一致时按续传保留；不一致时丢弃旧会话、
+// 按全新上传重建，避免不同文件误用同一会话。
+//
+// 未声明续传的重复 create 不再报错：客户端在 App 被杀后重试时可能拿不到
+// 续传标志，报错会让用户卡在「上传会话已存在」上，既看不到进度也无法继续。
+// 保留既有会话是安全的选择——分块写入按固定 offset 幂等，大小不一致时上面
+// 的重建分支会兜住。
 func prepareUploadSession(tempPath string, size int64, totalChunks int, resume bool) error {
 	info, statErr := os.Stat(tempPath)
 	exists := statErr == nil
@@ -198,10 +199,7 @@ func prepareUploadSession(tempPath string, size int64, totalChunks int, resume b
 	}
 
 	if exists {
-		if !resume {
-			return errUploadSessionExists
-		}
-		// 只有清单和文件都与本次请求一致时才允许续传。
+		// 只有清单和文件都与本次请求一致时才允许复用。
 		if manifest, ok := loadUploadManifest(tempPath); ok &&
 			manifest.Size == size &&
 			manifest.TotalChunks == totalChunks &&

@@ -960,6 +960,10 @@ class TaskModel {
   final PlanInfo? plan;
   final DateTime? createdAt;
 
+  /// 任务索引里保存的模型引用（"providerID/modelID"）。会话重建时用它判断
+  /// 这一轮是不是生图模型发起的。
+  final String modelRef;
+
   const TaskModel({
     required this.taskId,
     required this.agentId,
@@ -975,6 +979,7 @@ class TaskModel {
     this.question,
     this.plan,
     this.createdAt,
+    this.modelRef = '',
   });
 
   factory TaskModel.fromJson(Map<String, dynamic> j) {
@@ -1027,6 +1032,10 @@ class TaskModel {
       createdAt: j['created_at'] != null
           ? DateTime.tryParse(j['created_at'] as String)
           : null,
+      modelRef: (j['metadata'] as Map<String, dynamic>?)?['model']
+              ?.toString()
+              .trim() ??
+          '',
     );
   }
 }
@@ -1397,6 +1406,7 @@ FinalDeliveryPhase finalDeliveryPhaseFromProgressEvent(
 
 class GoalProgressEntry {
   final String type;
+  final String goalId;
   final String detail;
   final String reason;
   final int iteration;
@@ -1405,6 +1415,7 @@ class GoalProgressEntry {
 
   const GoalProgressEntry({
     required this.type,
+    this.goalId = '',
     this.detail = '',
     this.reason = '',
     this.iteration = 0,
@@ -1412,14 +1423,37 @@ class GoalProgressEntry {
     this.sentAt,
   });
 
-  bool get isTerminal =>
-      type == 'goal_completed' ||
-      type == 'goal_paused' ||
-      type == 'goal_failed';
+  /// provider_connection_retry 这类原因表示模型只是暂时断了线，
+  /// 服务端会自己重试然后接着跑目标，不是用户要手动恢复的「暂停」。
+  bool get isTransientRetry =>
+      type == 'goal_paused' && reason == 'provider_connection_retry';
+
+  bool get isTerminal {
+    if (isTransientRetry) return false;
+    return type == 'goal_completed' ||
+        type == 'goal_paused' ||
+        type == 'goal_failed';
+  }
 
   bool get hasDetail => detail.trim().isNotEmpty;
 
+  /// 服务端下发的 reason 是机器码（user_cancelled / max_iterations_reached /
+  /// provider_connection_retry），展示前翻成中文，不把英文码直接给用户看。
+  String get reasonLabel {
+    switch (reason) {
+      case 'user_cancelled':
+        return '你手动停止了任务';
+      case 'max_iterations_reached':
+        return '已达到最大轮数';
+      case 'provider_connection_retry':
+        return '模型连接暂时中断，稍后自动重试';
+      default:
+        return reason;
+    }
+  }
+
   String get title {
+    if (isTransientRetry) return '连接中断，正在重试';
     switch (type) {
       case 'goal_created':
         return '目标已启动';
@@ -1430,7 +1464,7 @@ class GoalProgressEntry {
       case 'goal_completed':
         return '目标已完成';
       case 'goal_paused':
-        return '目标已暂停';
+        return reason == 'user_cancelled' ? '目标已停止' : '目标已暂停';
       case 'goal_failed':
         return '目标执行失败';
       default:
@@ -1440,7 +1474,8 @@ class GoalProgressEntry {
 
   String get summary {
     final suffix = max > 0 ? ' $iteration/$max' : '';
-    if (reason.trim().isNotEmpty) return '$title$suffix：${reason.trim()}';
+    final reasonText = reason.trim();
+    if (reasonText.isNotEmpty) return '$title$suffix：${reasonLabel.trim()}';
     if (detail.trim().isNotEmpty) return '$title$suffix：${detail.trim()}';
     return '$title$suffix';
   }
@@ -1458,6 +1493,7 @@ class GoalProgressEntry {
     ]);
     return GoalProgressEntry(
       type: type,
+      goalId: _firstString([event['goal_id'], metadata['goal_id']]),
       detail: detail,
       reason: _firstString([event['reason'], metadata['reason']]),
       iteration:
@@ -1514,6 +1550,7 @@ class AiArtifact {
   }
 
   bool get isImage => mimeType.startsWith('image/');
+  bool get isVideo => mimeType.startsWith('video/');
 }
 
 class AiOutputFile {
@@ -1541,6 +1578,7 @@ class AiOutputFile {
   Uint8List? _cachedBytes;
 
   bool get isImage => mimeType.startsWith('image/');
+  bool get isVideo => mimeType.startsWith('video/');
   bool get isDataUrl => url.startsWith('data:');
 
   Uint8List? get imageBytes {
@@ -1687,12 +1725,204 @@ class ImageGenerationInfo {
     required this.startedAt,
   });
 
+  /// 任务索引里保存的模型引用形如 "providerID/modelID"。重建会话时用它判断
+  /// 这一轮是不是生图模型发起的，避免生图状态在重建后丢失。
+  factory ImageGenerationInfo.fromModelRef(
+    String modelRef,
+    DateTime startedAt,
+  ) {
+    final slash = modelRef.indexOf('/');
+    if (slash <= 0 || slash >= modelRef.length - 1) {
+      return ImageGenerationInfo(
+        providerID: '',
+        modelID: modelRef,
+        modelName: modelRef,
+        startedAt: startedAt,
+      );
+    }
+    final providerID = modelRef.substring(0, slash);
+    final modelID = modelRef.substring(slash + 1);
+    return ImageGenerationInfo(
+      providerID: providerID,
+      modelID: modelID,
+      modelName: modelRef,
+      startedAt: startedAt,
+    );
+  }
+
   factory ImageGenerationInfo.fromModel(ModelInfo model, DateTime startedAt) {
     return ImageGenerationInfo(
       providerID: model.providerID,
       modelID: model.modelID,
       modelName: model.name.isNotEmpty ? model.name : model.metaKey,
       startedAt: startedAt,
+    );
+  }
+}
+
+/// 生图请求参数：对应 opencode 的 `--size/--n/--quality/--format` 文本参数。
+/// 客户端用参数条点选，避免要求用户手写这些开关。
+class ImageGenerationOptions {
+  final String? size;
+  final int? count;
+  final String? quality;
+  final String? format;
+  /// xAI 用比例替代 OpenAI 的尺寸，二者互斥。
+  final String? aspectRatio;
+  final String? resolution;
+  /// 视频时长，秒。xAI 视频接口接受 1 到 15。
+  final int? duration;
+
+  const ImageGenerationOptions({
+    this.size,
+    this.count,
+    this.quality,
+    this.format,
+    this.aspectRatio,
+    this.resolution,
+    this.duration,
+  });
+
+  static const List<String> sizes = [
+    '1024x1024',
+    '1024x1536',
+    '1536x1024',
+    '1792x1024',
+    '1024x1792',
+  ];
+  static const List<String> qualities = ['low', 'medium', 'high'];
+  static const List<String> formats = ['png', 'jpeg', 'webp'];
+  static const List<int> videoDurations = [4, 6, 8, 10, 15];
+  static const List<String> videoAspectRatios = [
+    '16:9',
+    '9:16',
+    '1:1',
+    '4:3',
+    '3:4',
+    '3:2',
+    '2:3',
+  ];
+  static const List<String> videoResolutions = ['480p', '720p'];
+
+  /// 张数上限与 opencode 的 IMAGE_COUNT_MAX 保持一致。
+  static const int maxCount = 10;
+
+  bool get isEmpty =>
+      size == null &&
+      count == null &&
+      quality == null &&
+      format == null &&
+      aspectRatio == null &&
+      resolution == null &&
+      duration == null;
+
+  /// 早期版本会把参数拼进提示词原文，落库与历史回放会带着 `--n=3` 这类尾巴。
+  /// 新链路已改为走 metadata，这里保留用于显示旧消息——用户气泡里不再出现
+  /// 参数，只呈现自己输入的内容。
+  /// 值必须是生图参数的合法形态（数字/档位/比例/尺寸），避免误伤
+  /// 正文里恰好以这些键名开头的普通句子。
+  static String stripPromptArgs(String text) {
+    return text
+        .replaceAll(
+          RegExp(
+            r'(^|\s)--(n|count|size|quality|background|format|fidelity|aspect-ratio|ratio|resolution|duration)(=[a-z0-9xX:\.]+|\s+[a-z0-9xX:\.]+)(?=\s|$)',
+            caseSensitive: false,
+          ),
+          '',
+        )
+        .replaceAll(RegExp(r'\n\s*\n\s*\n+'), '\n\n')
+        .trim();
+  }
+
+  Map<String, String> toMetadata() => {
+    if (size != null) 'image_size': size!,
+    if (aspectRatio != null) 'image_aspect_ratio': aspectRatio!,
+    if (resolution != null) 'image_resolution': resolution!,
+    if (duration != null) 'image_duration': duration!.toString(),
+    if (count != null) 'image_count': count!.clamp(1, maxCount).toString(),
+    if (quality != null) 'image_quality': quality!,
+    if (format != null) 'image_format': format!,
+  };
+
+  ImageGenerationOptions copyWith({
+    String? size,
+    int? count,
+    String? quality,
+    String? format,
+    String? aspectRatio,
+    String? resolution,
+    int? duration,
+    bool clearSize = false,
+    bool clearCount = false,
+    bool clearQuality = false,
+    bool clearFormat = false,
+    bool clearAspectRatio = false,
+    bool clearResolution = false,
+    bool clearDuration = false,
+  }) {
+    return ImageGenerationOptions(
+      size: clearSize ? null : (size ?? this.size),
+      count: clearCount ? null : (count ?? this.count),
+      quality: clearQuality ? null : (quality ?? this.quality),
+      format: clearFormat ? null : (format ?? this.format),
+      aspectRatio: clearAspectRatio ? null : (aspectRatio ?? this.aspectRatio),
+      resolution: clearResolution ? null : (resolution ?? this.resolution),
+      duration: clearDuration ? null : (duration ?? this.duration),
+    );
+  }
+}
+
+/// 生图参数能力。来自设备上报的 image_capabilities，描述该模型真正认识的
+/// 参数集合（OpenAI 是 size/quality/format，xAI 是 aspect_ratio/resolution/quality）。
+class ImageGenerationCapabilities {
+  final List<String> sizes;
+  final List<String> aspectRatios;
+  final List<String> resolutions;
+  final List<String> qualities;
+  final List<String> formats;
+  final int? maxCount;
+  final int? maxReferences;
+
+  const ImageGenerationCapabilities({
+    this.sizes = const [],
+    this.aspectRatios = const [],
+    this.resolutions = const [],
+    this.qualities = const [],
+    this.formats = const [],
+    this.maxCount,
+    this.maxReferences,
+  });
+
+  bool get isEmpty =>
+      sizes.isEmpty &&
+      aspectRatios.isEmpty &&
+      resolutions.isEmpty &&
+      qualities.isEmpty &&
+      formats.isEmpty &&
+      maxCount == null &&
+      maxReferences == null;
+
+  static List<String> _list(Object? value) {
+    if (value is! List) return const [];
+    return value.whereType<String>().map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  }
+
+  static int? _int(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  factory ImageGenerationCapabilities.fromJson(Map<String, dynamic> json) {
+    return ImageGenerationCapabilities(
+      sizes: _list(json['sizes'] ?? json['size_options']),
+      aspectRatios: _list(json['aspect_ratios'] ?? json['aspectRatios']),
+      resolutions: _list(json['resolutions']),
+      qualities: _list(json['qualities']),
+      formats: _list(json['formats']),
+      maxCount: _int(json['max_count'] ?? json['maxCount']),
+      maxReferences: _int(json['max_references'] ?? json['maxReferences']),
     );
   }
 }
@@ -1709,6 +1939,7 @@ class ModelInfo {
   final List<String> inputModalities;
   final List<String> outputModalities;
   final int? contextLimit;
+  final ImageGenerationCapabilities? imageCapabilities;
 
   const ModelInfo({
     required this.providerID,
@@ -1721,6 +1952,7 @@ class ModelInfo {
     this.inputModalities = const [],
     this.outputModalities = const [],
     this.contextLimit,
+    this.imageCapabilities,
   });
 
   bool get hasVariants => variants.isNotEmpty;
@@ -1737,25 +1969,48 @@ class ModelInfo {
   bool get supportsImageOutput =>
       image ||
       outputModalities.any((item) => item.toLowerCase() == 'image') ||
-      _looksLikeImageGenerationModel;
+      looksLikeImageGenerationModel(providerID, modelID, name);
 
-  bool get _looksLikeImageGenerationModel {
-    final text = '$providerID $modelID $name'.toLowerCase();
-    return text.contains('gpt-image') ||
-        text.contains('dall-e') ||
-        text.contains('imagen') ||
-        text.contains('flux') ||
-        text.contains('recraft') ||
-        text.contains('grok-imagine') ||
-        text.contains('stable-diffusion') ||
-        text.contains('sdxl');
-  }
+  bool get supportsVideoOutput =>
+      outputModalities.any((item) => item.toLowerCase() == 'video') ||
+      looksLikeVideoGenerationModel(providerID, modelID, name);
 
   // 格式化为 metadata 传输字段 "providerID/modelID"
   String get metaKey => '$providerID/$modelID';
 
   @override
   String toString() => name.isNotEmpty ? name : metaKey;
+}
+
+/// 仅凭模型名/供应商名判断是不是生图模型。
+///
+/// 会话重建时只能拿到任务索引里的模型引用（providerID/modelID），拿不到
+/// 模型能力字段，因此这里必须与 [ModelInfo.supportsImageOutput] 共用同一套
+/// 名字规则，避免重建后生图状态丢失、气泡一直停在「等待新的回复」。
+bool looksLikeVideoGenerationModel(
+  String providerID,
+  String modelID,
+  String name,
+) {
+  return '$providerID $modelID $name'.toLowerCase().contains('video');
+}
+
+bool looksLikeImageGenerationModel(
+  String providerID,
+  String modelID,
+  String name,
+) {
+  if (looksLikeVideoGenerationModel(providerID, modelID, name)) return false;
+  final text = '$providerID $modelID $name'.toLowerCase();
+  return text.contains('gpt-image') ||
+      text.contains('dall-e') ||
+      text.contains('imagen') ||
+      text.contains('flux') ||
+      text.contains('recraft') ||
+      text.contains('grok-imagine') ||
+      text.contains('image') ||
+      text.contains('stable-diffusion') ||
+      text.contains('sdxl');
 }
 
 // 已选附件文件

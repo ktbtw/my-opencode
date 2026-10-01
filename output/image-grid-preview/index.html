@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>生图气泡 · 等待与完成</title>
+<style>
+  :root { --bg:#f2f6fc; --surface:#fff; --elev:#fafcff; --border:#d0ddef;
+    --primary:#2563eb; --primary-light:#eff6ff; --text:#0f1729;
+    --secondary:#4a5d7a; --muted:#8fa3bf; --input:#f8fafd; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:linear-gradient(135deg,#eff4fb,#f7faff); color:var(--text);
+    font-family:-apple-system,"PingFang SC","Segoe UI",sans-serif; }
+  header, .bar, .stage { max-width:1080px; margin:0 auto; }
+  header { padding:22px 20px 4px; }
+  header h1 { font-size:17px; margin:0 0 6px; }
+  header p { margin:0; font-size:13px; line-height:1.65; color:var(--secondary); }
+  .bar { padding:14px 20px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .bar button { border:1px solid var(--border); background:#fff; color:var(--secondary);
+    border-radius:8px; height:32px; padding:0 14px; font-size:13px; cursor:pointer; }
+  .bar button.on { background:var(--primary); border-color:var(--primary); color:#fff; }
+  .count { margin-left:auto; display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
+  .stage { padding:0 20px 48px; display:grid; gap:16px; }
+  .stage.both { grid-template-columns:1fr; }
+  @media (min-width:900px){ .stage.both { grid-template-columns:1fr 1fr; } }
+  .phone { background:var(--bg); border:1px solid var(--border); border-radius:16px; padding:16px 14px; }
+  .phone h2 { margin:0 0 14px; font-size:12px; font-weight:600; color:var(--muted); letter-spacing:.04em; }
+  .msg { display:flex; gap:10px; align-items:flex-start; }
+  .ava { width:32px; height:32px; border-radius:8px; background:var(--primary-light); color:var(--primary);
+    display:flex; align-items:center; justify-content:center; flex:none; }
+  .bubble { max-width:440px; flex:1; background:#fff; border:1px solid var(--border); border-radius:12px;
+    border-bottom-left-radius:3px; padding:12px 14px; box-shadow:0 2px 8px rgba(26,58,106,.024); }
+  .label { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:8px; }
+  .grid { display:grid; gap:8px; }
+  .cell { position:relative; background:var(--elev); border:1px solid var(--border); border-radius:8px;
+    overflow:hidden; aspect-ratio:1; }
+  .cell img, .cell .ph { width:100%; height:100%; object-fit:cover; display:block; }
+  .ph { background:linear-gradient(100deg,#eef3fb 30%,#f8fafd 50%,#eef3fb 70%); background-size:200% 100%;
+    animation:shine 1.4s linear infinite; display:flex; align-items:center; justify-content:center;
+    color:var(--primary); }
+  @keyframes shine { to { background-position:-200% 0; } }
+  .single { border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--elev); }
+  .single .hero { height:180px; display:flex; align-items:center; justify-content:center; background:var(--primary-light); color:var(--primary); }
+  .single .row { display:flex; gap:8px; align-items:center; padding:10px 12px; }
+  .single .t { font-size:13px; font-weight:600; }
+  .single .s { font-size:11px; color:var(--secondary); margin-top:3px; }
+  .spin { width:14px; height:14px; border:2px solid var(--primary-light); border-top-color:var(--primary);
+    border-radius:50%; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .cap { font-size:12px; color:var(--muted); line-height:1.6; margin:10px 2px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>生图气泡</h1>
+  <p>现在等待时只有一张进度卡，因为进度卡没接请求的张数。请求里其实带着 <b>--n</b>，可以按张数先排出同样的网格，每格是一张闪动的占位，出来一张替换一张。</p>
+</header>
+<div class="bar">
+  <button id="b-now" class="on">现在：单张进度卡</button>
+  <button id="b-new">按请求张数占位</button>
+  <button id="b-done">生成完成后</button>
+  <span class="count">请求张数
+    <button data-n="1">1</button><button data-n="2">2</button>
+    <button data-n="3" class="on">3</button><button data-n="4">4</button>
+    <button data-n="6">6</button>
+  </span>
+</div>
+<div class="stage" id="stage"></div>
+<script>
+  const pics = [
+    "https://picsum.photos/seed/cat1/400/400","https://picsum.photos/seed/cat2/400/400",
+    "https://picsum.photos/seed/cat3/400/400","https://picsum.photos/seed/cat4/400/400",
+    "https://picsum.photos/seed/cat5/400/400","https://picsum.photos/seed/cat6/400/400"];
+  let mode = "now", n = 3;
+  const cols = (k) => k <= 1 ? 1 : k <= 4 ? 2 : 3;
+  function cell(i, done) {
+    if (!done) return `<div class="cell"><div class="ph"><div class="spin"></div></div></div>`;
+    return `<div class="cell"><img src="${pics[i%pics.length]}"></div>`;
+  }
+  function bubble(title, inner) {
+    return `<section class="phone"><h2>${title}</h2><div class="msg">
+      <div class="ava"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01"/></svg></div>
+      <div class="bubble">${inner}</div></div></section>`;
+  }
+  function render() {
+    const stage = document.getElementById("stage");
+    const now = bubble("现在的等待", `<div class="single"><div class="hero"><div class="spin"></div></div>
+      <div class="row"><div class="spin"></div><div style="flex:1"><div class="t">正在生成图片</div>
+      <div class="s">grok-imagine-image-2.0 · 已用 12 秒</div></div></div></div>
+      <p class="cap">不管请求 1 张还是 ${n} 张，等待时都是这一张卡，看不出要出几张。</p>`);
+    const grid = `<div class="label">正在生成图片 · ${n} 张</div>
+      <div class="grid" style="grid-template-columns:repeat(${cols(n)},1fr)">${Array.from({length:n},(_,i)=>cell(i,false)).join("")}</div>
+      <p class="cap">按请求张数先占位，列数和完成后一致。每完成一张就替换对应格子。</p>`;
+    const done = `<div class="label">生成图片 · ${n} 张</div>` + (n===1
+      ? `<div class="single"><img src="${pics[0]}" style="width:100%;height:180px;object-fit:cover"><div class="row"><div style="flex:1"><div class="t">image-1.jpeg</div><div class="s">373KB · 点击查看大图</div></div></div></div>`
+      : `<div class="grid" style="grid-template-columns:repeat(${cols(n)},1fr)">${Array.from({length:n},(_,i)=>cell(i,true)).join("")}</div>`);
+    const map = { now:[now], "new":[bubble("等待中", grid)], done:[bubble("完成后", done)] };
+    stage.className = "stage";
+    stage.innerHTML = map[mode].join("");
+    document.querySelectorAll(".bar button").forEach(b => b.classList.toggle("on", b.id==="b-"+mode || b.dataset.n==String(n)));
+  }
+  document.getElementById("b-now").onclick = () => { mode="now"; render(); };
+  document.getElementById("b-new").onclick = () => { mode="new"; render(); };
+  document.getElementById("b-done").onclick = () => { mode="done"; render(); };
+  document.querySelectorAll("[data-n]").forEach(b => b.onclick = () => { n=+b.dataset.n; render(); });
+  render();
+</script>
+</body>
+</html>

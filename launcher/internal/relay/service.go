@@ -52,6 +52,8 @@ type Service interface {
 	AgentSemanticSelection(string) (model.DeviceAgentSemanticSelectionInfo, error)
 	SaveAgentSemanticSelection(model.DeviceAgentSemanticSelectionInput) (model.DeviceAgentSemanticSelectionInfo, error)
 	StartAgentSemanticPreflight(model.RuntimePreflightStartPayload, func(model.RuntimePreflightStatusPayload) error) error
+	RuntimeStatus(runtimeID string) (model.DeviceRuntimeStatus, error)
+	InstallRuntimes(model.RuntimePreflightStartPayload, func(model.RuntimePreflightStatusPayload) error) error
 	SaveMCPConfig(model.DeviceMCPConfigInfo) (*model.DeviceMCPConfigInfo, error)
 	RemoveMCPConfig(string) (*model.DeviceMCPConfigInfo, error)
 	EnvConfig() (*model.DeviceEnvConfigInfo, error)

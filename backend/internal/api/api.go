@@ -52,6 +52,7 @@ const launcherCompactionConfigCapability = "device_compaction_config_v1"
 // launcherStorageCapability 标记 launcher 支持磁盘占用查询与缓存清理。
 // 老版本 launcher 不会响应这两条指令，后端据此提前拒绝，避免请求悬空等超时。
 const launcherStorageCapability = "device_storage_v1"
+const launcherRuntimeCapability = "device_runtime_v1"
 
 func (a *API) enrichOrchestrationTaskMetadata(operatorID int64, metadata map[string]string) map[string]string {
 	settings, err := a.store.GetDeviceSettings(operatorID, userSettingsAgentID)
@@ -4809,6 +4810,9 @@ func launcherModels(cfg *model.DeviceAIConfigPreview) map[string]any {
 				}
 				entry["image"] = containsString(modalities.Output, "image")
 			}
+			if capability := normalizeDeviceAIImageCapability(item.Image); capability != nil {
+				entry["image_capabilities"] = capability
+			}
 			if len(item.Variants) > 0 {
 				entry["variants"] = item.Variants
 			}
@@ -4856,6 +4860,32 @@ func normalizeModalities(value *model.DeviceAIModalities) *model.DeviceAIModalit
 		return nil
 	}
 	return &model.DeviceAIModalities{Input: input, Output: output}
+}
+
+// normalizeDeviceAIImageCapability 把生图参数能力转成 App API 的 map；
+// 没声明任何参数时不暴露该字段（等价于"生图但不知道该模型的参数"）。
+func normalizeDeviceAIImageCapability(value *model.DeviceAIImageCapability) map[string]any {
+	if value == nil {
+		return nil
+	}
+	sizes := compactStrings(value.Sizes)
+	aspectRatios := compactStrings(value.AspectRatios)
+	resolutions := compactStrings(value.Resolutions)
+	qualities := compactStrings(value.Qualities)
+	formats := compactStrings(value.Formats)
+	if len(sizes) == 0 && len(aspectRatios) == 0 && len(resolutions) == 0 && len(qualities) == 0 &&
+		len(formats) == 0 {
+		return nil
+	}
+	return map[string]any{
+		"sizes":          sizes,
+		"aspect_ratios":  aspectRatios,
+		"resolutions":    resolutions,
+		"qualities":      qualities,
+		"formats":        formats,
+		"max_count":      value.MaxCount,
+		"max_references": value.MaxReferences,
+	}
 }
 
 func firstPositiveLimit(values ...int64) int64 {
@@ -5851,12 +5881,26 @@ func normalizeGoalTaskMetadata(input map[string]string) map[string]string {
 	if strings.TrimSpace(metadata["goal_max_iterations"]) == "" {
 		metadata["goal_max_iterations"] = "30"
 	}
-	metadata["goal_status"] = "pending"
-	metadata["goal_iteration"] = "0"
-	metadata["goal_created_at"] = now
+	// goal_iteration / goal_id 支持客户端传入：继续目标时客户端带原 goal_id
+	// 和「下一轮」的 iteration 重新发起任务，服务端透传，不把轮次归零。
+	if !isContinueGoalRequest(metadata) {
+		metadata["goal_iteration"] = "0"
+	}
+	metadata["goal_status"] = "active"
 	metadata["goal_updated_at"] = now
-	metadata["goal_last_event"] = "created"
+	if !isContinueGoalRequest(metadata) {
+		metadata["goal_created_at"] = now
+	}
+	if !isContinueGoalRequest(metadata) {
+		metadata["goal_last_event"] = "created"
+	}
 	return metadata
+}
+
+// 继续目标请求：客户端带 goal_resume=true + 原 goal_id。
+// 目标被用户停止或达到最大轮数后，从上次轮次接着跑而不是从第 1 轮重来。
+func isContinueGoalRequest(metadata map[string]string) bool {
+	return strings.TrimSpace(metadata["goal_resume"]) == "true" && strings.TrimSpace(metadata["goal_id"]) != ""
 }
 
 func enrichTaskMetadata(input map[string]string, agent model.Agent) map[string]string {

@@ -1442,6 +1442,8 @@ func (a *App) Router() http.Handler {
 	r.Post("/api/devices/{machineID}/launcher/agents/{agentID}/semantic-agent/preflight", h.StartDeviceAgentSemanticPreflight)
 	r.Get("/api/devices/{machineID}/launcher/preflight-jobs/{jobID}", h.GetDeviceAgentSemanticPreflightJob)
 	r.Get("/api/devices/{machineID}/launcher/preflight-jobs/{jobID}/events", h.GetDeviceAgentSemanticPreflightEvents)
+	r.Get("/api/devices/{machineID}/runtimes/{runtimeID}/status", h.GetDeviceRuntimeStatus)
+	r.Post("/api/devices/{machineID}/runtimes/{runtimeID}/install", h.InstallDeviceRuntime)
 	r.Get("/api/devices/{machineID}/directory-access", h.GetDeviceDirectoryAccess)
 	r.Post("/api/devices/{machineID}/directory-access", h.UpdateDeviceDirectoryAccess)
 	r.Post("/api/devices/{machineID}/directory-access/email-code", h.SendDeviceDirectoryAccessEmailCode)

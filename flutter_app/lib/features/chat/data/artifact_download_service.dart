@@ -26,6 +26,17 @@ class ArtifactDownloadService {
   static String _url(String taskId, AiArtifact artifact) =>
       '${ApiClient.baseUrl}/api/tasks/$taskId/artifacts/${artifact.id}/download';
 
+  /// 交付文件的下载地址与鉴权头：视频播放器需要直接拿到这两个，
+  /// 走我们的通道播放，而不是打开上游中转站的临时地址。
+  static String downloadUrl(String taskId, AiArtifact artifact) =>
+      _url(taskId, artifact);
+
+  static Map<String, String> authHeaders() {
+    final token = AppStorage.getToken();
+    if (token == null || token.isEmpty) return const {};
+    return {'Authorization': 'Bearer $token'};
+  }
+
   static Future<Uint8List> fetchBytes({
     required String taskId,
     required AiArtifact artifact,

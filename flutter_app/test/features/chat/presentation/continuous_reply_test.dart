@@ -7,15 +7,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-ChatMessage reply(String id, {String task = 'task', bool live = false}) =>
-    ChatMessage(
-      id: id,
-      role: MessageRole.agent,
-      taskId: task,
-      content: id,
-      state: live ? MessageState.streaming : MessageState.done,
-      createdAt: DateTime(2026),
-    );
+ChatMessage reply(
+  String id, {
+  String task = 'task',
+  bool live = false,
+  PlanInfo? plan,
+}) {
+  final message = ChatMessage(
+    id: id,
+    role: MessageRole.agent,
+    taskId: task,
+    content: id,
+    state: live ? MessageState.streaming : MessageState.done,
+    createdAt: DateTime(2026),
+  );
+  if (plan != null) {
+    message.plan = plan;
+    message.hasPlanBinding = true;
+  }
+  return message;
+}
 ChatMessage event(String id, {String task = 'task', bool user = false}) =>
     ChatMessage(
       id: id,
@@ -75,11 +86,9 @@ void main() {
       reply('D', task: 'other'),
     ];
     final groups = groupReplyDisplay(messages, continuous: true);
+    // 用户插入不再把同任务正文切开，它嵌在前后回复中间。
     expect(groups.map((g) => g.map((m) => m.id).toList()), [
-      ['A', 'job', 'B'],
-      ['user'],
-      ['C'],
-      ['job2'],
+      ['A', 'job', 'B', 'user', 'C', 'job2'],
       ['D'],
     ]);
   });
@@ -177,14 +186,13 @@ void main() {
       reply('round3', live: true),
       reply('other', task: 'other'),
       event('job', user: true),
-      reply('after-user'),
+      reply('after-user', task: 'task'),
     ];
     final groups = groupReplyDisplay(messages, continuous: true);
     expect(groups.map((g) => g.map((m) => m.id).toList()), [
       ['round1', 'round2', 'round3'],
       ['other'],
-      ['job'],
-      ['after-user'],
+      ['job', 'after-user'],
     ]);
   });
 
@@ -251,4 +259,117 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  test('plan card renders once and always at the end of the group', () {
+    final plan = PlanInfo(
+      id: 'plan-1',
+      title: '拆解需求',
+      mode: 'build',
+      status: 'in_progress',
+      items: const [
+        PlanItemInfo(
+          id: 'item-1',
+          text: '读取配置',
+          status: 'in_progress',
+          priority: 'high',
+        ),
+      ],
+    );
+    final messages = [
+      reply('A', plan: plan),
+      reply('B', plan: plan),
+      reply('C'),
+    ];
+    final layout = ReplyDisplayLayout.of(messages);
+    // 同 task 三条消息合并成一段，任务卡片只渲染一次，且挂在最后一条正文上。
+    expect(layout.planCards.length, 1);
+    expect(layout.planCards.containsKey('C'), isTrue);
+    expect(layout.planCards.containsKey('A'), isFalse);
+    expect(layout.planCards.containsKey('B'), isFalse);
+  });
+
+  test('plan card stays at the tail when only an earlier round carries the plan', () {
+    final plan = PlanInfo(
+      id: 'plan-1',
+      title: '拆解需求',
+      mode: 'build',
+      status: 'in_progress',
+      items: const [
+        PlanItemInfo(
+          id: 'item-1',
+          text: '读取配置',
+          status: 'in_progress',
+          priority: 'high',
+        ),
+      ],
+    );
+    final messages = [reply('A', plan: plan), reply('B'), reply('C')];
+    final layout = ReplyDisplayLayout.of(messages);
+
+    // 计划只出现在第一条：卡片不能挂在 A 上（那会插在两段正文中间），
+    // 必须挂到整段末尾的 C，并沿用 A 的计划内容。
+    expect(layout.planCards.containsKey('A'), isFalse);
+    expect(layout.planCards.containsKey('B'), isFalse);
+    expect(layout.planCards.containsKey('C'), isTrue);
+    expect(layout.planCards['C']!.title, '拆解需求');
+  });
+
+  testWidgets('user insert stays inside the continuous reply surface', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final messages = [
+      reply('此前的正文'),
+      event('插一句', user: true),
+      reply('接着继续回复'),
+    ];
+    await tester.pumpWidget(surface(messages));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('continuous-reply-surface')), findsOneWidget);
+    expect(find.text('你 · 已追加到当前任务'), findsOneWidget);
+    final before = tester.getTopLeft(find.text('此前的正文', findRichText: true)).dy;
+    final inserted = tester.getTopLeft(find.text('你 · 已追加到当前任务')).dy;
+    final after = tester.getTopLeft(find.text('接着继续回复', findRichText: true)).dy;
+    expect(before, lessThan(inserted));
+    expect(inserted, lessThan(after));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('continuous group shows one plan card, not one per message', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final plan = PlanInfo(
+      id: 'plan-1',
+      title: '拆解需求',
+      mode: 'build',
+      status: 'in_progress',
+      items: const [
+        PlanItemInfo(
+          id: 'item-1',
+          text: '读取配置',
+          status: 'completed',
+          priority: 'high',
+        ),
+      ],
+    );
+    final messages = [
+      reply('第一条正文', plan: plan),
+      reply('第二条正文'),
+      reply('第三条正文'),
+    ];
+    await tester.pumpWidget(surface(messages));
+    await tester.pump();
+
+    // 合并成一段时任务卡片只出现一次，且挂在段末（在最后一条正文之下）。
+    expect(find.textContaining('拆解需求'), findsOneWidget);
+    final cardY = tester.getTopLeft(find.textContaining('拆解需求')).dy;
+    final lastBodyY = tester
+        .getTopLeft(find.text('第三条正文', findRichText: true))
+        .dy;
+    expect(cardY, greaterThan(lastBodyY));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
+

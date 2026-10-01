@@ -8,7 +8,7 @@ import { Global } from "@opencode-ai/core/global"
 import type { InstanceContext } from "../../src/project/instance-context"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
-import { Provider } from "@/provider/provider"
+import { inferConfigModelCapabilities, Provider } from "@/provider/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Filesystem } from "@/util/filesystem"
 import { Env } from "../../src/env"
@@ -749,6 +749,74 @@ it.instance(
             apiKey: "test-api-key",
           },
           whitelist: ["nonexistent-model"],
+        },
+      },
+    },
+  },
+)
+
+test("image and video models are detected even when a context window is known", () => {
+  // 目录里匹配到 context 的模型以前会被短路，导致没被识别成生图/视频模型，
+  // 请求走成普通对话。
+  const existing = { limit: { context: 256_000, output: 64_000 } } as never
+  const image = inferConfigModelCapabilities(
+    "grok-imagine-image-2.0",
+    "grok-imagine-image-2.0",
+    "@ai-sdk/openai-compatible",
+    existing,
+  )
+  expect(image?.output?.image).toBe(true)
+  expect(image?.output?.text).toBe(false)
+  const video = inferConfigModelCapabilities(
+    "grok-imagine-video-1.5",
+    "grok-imagine-video-1.5",
+    "@ai-sdk/openai-compatible",
+    existing,
+  )
+  expect(video?.output?.video).toBe(true)
+  expect(video?.output?.image).not.toBe(true)
+})
+
+test("model names containing video are inferred as video output", () => {
+  for (const id of ["grok-imagine-video-1.5", "grok-imagine-video"]) {
+    const inferred = inferConfigModelCapabilities(id, id, "@ai-sdk/openai-compatible")
+    expect(inferred?.output?.video).toBe(true)
+    expect(inferred?.output?.image).not.toBe(true)
+    expect(inferred?.output?.text).toBe(false)
+  }
+})
+
+test("model names containing image are inferred as image output", () => {
+  for (const id of ["grok-imagine-image-2.0", "grok-imagine-image", "my-image-pro"]) {
+    const inferred = inferConfigModelCapabilities(id, id, "@ai-sdk/openai-compatible")
+    expect(inferred?.output?.image).toBe(true)
+    expect(inferred?.output?.text).toBe(false)
+  }
+  const chat = inferConfigModelCapabilities("grok-4.5", "grok-4.5", "@ai-sdk/openai-compatible")
+  expect(chat?.output?.image).not.toBe(true)
+  expect(chat?.output?.text).toBe(true)
+})
+
+it.instance(
+  "image model keeps image output even when config declares text modalities",
+  Effect.gen(function* () {
+    const providers = yield* Provider.Service.use((provider) => provider.list())
+    const model = providers[ProviderID.make("beiluo")]?.models["grok-imagine-image-2.0"]
+    expect(model?.capabilities.output.image).toBe(true)
+    expect(model?.capabilities.output.text).toBe(false)
+  }),
+  {
+    config: {
+      provider: {
+        beiluo: {
+          npm: "@ai-sdk/openai-compatible",
+          options: { apiKey: "test-key" },
+          models: {
+            "grok-imagine-image-2.0": {
+              limit: { context: 256_000 },
+              modalities: { input: ["image", "text"], output: ["text"] },
+            },
+          },
         },
       },
     },

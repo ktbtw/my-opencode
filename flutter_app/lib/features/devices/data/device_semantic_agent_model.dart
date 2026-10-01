@@ -156,6 +156,33 @@ class RuntimeUserAction {
   }
 }
 
+/// 设备上单个受管运行时组件的安装状态（例如 ffmpeg）。
+class DeviceRuntimeStatus {
+  final String runtimeId;
+  final bool installed;
+  final String version;
+  final String path;
+  final String executable;
+
+  const DeviceRuntimeStatus({
+    required this.runtimeId,
+    this.installed = false,
+    this.version = '',
+    this.path = '',
+    this.executable = '',
+  });
+
+  factory DeviceRuntimeStatus.fromJson(Map<String, dynamic> json) {
+    return DeviceRuntimeStatus(
+      runtimeId: json['runtime_id'] as String? ?? '',
+      installed: json['installed'] == true,
+      version: json['version'] as String? ?? '',
+      path: json['path'] as String? ?? '',
+      executable: json['executable'] as String? ?? '',
+    );
+  }
+}
+
 class RuntimePreflightJob {
   final String id;
   final String machineId;

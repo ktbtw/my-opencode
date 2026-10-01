@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>视频生成 · 炫酷预览</title>
+<style>
+  :root { --bg:#f2f6fc; --border:#d0ddef; --primary:#2563eb; --primary-light:#eff6ff;
+    --text:#0f1729; --secondary:#4a5d7a; --muted:#8fa3bf; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:linear-gradient(135deg,#eff4fb,#f7faff); color:var(--text);
+    font-family:-apple-system,"PingFang SC","Segoe UI",sans-serif; }
+  main { max-width:980px; margin:0 auto; padding:22px 20px 48px; }
+  h1 { font-size:17px; margin:0 0 6px; }
+  .lead { margin:0 0 16px; font-size:13px; line-height:1.65; color:var(--secondary); }
+  .row { display:grid; gap:16px; }
+  @media (min-width:860px){ .row { grid-template-columns:1fr 1fr; } }
+  .phone { background:var(--bg); border:1px solid var(--border); border-radius:16px; padding:16px 14px; }
+  h2 { margin:0 0 14px; font-size:12px; font-weight:600; color:var(--muted); letter-spacing:.04em; }
+  .msg { display:flex; gap:10px; align-items:flex-start; }
+  .ava { width:32px; height:32px; border-radius:8px; background:var(--primary-light); color:var(--primary);
+    display:flex; align-items:center; justify-content:center; flex:none; }
+  .bubble { flex:1; max-width:440px; background:#fff; border:1px solid var(--border); border-radius:12px;
+    border-bottom-left-radius:3px; padding:12px; box-shadow:0 2px 8px rgba(26,58,106,.024); }
+
+  .stage { position:relative; aspect-ratio:16/9; border-radius:10px; overflow:hidden;
+    background:radial-gradient(120% 90% at 50% 120%, #1d4ed8 0%, #0b1224 55%, #070b16 100%); }
+  .ring { position:absolute; left:50%; top:54%; width:150%; aspect-ratio:1; border-radius:50%;
+    border:1px solid rgba(125,176,255,.35); transform:translate(-50%,-50%); animation:spin 14s linear infinite; }
+  .ring:nth-child(2){ width:110%; animation-duration:9s; animation-direction:reverse; border-color:rgba(125,176,255,.2); }
+  .ring:nth-child(3){ width:74%; animation-duration:6s; }
+  @keyframes spin { to { transform:translate(-50%,-50%) rotate(360deg); } }
+  .core { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; }
+  .orb { width:58px; height:58px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 35% 30%, #fff, #93c5fd 35%, #2563eb 70%, transparent 72%);
+    box-shadow:0 0 24px rgba(37,99,235,.8); animation:pulse 1.8s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform:scale(1.08); box-shadow:0 0 36px rgba(96,165,250,.95); } }
+  .cap { color:#dbe7ff; font-size:13px; font-weight:600; letter-spacing:.04em; }
+  .sub { color:rgba(219,231,255,.7); font-size:11px; }
+  .meter { position:absolute; left:12px; right:12px; bottom:10px; height:3px; border-radius:2px; background:rgba(255,255,255,.15); overflow:hidden; }
+  .meter i { display:block; height:100%; width:35%; border-radius:2px;
+    background:linear-gradient(90deg,transparent,#93c5fd,#fff); animation:load 1.6s ease-in-out infinite; }
+  @keyframes load { from { transform:translateX(-120%); } to { transform:translateX(320%); } }
+
+  .film { position:relative; aspect-ratio:16/9; border-radius:10px; overflow:hidden; cursor:pointer;
+    background:#0b1224 center/cover no-repeat url("https://picsum.photos/seed/reel/800/450"); }
+  .film::after { content:""; position:absolute; inset:0;
+    background:linear-gradient(180deg,rgba(7,11,22,.05),rgba(7,11,22,.72)); }
+  .play { position:absolute; left:50%; top:46%; transform:translate(-50%,-50%); z-index:1;
+    width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.55); backdrop-filter:blur(6px);
+    box-shadow:0 8px 24px rgba(0,0,0,.35); transition:transform .2s ease; }
+  .film:hover .play { transform:translate(-50%,-50%) scale(1.08); }
+  .meta { position:absolute; left:12px; right:12px; bottom:10px; z-index:1; display:flex; align-items:flex-end; gap:8px; color:#fff; }
+  .meta .name { font-size:12px; font-weight:600; }
+  .meta .hint { font-size:10px; opacity:.8; margin-top:2px; }
+  .len { margin-left:auto; font-size:11px; background:rgba(0,0,0,.45); border-radius:999px; padding:2px 8px; }
+  .note { font-size:12px; color:var(--muted); line-height:1.6; margin:10px 2px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>视频生成预览</h1>
+  <p class="lead">等待时用 16:9 的深色画面：旋转的细环、中央发光球和一条来回的进度光。完成后铺一张封面，中间一个玻璃质感的播放按钮，点整张卡片播放。</p>
+  <div class="row">
+    <section class="phone">
+      <h2>生成中</h2>
+      <div class="msg">
+        <div class="ava"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="3"/></svg></div>
+        <div class="bubble"><div class="stage">
+          <div class="ring"></div><div class="ring"></div><div class="ring"></div>
+          <div class="core"><div class="orb">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#0b1224"><path d="M9 7.5v9l8-4.5z"/></svg>
+          </div><div class="cap">正在生成视频</div><div class="sub">视频生成中 · 42 秒</div></div>
+          <div class="meter"><i></i></div>
+        </div></div>
+      </div>
+      <p class="note">比例跟成片一致，是 16:9 而不是正方形。没有进度百分比，因为上游只回状态，不回进度。</p>
+    </section>
+    <section class="phone">
+      <h2>完成后</h2>
+      <div class="msg">
+        <div class="ava"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="3"/></svg></div>
+        <div class="bubble"><div class="film">
+          <div class="play"><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M9 7v10l9-5z"/></svg></div>
+          <div class="meta"><div><div class="name">grok-imagine-video-1.5.mp4</div><div class="hint">点击播放</div></div><span class="len">8 秒</span></div>
+        </div></div>
+      </div>
+      <p class="note">封面用视频首帧；拿不到首帧时退回深色渐变。右下角是选择的时长。</p>
+    </section>
+  </div>
+</main>
+</body>
+</html>

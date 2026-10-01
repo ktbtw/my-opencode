@@ -27,6 +27,7 @@ import '../../../features/devices/presentation/device_provider.dart';
 import '../../../features/devices/data/device_compaction_config_model.dart';
 import '../../../shared/thinking_variant.dart';
 import '../../../shared/widgets/widgets.dart';
+import '../../../shared/widgets/running_glow_border.dart';
 import '../../../features/settings/settings_provider.dart';
 import '../../../core/services/recent_task_resume.dart';
 import '../data/chat_model.dart';
@@ -34,7 +35,9 @@ import '../data/chat_target.dart';
 import 'attachment_drop_support.dart';
 import 'attachment_drop_target.dart';
 import 'chat_provider.dart';
+import 'ffmpeg_install_dialog.dart';
 import 'artifact_image_viewer_page.dart';
+import 'video_player/artifact_video_player_page.dart';
 import 'attachment_viewer_page.dart';
 import 'artifact_download_notification.dart';
 import 'chat_target_picker.dart';
@@ -433,6 +436,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
     with WidgetsBindingObserver, RouteAware {
   static final RegExp _inlineTextToken = RegExp(r'\[Text \d+字\]');
   final _inputCtrl = _CommandHighlightTextEditingController();
+  // 生图参数由输入区参数条维护，发送时随提示词一起交给 opencode。
+  ImageGenerationOptions _imageOptions = const ImageGenerationOptions();
   final _scrollCtrl = ScrollController();
   final _inputFocus = FocusNode();
   int _bottomScrollGeneration = 0;
@@ -1118,6 +1123,19 @@ class _ChatPageState extends ConsumerState<ChatPage>
     context.go('/devices/${widget.machineId}');
   }
 
+  /// 停止当前任务。
+  ///
+  /// 用户主动停止时先把目标按「已暂停」落下来，不等服务端事件回来：
+  /// 否则目标按钮与弹窗会继续按「运行中」渲染，看起来像没停掉。
+  Future<void> _stopCurrentTask() async {
+    final goalNotifier = ref.read(goalSettingsProvider(_chatKey).notifier);
+    final settings = ref.read(goalSettingsProvider(_chatKey));
+    if (settings.enabled && settings.hasContent) {
+      unawaited(goalNotifier.markPaused());
+    }
+    await ref.read(chatProvider(_chatKey).notifier).cancelCurrentTask();
+  }
+
   Future<void> _send() async {
     final text = _sanitizeInput(_inputCtrl.text).trim();
     if (text.isEmpty) return;
@@ -1165,6 +1183,12 @@ class _ChatPageState extends ConsumerState<ChatPage>
           variant: variant,
           goalOverride: activeGoal,
           goalMaxIterations: goalSettings.maxIterations,
+          // 生图和视频模型才带参数；切回普通模型时参数条不显示，也不发送。
+          imageOptions:
+              model?.supportsImageOutput == true ||
+                  model?.supportsVideoOutput == true
+              ? _imageOptions
+              : null,
         );
     if (!accepted && mounted && _inputCtrl.text.trim().isEmpty) {
       _inputCtrl.text = text;
@@ -1195,7 +1219,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
     await ref
         .read(chatProvider(_chatKey).notifier)
         .sendMessage(
-          message.content,
+          // 历史消息的原文可能带上一轮追加的生图参数尾巴，
+          // 重发前剥掉，参数会按当前参数条重新追加。
+          ImageGenerationOptions.stripPromptArgs(message.content),
           model: model,
           permissionMode: pMode,
           variant: variant,
@@ -1229,6 +1255,35 @@ class _ChatPageState extends ConsumerState<ChatPage>
     ref.invalidate(sessionListProvider(_sessionListKey));
     _scrollToBottom();
     return true;
+  }
+
+  /// 继续执行暂停的目标：从上次已完成的轮次接着跑。
+  Future<bool> _resumeGoalTask(String goal, int maxIterations) async {
+    final normalized = goal.trim();
+    if (normalized.isEmpty) return false;
+    if (ref.read(chatProvider(_chatKey)).sending) {
+      if (mounted) {
+        showAppFeedback(context, message: '当前已有任务运行中，稍后再继续');
+      }
+      return false;
+    }
+    final model = ref.read(selectedModelProvider(widget.agentId));
+    final pMode = ref.read(permissionModeProvider);
+    final variant = _selectedVariantFor(model);
+    final settings = ref.read(goalSettingsProvider(_chatKey));
+    final started = await ref
+        .read(chatProvider(_chatKey).notifier)
+        .resumeGoal(
+          settings: settings,
+          model: model,
+          permissionMode: pMode,
+          variant: variant,
+        );
+    if (started) {
+      ref.invalidate(sessionListProvider(_sessionListKey));
+      _scrollToBottom();
+    }
+    return started;
   }
 
   String? _selectedVariantFor(ModelInfo? model, {String? selected}) {
@@ -1284,6 +1339,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
         agentId: widget.agentId,
         projectId: widget.projectId,
         onStartGoal: _startGoalTask,
+        onResumeGoal: _resumeGoalTask,
       ),
     );
   }
@@ -1658,6 +1714,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                   ),
                                   selectedModel: selectedModel,
                                   availableModels: availableModels,
+                                  imageOptions: _imageOptions,
+                                  onUpdateImageOptions: (value) =>
+                                      setState(() => _imageOptions = value),
                                   currentPlanMode: currentPlanMode,
                                   planHistory: planHistory,
                                   goalSettings: goalSettings,
@@ -1674,9 +1733,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                   onSaveCompactionThreshold:
                                       _saveCompactionThreshold,
                                   onSend: _send,
-                                  onStop: () => ref
-                                      .read(chatProvider(_chatKey).notifier)
-                                      .cancelCurrentTask(),
+                                  onStop: _stopCurrentTask,
                                   onDeleteQueueItem: (item) => ref
                                       .read(chatProvider(_chatKey).notifier)
                                       .deleteQueueItem(item),
@@ -1734,6 +1791,17 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                           ).notifier,
                                         )
                                         .select(m);
+                                    // 视频模型需要设备上的 FFmpeg 抽首帧封面：
+                                    // 切过去时检查一次，缺了就引导下载。
+                                    if (m?.supportsVideoOutput == true) {
+                                      unawaited(
+                                        ensureFfmpegForVideo(
+                                          context: context,
+                                          ref: ref,
+                                          machineId: widget.machineId,
+                                        ),
+                                      );
+                                    }
                                   },
                                   onAddFile: (f) {
                                     ref
@@ -2247,10 +2315,12 @@ class _MessageAreaState extends ConsumerState<_MessageArea> {
               last: boundary.$2,
               surfaceLast: boundary.$3,
               animateEvent: _animateEvents.remove(msg.id),
-              stopping: stopping && msg.taskId == stoppingTaskId,
+              stopping: widget.stopping,
               groupThinking: layout.thinking[msg.id],
               thinkingStreaming: layout.thinkingStreaming.contains(msg.id),
               showToolHeader: layout.toolHeaderOwners.contains(msg.id),
+              planCard: layout.planCards[msg.id],
+              showPlanCard: layout.planCards.containsKey(msg.id),
               operationTitle: msg.id == operationOwnerId
                   ? widget.operationTitle
                   : null,
@@ -2420,6 +2490,10 @@ class _ContinuousReplySegment extends StatelessWidget {
   final String? groupThinking;
   final bool thinkingStreaming;
   final bool showToolHeader;
+  final bool showPlanCard;
+
+  /// 本段要渲染的计划（位置固定在段末）。为 null 时不渲染任务卡片。
+  final PlanInfo? planCard;
   final String? operationTitle;
   final List<ChatOperationStep> operationSteps;
   final ValueChanged<String>? onRetryHistory;
@@ -2434,6 +2508,8 @@ class _ContinuousReplySegment extends StatelessWidget {
     this.groupThinking,
     this.thinkingStreaming = false,
     this.showToolHeader = true,
+    this.showPlanCard = true,
+    this.planCard,
     this.operationTitle,
     this.operationSteps = const [],
     this.onRetryHistory,
@@ -2503,12 +2579,17 @@ class _ContinuousReplySegment extends StatelessWidget {
                               message: message,
                               animate: animateEvent,
                             )
+                          : isInlineUserInsert(message)
+                          ? _InlineUserInsert(message: message)
                           : _BubbleContent(
                               message: message,
                               isUser: false,
                               embedded: true,
                               // 合并后统计行与复制按钮只出现在整段末尾。
                               showStats: closesSurface,
+                              // 任务卡片只在被标记为本段拥有者的消息上渲染一次。
+                              showPlanCard: showPlanCard,
+                              planCard: planCard,
                               showToolHeader: showToolHeader,
                             ),
                     ),
@@ -2686,6 +2767,8 @@ Widget buildContinuousReplyTestSurface(List<ChatMessage> messages) {
               messages[i].id,
             ),
             showToolHeader: layout.toolHeaderOwners.contains(messages[i].id),
+            planCard: layout.planCards[messages[i].id],
+            showPlanCard: layout.planCards.containsKey(messages[i].id),
           )
         else
           _ContinuousReplySegment(
@@ -2696,6 +2779,98 @@ Widget buildContinuousReplyTestSurface(List<ChatMessage> messages) {
           ),
     ],
   );
+}
+
+class _InlineUserInsert extends StatefulWidget {
+  final ChatMessage message;
+  const _InlineUserInsert({required this.message});
+
+  @override
+  State<_InlineUserInsert> createState() => _InlineUserInsertState();
+}
+
+class _InlineUserInsertState extends State<_InlineUserInsert> {
+  bool _expanded = false;
+  static const _collapsedLines = 2;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = ImageGenerationOptions.stripPromptArgs(
+      widget.message.content,
+    ).trim();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        decoration: BoxDecoration(
+          color: AppColors.inputBackground,
+          borderRadius: AppRadius.smRadius,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 3,
+              height: 34,
+              margin: const EdgeInsets.only(top: 2, right: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '你 · 已追加到当前任务',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  if (text.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      text,
+                      maxLines: _expanded ? null : _collapsedLines,
+                      overflow: _expanded
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.6,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    if (_needsToggle(text))
+                      GestureDetector(
+                        onTap: () => setState(() => _expanded = !_expanded),
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 3),
+                          child: Text(
+                            _expanded ? '收起' : '展开',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _needsToggle(String text) =>
+      text.length > 46 || '\n'.allMatches(text).length >= _collapsedLines;
 }
 
 class _InsertedContextNode extends StatelessWidget {
@@ -2986,7 +3161,9 @@ class _MCPToolsButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: AppRadius.smRadius,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: AppColors.inputBackground,
           borderRadius: AppRadius.smRadius,
@@ -3408,29 +3585,196 @@ class _ArtifactPreview extends StatelessWidget {
 
   const _ArtifactPreview({required this.taskId, required this.artifacts});
 
+  /// 多张图片按张数分列：2/3/4 张两列，更多三列。单张保持大图。
+  int _columnsFor(int count) {
+    if (count <= 4) return 2;
+    return 3;
+  }
+
+  /// 视频首帧封面：只作为播放卡片的封面，不单独算一张生成图片。
+  bool _isPoster(AiArtifact artifact) =>
+      artifact.filename.endsWith('.poster.jpg');
+
+  String get _labels {
+    final videos = artifacts.where((item) => item.isVideo).length;
+    final images = artifacts
+        .where((item) => item.isImage && !_isPoster(item))
+        .length;
+    if (videos > 0 && images == 0) {
+      return videos > 1 ? '生成视频 · $videos 个' : '生成视频';
+    }
+    if (videos > 0) return '生成视频 · $videos 个 · 图片 $images 张';
+    if (images > 0) return images > 1 ? '生成图片 · $images 张' : '生成图片';
+    return '生成文件';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final videos = artifacts.where((item) => item.isVideo).toList();
+    final posters = artifacts
+        .where((item) => item.isImage && _isPoster(item))
+        .toList();
+    final images = artifacts
+        .where((item) => item.isImage && !_isPoster(item))
+        .toList();
+    final others = artifacts
+        .where((item) => !item.isImage && !item.isVideo)
+        .toList();
+    final grid = images.length > 1;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 8),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
           child: Text(
-            '生成文件',
-            style: TextStyle(
+            _labels,
+            style: const TextStyle(
               fontSize: 12,
               color: AppColors.textMuted,
               fontWeight: FontWeight.w600,
             ),
           ),
         ),
-        ...artifacts.map(
-          (artifact) => Padding(
+        for (final video in videos)
+          Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: _ArtifactTile(taskId: taskId, artifact: artifact),
+            child: _ArtifactVideoCard(
+              taskId: taskId,
+              artifact: video,
+              poster: posters
+                  .where(
+                    (item) =>
+                        item.filename ==
+                        '${video.filename.replaceAll(RegExp(r'\.[^.]+$'), '')}.poster.jpg',
+                  )
+                  .firstOrNull,
+            ),
+          ),
+        if (grid)
+          GridView.count(
+            crossAxisCount: _columnsFor(images.length),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            children: [
+              for (final artifact in images)
+                _ArtifactImageCard(
+                  taskId: taskId,
+                  artifact: artifact,
+                  compact: true,
+                ),
+            ],
+          )
+        else
+          for (final artifact in images)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _ArtifactImageCard(taskId: taskId, artifact: artifact),
+            ),
+        for (final artifact in others)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _ArtifactFileCard(taskId: taskId, artifact: artifact),
+          ),
+      ],
+    );
+  }
+}
+
+/// 生成视频的卡片：应用内播放，视频经我们的下载通道取回，
+/// 不打开上游中转站的临时地址（那种地址需要鉴权且会过期）。
+class _ArtifactVideoCard extends StatelessWidget {
+  final String? taskId;
+  final AiArtifact artifact;
+  final AiArtifact? poster;
+
+  const _ArtifactVideoCard({
+    required this.taskId,
+    required this.artifact,
+    this.poster,
+  });
+
+  Future<void> _open(BuildContext context) async {
+    final id = taskId;
+    if (id == null || id.isEmpty) return;
+    // 各平台都走应用内播放器：视频经我们的下载通道取回，桌面端
+    // 控制栏常显在画面下方，移动端为沉浸式浮层。
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ArtifactVideoPlayerPage(taskId: id, artifact: artifact),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final posterArtifact = poster;
+    final id = taskId;
+    return ClipRRect(
+      borderRadius: AppRadius.smRadius,
+      child: Material(
+        color: AppColors.surfaceElevated,
+        child: InkWell(
+          onTap: () => _open(context),
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (posterArtifact != null && id != null && id.isNotEmpty)
+                  FutureBuilder<Uint8List>(
+                    future: ArtifactDownloadService.fetchBytes(
+                      taskId: id,
+                      artifact: posterArtifact,
+                    ),
+                    builder: (context, snapshot) {
+                      final bytes = snapshot.data;
+                      if (bytes == null) {
+                        return const ColoredBox(color: Color(0xFF11161F));
+                      }
+                      return Image.memory(bytes, fit: BoxFit.cover);
+                    },
+                  )
+                else
+                  const ColoredBox(color: Color(0xFF11161F)),
+                const Center(
+                  child: Icon(
+                    Icons.play_circle_outline_rounded,
+                    color: Colors.white,
+                    size: 44,
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.45),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      child: Text(
+                        artifact.filename,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -3440,28 +3784,77 @@ class _InlineFilePreview extends StatelessWidget {
 
   const _InlineFilePreview({required this.files});
 
+  /// 1 张铺满，2/4 张两列，其余三列；与设计稿的 1/2/4 网格一致。
+  int get _columns {
+    if (_pictureCount <= 1) return 1;
+    if (_pictureCount <= 4) return 2;
+    return 3;
+  }
+
+  /// 首帧封面是视频的展示素材，不单独算一张生成图片。
+  bool _isPoster(AiOutputFile file) =>
+      file.filename.endsWith('.poster.jpg');
+
+  List<AiOutputFile> get _videos =>
+      files.where((item) => item.isVideo).toList();
+
+  List<AiOutputFile> get _pictures =>
+      files.where((item) => item.isImage && !_isPoster(item)).toList();
+
+  int get _pictureCount => _pictures.length;
+
+  String get _labels {
+    final videos = _videos.length;
+    final pictures = _pictureCount;
+    if (videos > 0 && pictures == 0) {
+      return videos > 1 ? '生成视频 · $videos 个' : '生成视频';
+    }
+    if (videos > 0) {
+      return '生成视频 · $videos 个 · 图片 $pictures 张';
+    }
+    return pictures > 1 ? '生成图片 · $pictures 张' : '生成图片';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 8),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
           child: Text(
-            '生成图片',
-            style: TextStyle(
+            _labels,
+            style: const TextStyle(
               fontSize: 12,
               color: AppColors.textMuted,
               fontWeight: FontWeight.w600,
             ),
           ),
         ),
-        ...files.map(
-          (file) => Padding(
+        for (final file in _videos)
+          Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: _InlineImageCard(file: file),
+            child: _InlineVideoCard(
+              file: file,
+              poster: files
+                  .where((item) => item.isImage && _isPoster(item))
+                  .firstOrNull,
+            ),
           ),
-        ),
+        if (_pictureCount == 1)
+          _InlineImageCard(file: _pictures.first)
+        else if (_pictureCount > 1)
+          GridView.count(
+            crossAxisCount: _columns,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            children: [
+              for (final file in _pictures)
+                _InlineImageCard(file: file, compact: true),
+            ],
+          ),
       ],
     );
   }
@@ -3517,9 +3910,10 @@ class _ImageGenerationProgressCardState
       if (hint.contains('重试')) return hint;
       return hint;
     }
+    final video = widget.info.modelName.toLowerCase().contains('video');
     if (_elapsed.inSeconds < 3) return '准备提示词';
-    if (_elapsed.inSeconds < 8) return '提交生图请求';
-    if (_elapsed.inSeconds < 35) return '图片生成中';
+    if (_elapsed.inSeconds < 8) return video ? '提交视频请求' : '提交生图请求';
+    if (_elapsed.inSeconds < 35) return video ? '视频生成中' : '图片生成中';
     return '上游较慢，正在等待';
   }
 
@@ -3583,8 +3977,10 @@ class _ImageGenerationProgressCardState
                               color: AppColors.primary.withValues(alpha: 0.18),
                             ),
                           ),
-                          child: const Icon(
-                            Icons.image_outlined,
+                          child: Icon(
+                            widget.info.modelName.toLowerCase().contains('video')
+                                ? Icons.movie_creation_outlined
+                                : Icons.image_outlined,
                             color: AppColors.primary,
                             size: 26,
                           ),
@@ -3609,9 +4005,11 @@ class _ImageGenerationProgressCardState
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(width: 8),
-                    const Expanded(
+                    Expanded(
                       child: Text(
-                        '正在生成图片',
+                        widget.info.modelName.toLowerCase().contains('video')
+                            ? '正在生成视频'
+                            : '正在生成图片',
                         style: TextStyle(
                           fontSize: 13,
                           color: AppColors.textPrimary,
@@ -3656,27 +4054,118 @@ class _ImageGenerationProgressCardState
   }
 }
 
-class _ArtifactTile extends StatelessWidget {
-  final String? taskId;
-  final AiArtifact artifact;
+class _InlineVideoCard extends StatelessWidget {
+  final AiOutputFile file;
+  final AiOutputFile? poster;
+  const _InlineVideoCard({required this.file, this.poster});
 
-  const _ArtifactTile({required this.taskId, required this.artifact});
+  /// 只有落盘成产物的视频才能在我们自己的下载通道里播放。这里拿到的是
+  /// 未落盘的回退数据（上游中转站的临时地址，需要鉴权且会过期），
+  /// 打开必然失败，直接提示重新生成，不再把用户送去上游网页。
+  void _open(BuildContext context) {
+    showAppFeedback(
+      context,
+      message: '该视频未保存到设备上，无法在应用内播放；请重新生成一次',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (artifact.isImage) {
-      return _ArtifactImageCard(taskId: taskId, artifact: artifact);
+    final posterBytes = poster?.imageBytes;
+    if (posterBytes != null) {
+      return ClipRRect(
+        borderRadius: AppRadius.smRadius,
+        child: Material(
+          color: AppColors.surfaceElevated,
+          child: InkWell(
+            onTap: () => _open(context),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.memory(posterBytes, fit: BoxFit.cover),
+                  const Center(
+                    child: Icon(
+                      Icons.play_circle_outline_rounded,
+                      color: Colors.white,
+                      size: 42,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
     }
-    return _ArtifactFileCard(taskId: taskId, artifact: artifact);
+    return Material(
+      color: AppColors.surfaceElevated,
+      borderRadius: AppRadius.smRadius,
+      child: InkWell(
+        borderRadius: AppRadius.smRadius,
+        onTap: () => _open(context),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: AppRadius.smRadius,
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.play_circle_outline_rounded,
+                color: AppColors.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      file.filename,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    const Text(
+                      '生成视频 · 点击播放',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
 class _InlineImageCard extends StatelessWidget {
   final AiOutputFile file;
 
-  const _InlineImageCard({required this.file});
+  /// 网格里的紧凑样式：方形格子 + 底部浮层操作。
+  final bool compact;
+
+  const _InlineImageCard({required this.file, this.compact = false});
 
   Widget _image({double? width, double? height, BoxFit fit = BoxFit.cover}) {
+    final fallbackHeight = compact ? null : 220.0;
+    Widget broken() => SizedBox(
+      height: fallbackHeight,
+      child: const Center(child: Icon(Icons.broken_image_outlined)),
+    );
     final bytes = file.imageBytes;
     if (bytes != null) {
       return Image.memory(
@@ -3684,10 +4173,7 @@ class _InlineImageCard extends StatelessWidget {
         width: width,
         height: height,
         fit: fit,
-        errorBuilder: (_, __, ___) => const SizedBox(
-          height: 220,
-          child: Center(child: Icon(Icons.broken_image_outlined)),
-        ),
+        errorBuilder: (_, __, ___) => broken(),
       );
     }
     return Image.network(
@@ -3695,10 +4181,7 @@ class _InlineImageCard extends StatelessWidget {
       width: width,
       height: height,
       fit: fit,
-      errorBuilder: (_, __, ___) => const SizedBox(
-        height: 220,
-        child: Center(child: Icon(Icons.broken_image_outlined)),
-      ),
+      errorBuilder: (_, __, ___) => broken(),
     );
   }
 
@@ -3738,8 +4221,23 @@ class _InlineImageCard extends StatelessWidget {
     );
   }
 
+  /// 网格里的紧凑卡片：方形图片 + 底部操作浮层（放大 / 保存）。
+  Widget _buildCompact(BuildContext context) {
+    return ClipRRect(
+      borderRadius: AppRadius.smRadius,
+      child: Material(
+        color: AppColors.surfaceElevated,
+        child: InkWell(
+          onTap: () => _open(context),
+          child: _image(fit: BoxFit.cover),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (compact) return _buildCompact(context);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -3937,8 +4435,13 @@ class _ArtifactFileCardState extends ConsumerState<_ArtifactFileCard> {
 class _ArtifactImageCard extends StatefulWidget {
   final String? taskId;
   final AiArtifact artifact;
+  final bool compact;
 
-  const _ArtifactImageCard({required this.taskId, required this.artifact});
+  const _ArtifactImageCard({
+    required this.taskId,
+    required this.artifact,
+    this.compact = false,
+  });
 
   @override
   State<_ArtifactImageCard> createState() => _ArtifactImageCardState();
@@ -4008,6 +4511,23 @@ class _ArtifactImageCardState extends State<_ArtifactImageCard> {
       builder: (context, snapshot) {
         if (snapshot.hasData) {
           final bytes = snapshot.data!;
+          if (widget.compact) {
+            return ClipRRect(
+              borderRadius: AppRadius.smRadius,
+              child: Material(
+                color: AppColors.surfaceElevated,
+                child: InkWell(
+                  onTap: () => _open(bytes),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Image.memory(bytes, fit: BoxFit.cover),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -4347,6 +4867,11 @@ class _BubbleContent extends ConsumerWidget {
 
   /// 连续回复合并成一段时，统计行与复制按钮只在段末渲染一次。
   final bool showStats;
+  /// 连续回复合并成一段时，任务卡片（执行计划）只在段内出现一次。
+  final bool showPlanCard;
+
+  /// 本段要渲染的计划（位置固定在段末）。
+  final PlanInfo? planCard;
 
   /// 无定位工具记录的标题在合并段里只出现一次。
   final bool showToolHeader;
@@ -4355,19 +4880,26 @@ class _BubbleContent extends ConsumerWidget {
     required this.isUser,
     this.embedded = false,
     this.showStats = true,
+    this.showPlanCard = true,
+    this.planCard,
     this.showToolHeader = true,
   });
 
+  /// 本段生效的计划：合并时取整段的计划，否则取当前消息自己的。
+  PlanInfo? get _effectivePlan => planCard ?? message.plan;
+
   bool get _shouldShowPlanSummary {
-    final plan = message.plan;
-    if (!message.hasPlanBinding || plan == null || plan.isEmpty) return false;
+    final plan = _effectivePlan;
+    if (plan == null || plan.isEmpty) return false;
+    if (planCard == null && !message.hasPlanBinding) return false;
     return plan.status == 'completed' &&
         message.state != MessageState.streaming;
   }
 
   bool get _shouldShowPlanCard {
-    final plan = message.plan;
-    if (!message.hasPlanBinding || plan == null || plan.isEmpty) return false;
+    final plan = _effectivePlan;
+    if (plan == null || plan.isEmpty) return false;
+    if (planCard == null && !message.hasPlanBinding) return false;
     return plan.status != 'completed' ||
         message.state == MessageState.streaming;
   }
@@ -4467,7 +4999,13 @@ class _BubbleContent extends ConsumerWidget {
               child: message.content.isEmpty
                   ? const SizedBox(height: 6)
                   : MessageRenderer(
-                      content: message.content,
+                      // 用户消息显示前剥掉生图参数尾巴（--n=3 等），
+                      // 参数在参数条上已有，正文只呈现用户输入。
+                      content: isUser
+                          ? ImageGenerationOptions.stripPromptArgs(
+                              message.content,
+                            )
+                          : message.content,
                       isUser: isUser,
                       settings: settings,
                     ),
@@ -4561,16 +5099,6 @@ class _BubbleContent extends ConsumerWidget {
                 statusHint: message.statusHint,
               ),
             ),
-          if (!isUser && _shouldShowPlanCard)
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                14,
-                hasContentBlocks ? 2 : 0,
-                14,
-                hasFiles ? 8 : 10,
-              ),
-              child: _PlanCard(plan: message.plan!),
-            ),
           if (!isUser && _shouldShowPlanSummary)
             Padding(
               padding: EdgeInsets.fromLTRB(
@@ -4579,7 +5107,7 @@ class _BubbleContent extends ConsumerWidget {
                 14,
                 hasFiles ? 8 : 10,
               ),
-              child: _CompletedPlanSummary(plan: message.plan!),
+              child: _CompletedPlanSummary(plan: _effectivePlan!),
             ),
           if (!isUser && message.artifacts.isNotEmpty)
             Padding(
@@ -4600,6 +5128,13 @@ class _BubbleContent extends ConsumerWidget {
               message.state == MessageState.done &&
               message.content.isNotEmpty)
             _buildStats(settings),
+          // 任务卡片（执行计划）在连续合并的整段里只出现一次，且始终挂在段末：
+          // 计划常只在靠前轮次出现，若按消息自身挂载会插进两段正文中间。
+          if (!isUser && _shouldShowPlanCard && showPlanCard)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+              child: _PlanCard(plan: _effectivePlan!),
+            ),
         ],
       ),
     );
@@ -4784,10 +5319,11 @@ class _BubbleContent extends ConsumerWidget {
 
   List<ChatMessageBlock> get _displayBlocks {
     if (isUser) {
-      if (message.content.isEmpty) return const [];
-      return [
-        ChatMessageBlock.text(id: '${message.id}_text', text: message.content),
-      ];
+      // 发送时生图参数（--n=2 等）会追加进提示词原文并落库，历史重建会带回。
+      // 这里剥掉，用户看到的是自己输入的内容。
+      final text = ImageGenerationOptions.stripPromptArgs(message.content);
+      if (text.isEmpty) return const [];
+      return [ChatMessageBlock.text(id: '${message.id}_text', text: text)];
     }
     if (_hasUnpositionedTools) {
       final textBlocks = message.blocks
@@ -6197,6 +6733,10 @@ class _InputArea extends ConsumerStatefulWidget {
   final String projectPrompt;
   final ModelInfo? selectedModel;
   final List<ModelInfo> availableModels;
+
+  /// 生图参数（尺寸/张数/质量/格式）。选中生图模型时由参数条维护。
+  final ImageGenerationOptions imageOptions;
+  final ValueChanged<ImageGenerationOptions> onUpdateImageOptions;
   final String currentPlanMode;
   final List<_PlanBatchEntry> planHistory;
   final GoalSettings goalSettings;
@@ -6239,6 +6779,8 @@ class _InputArea extends ConsumerStatefulWidget {
     required this.projectPrompt,
     required this.selectedModel,
     required this.availableModels,
+    required this.imageOptions,
+    required this.onUpdateImageOptions,
     required this.currentPlanMode,
     required this.planHistory,
     required this.goalSettings,
@@ -6732,7 +7274,9 @@ class _InputAreaState extends ConsumerState<_InputArea> {
                 ),
               ),
             ),
-          // 工具栏：附件 + 模型选择
+          // 工具栏：附件 + 模型选择。生图模式只保留必要的几项，
+          // 其余（目标 / 模式 / 测速 / 审批 / 项目提示词 / 项目记忆 / 计划历史 / MCP）
+          // 与生图无关，用户切换模型时自动隐藏，减少干扰。
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: SingleChildScrollView(
@@ -6744,10 +7288,9 @@ class _InputAreaState extends ConsumerState<_InputArea> {
                     onTap: widget.onPickFiles,
                     borderRadius: AppRadius.smRadius,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 5,
-                      ),
+                      height: 28,
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
                       decoration: BoxDecoration(
                         color: AppColors.inputBackground,
                         borderRadius: AppRadius.smRadius,
@@ -6774,65 +7317,85 @@ class _InputAreaState extends ConsumerState<_InputArea> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  _ModeBadge(mode: widget.currentPlanMode),
-                  const SizedBox(width: 8),
-                  _GoalSettingsButton(
-                    settings: widget.goalSettings,
-                    progress: widget.goalProgress,
-                    onTap: widget.onOpenGoalSettings,
-                  ),
-                  const SizedBox(width: 8),
+                  // 生图参数 chips：生图模型下在工具栏同一行展开，右滑可见。
+                  // 非生图模型时整段不出现。
+                  if (widget.selectedModel?.supportsImageOutput == true ||
+                      widget.selectedModel?.supportsVideoOutput == true) ...[
+                    ..._ImageOptionsBar(
+                      options: widget.imageOptions,
+                      capabilities: widget.selectedModel?.imageCapabilities,
+                      video: widget.selectedModel?.supportsVideoOutput == true,
+                      onChange: widget.onUpdateImageOptions,
+                    ).buildChips(context),
+                    const SizedBox(width: 6),
+                  ],
+                  if (widget.selectedModel?.supportsImageOutput != true &&
+                      widget.selectedModel?.supportsVideoOutput != true) ...[
+                    _ModeBadge(mode: widget.currentPlanMode),
+                    const SizedBox(width: 8),
+                    _GoalSettingsButton(
+                      settings: widget.goalSettings,
+                      progress: widget.goalProgress,
+                      onTap: widget.onOpenGoalSettings,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   // 模型选择器
                   _ModelSelector(
                     selectedModel: widget.selectedModel,
                     availableModels: widget.availableModels,
                     onSelect: widget.onSelectModel,
                   ),
-                  const SizedBox(width: 6),
-                  _ModelLatencyTestButton(
-                    enabled: widget.selectedModel != null && !widget.sending,
-                    onTap: _showModelLatencyTest,
-                  ),
-                  // 思考强度（仅当前模型支持时显示）
-                  if (widget.selectedModel != null &&
-                      widget.selectedModel!.hasVariants) ...[
+                  // 生图模式下工具栏只保留附件 + 模型 + 参数条，
+                  // 其余控件与生图无关，切上去直接隐藏。
+                  if (widget.selectedModel?.supportsImageOutput != true &&
+                      widget.selectedModel?.supportsVideoOutput != true) ...[
                     const SizedBox(width: 6),
-                    _VariantSelector(
-                      variants: widget.selectedModel!.variants,
-                      selected: normalizeThinkingVariant(
-                        widget.selectedModel!.variants,
-                        ref.watch(selectedVariantProvider(widget.agentId)),
-                      ),
-                      onSelect: (v) => ref
-                          .read(
-                            selectedVariantProvider(widget.agentId).notifier,
-                          )
-                          .select(v),
+                    _ModelLatencyTestButton(
+                      enabled: widget.selectedModel != null && !widget.sending,
+                      onTap: _showModelLatencyTest,
                     ),
-                  ],
-                  const SizedBox(width: 8),
-                  // 审批模式
-                  _PermissionModeButton(
-                    mode: ref.watch(permissionModeProvider),
-                    onChanged: (m) =>
-                        ref.read(permissionModeProvider.notifier).set(m),
-                  ),
-                  const SizedBox(width: 8),
-                  _ProjectPromptButton(
-                    hasPrompt: widget.projectPrompt.trim().isNotEmpty,
-                    onTap: widget.onEditProjectPrompt,
-                  ),
-                  if (projectMemoryFeatureEnabled) ...[
+                    // 思考强度（仅当前模型支持时显示）
+                    if (widget.selectedModel != null &&
+                        widget.selectedModel!.hasVariants) ...[
+                      const SizedBox(width: 6),
+                      _VariantSelector(
+                        variants: widget.selectedModel!.variants,
+                        selected: normalizeThinkingVariant(
+                          widget.selectedModel!.variants,
+                          ref.watch(selectedVariantProvider(widget.agentId)),
+                        ),
+                        onSelect: (v) => ref
+                            .read(
+                              selectedVariantProvider(widget.agentId).notifier,
+                            )
+                            .select(v),
+                      ),
+                    ],
                     const SizedBox(width: 8),
-                    _ProjectMemoryButton(onTap: widget.onOpenProjectMemory),
+                    // 审批模式
+                    _PermissionModeButton(
+                      mode: ref.watch(permissionModeProvider),
+                      onChanged: (m) =>
+                          ref.read(permissionModeProvider.notifier).set(m),
+                    ),
+                    const SizedBox(width: 8),
+                    _ProjectPromptButton(
+                      hasPrompt: widget.projectPrompt.trim().isNotEmpty,
+                      onTap: widget.onEditProjectPrompt,
+                    ),
+                    if (projectMemoryFeatureEnabled) ...[
+                      const SizedBox(width: 8),
+                      _ProjectMemoryButton(onTap: widget.onOpenProjectMemory),
+                    ],
+                    const SizedBox(width: 8),
+                    _PlanHistoryButton(
+                      count: widget.planHistory.length,
+                      onTap: () => _showPlanHistory(context),
+                    ),
+                    const SizedBox(width: 8),
+                    _MCPToolsButton(onTap: () => _showMCPTools(context)),
                   ],
-                  const SizedBox(width: 8),
-                  _PlanHistoryButton(
-                    count: widget.planHistory.length,
-                    onTap: () => _showPlanHistory(context),
-                  ),
-                  const SizedBox(width: 8),
-                  _MCPToolsButton(onTap: () => _showMCPTools(context)),
                 ],
               ),
             ),
@@ -7324,7 +7887,6 @@ class _InputAreaState extends ConsumerState<_InputArea> {
 }
 
 class _GoalSettingsButton extends StatelessWidget {
-  static const double _height = 28;
 
   final GoalSettings settings;
   final _GoalProgressSummary progress;
@@ -7355,19 +7917,26 @@ class _GoalSettingsButton extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       borderRadius: AppRadius.smRadius,
-      child: SizedBox(
-        height: _height,
+      child: RunningGlowBorder(
+        active: running,
+        color: AppColors.statusSuccess,
+        background: background,
+        borderRadius: AppRadius.smRadius,
         child: Container(
+          height: 28,
+          alignment: Alignment.center,
+          decoration: running
+              ? null
+              : BoxDecoration(
+                  color: background,
+                  borderRadius: AppRadius.smRadius,
+                  border: Border.all(
+                    color: active
+                        ? AppColors.statusSuccess.withValues(alpha: 0.24)
+                        : (hasGoal ? AppColors.primaryMuted : AppColors.border),
+                  ),
+                ),
           padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: AppRadius.smRadius,
-            border: Border.all(
-              color: active
-                  ? AppColors.statusSuccess.withValues(alpha: 0.24)
-                  : (hasGoal ? AppColors.primaryMuted : AppColors.border),
-            ),
-          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -7436,11 +8005,13 @@ class _GoalSettingsSheet extends ConsumerStatefulWidget {
   final String agentId;
   final String projectId;
   final Future<bool> Function(String goal, int maxIterations) onStartGoal;
+  final Future<bool> Function(String goal, int maxIterations)? onResumeGoal;
 
   const _GoalSettingsSheet({
     required this.agentId,
     required this.projectId,
     required this.onStartGoal,
+    this.onResumeGoal,
   });
 
   @override
@@ -7589,6 +8160,33 @@ class _GoalSettingsSheetState extends ConsumerState<_GoalSettingsSheet> {
       final maxIterations = _maxIterationsDraft();
       await notifier.saveContent(draft, maxIterations: maxIterations);
     });
+  }
+
+  /// 继续执行暂停的目标：从上次已完成的轮次接着跑，不从头开始。
+  Future<void> _resume() async {
+    final resume = widget.onResumeGoal;
+    if (resume == null || _busy) return;
+    final draft = _controller.text.trim();
+    if (draft.isEmpty) {
+      showAppFeedback(context, message: '请先填写目标内容');
+      return;
+    }
+    var started = false;
+    await _run(() async {
+      final notifier = ref.read(goalSettingsProvider(_key).notifier);
+      final maxIterations = _maxIterationsDraft();
+      if (draft != ref.read(goalSettingsProvider(_key)).content ||
+          maxIterations != ref.read(goalSettingsProvider(_key)).maxIterations) {
+        await notifier.saveContent(draft, maxIterations: maxIterations);
+      }
+      started = await resume(draft, maxIterations);
+      if (started) {
+        await notifier.setEnabled(true);
+      }
+    });
+    if (started && mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _clear() async {
@@ -7892,6 +8490,25 @@ class _GoalSettingsSheetState extends ConsumerState<_GoalSettingsSheet> {
                   ),
                 ),
               ],
+              // 目标被停止或达到最大轮数暂停后，提供「继续执行」，
+              // 从上次已完成的轮次接着跑。运行中或瞬断重试时不显示。
+              if (latestGoalEntry != null &&
+                  latestGoalEntry.type == 'goal_paused' &&
+                  !latestGoalEntry.isTransientRetry &&
+                  widget.onResumeGoal != null &&
+                  settings.hasContent) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _busy ? null : _resume,
+                    icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                    label: Text(
+                      '继续执行（从第 ${latestGoalEntry.iteration + 1} 轮）',
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -8084,7 +8701,9 @@ class _ModeBadge extends StatelessWidget {
         : AppColors.statusWarningLight;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      height: 28,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: background,
         borderRadius: AppRadius.smRadius,
@@ -8126,7 +8745,9 @@ class _PlanHistoryButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: AppRadius.smRadius,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: hasHistory
               ? AppColors.primaryLight
@@ -8459,6 +9080,512 @@ class _FilePreviewChip extends StatelessWidget {
   }
 }
 
+// 生图参数条：尺寸 / 张数 / 质量 / 格式
+class _ImageOptionsBar extends StatelessWidget {
+  final ImageGenerationOptions options;
+  final ImageGenerationCapabilities? capabilities;
+  final bool video;
+  final ValueChanged<ImageGenerationOptions> onChange;
+
+  const _ImageOptionsBar({
+    required this.options,
+    this.capabilities,
+    this.video = false,
+    required this.onChange,
+  });
+
+  static const _sizeLabels = {
+    '1024x1024': '1:1',
+    '1024x1536': '2:3',
+    '1536x1024': '3:2',
+    '1792x1024': '宽屏',
+    '1024x1792': '竖屏',
+    'auto': '自动',
+  };
+  static const _qualityLabels = {
+    'low': '快速',
+    'medium': '标准',
+    'high': '精细',
+    'standard': '标准',
+    'hd': '高清',
+    'auto': '自动',
+  };
+
+  // 每一项的取值完全由模型能力决定；没有上报时退回到通用默认，
+  // 而不是按 OpenAI 旧列表硬编码——那样 xAI 会显示一堆它不认识的尺寸。
+  List<String> get _sizes =>
+      (capabilities?.sizes.isNotEmpty == true
+          ? capabilities!.sizes
+          : ImageGenerationOptions.sizes);
+  List<String> get _aspectRatios => capabilities?.aspectRatios ?? const [];
+  List<String> get _resolutions => capabilities?.resolutions ?? const [];
+  List<String> get _qualities => (capabilities?.qualities.isNotEmpty == true
+      ? capabilities!.qualities
+      : ImageGenerationOptions.qualities);
+  List<String> get _formats => (capabilities?.formats.isNotEmpty == true
+      ? capabilities!.formats
+      : ImageGenerationOptions.formats);
+  int get _maxCount => capabilities?.maxCount ?? ImageGenerationOptions.maxCount;
+
+  static String _sizeLabel(String value) => _sizeLabels[value] ?? value;
+  static String _qualityLabel(String value) => _qualityLabels[value] ?? value;
+
+  List<int> get _countOptions {
+    const base = [1, 2, 3, 4, 6, 8, 10];
+    return base.where((v) => v <= _maxCount).toList();
+  }
+
+  void _pickSize(BuildContext context) {
+    _showChoices<String>(
+      context,
+      title: '图片尺寸',
+      values: _sizes,
+      selected: options.size,
+      label: (value) => '${_sizeLabel(value)} · $value',
+      onPick: (value) => onChange(
+        value == null
+            ? options.copyWith(clearSize: true)
+            : options.copyWith(size: value),
+      ),
+    );
+  }
+
+  void _pickAspectRatio(BuildContext context) {
+    _showChoices<String>(
+      context,
+      title: '图片比例',
+      values: _aspectRatios,
+      selected: options.aspectRatio,
+      label: (value) => value,
+      onPick: (value) => onChange(
+        value == null
+            ? options.copyWith(clearAspectRatio: true)
+            : options.copyWith(aspectRatio: value),
+      ),
+    );
+  }
+
+  void _pickResolution(BuildContext context) {
+    _showChoices<String>(
+      context,
+      title: '输出分辨率',
+      values: _resolutions,
+      selected: options.resolution,
+      label: (value) => value.toUpperCase(),
+      onPick: (value) => onChange(
+        value == null
+            ? options.copyWith(clearResolution: true)
+            : options.copyWith(resolution: value),
+      ),
+    );
+  }
+
+  void _pickCount(BuildContext context) {
+    _showChoices<int>(
+      context,
+      title: '生成张数',
+      values: _countOptions,
+      selected: options.count,
+      label: (value) => '$value 张',
+      onPick: (value) => onChange(
+        value == null
+            ? options.copyWith(clearCount: true)
+            : options.copyWith(count: value),
+      ),
+    );
+  }
+
+  void _pickQuality(BuildContext context) {
+    _showChoices<String>(
+      context,
+      title: '生成质量',
+      values: _qualities,
+      selected: options.quality,
+      label: (value) => '${_qualityLabel(value)} · $value',
+      onPick: (value) => onChange(
+        value == null
+            ? options.copyWith(clearQuality: true)
+            : options.copyWith(quality: value),
+      ),
+    );
+  }
+
+  void _pickFormat(BuildContext context) {
+    _showChoices<String>(
+      context,
+      title: '图片格式',
+      values: _formats,
+      selected: options.format,
+      label: (value) => value.toUpperCase(),
+      onPick: (value) => onChange(
+        value == null
+            ? options.copyWith(clearFormat: true)
+            : options.copyWith(format: value),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: buildChips(context)),
+    );
+  }
+
+  List<Widget> _videoChips(BuildContext context) => [
+    Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: _ImageOptionChip(
+        label: '时长',
+        value: options.duration == null ? '默认' : '${options.duration} 秒',
+        active: options.duration != null,
+        onTap: () => _showChoices<int>(
+          context,
+          title: '视频时长',
+          values: ImageGenerationOptions.videoDurations,
+          selected: options.duration,
+          label: (value) => '$value 秒',
+          customInput: _DurationInput(
+            initial: options.duration,
+            onSubmit: (value) => onChange(
+              value == null
+                  ? options.copyWith(clearDuration: true)
+                  : options.copyWith(duration: value),
+            ),
+          ),
+          onPick: (value) => onChange(
+            value == null
+                ? options.copyWith(clearDuration: true)
+                : options.copyWith(duration: value),
+          ),
+        ),
+      ),
+    ),
+    Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: _ImageOptionChip(
+        label: '比例',
+        value: options.aspectRatio ?? '默认',
+        active: options.aspectRatio != null,
+        onTap: () => _showChoices<String>(
+          context,
+          title: '视频比例',
+          values: ImageGenerationOptions.videoAspectRatios,
+          selected: options.aspectRatio,
+          label: (value) => value,
+          onPick: (value) => onChange(
+            value == null
+                ? options.copyWith(clearAspectRatio: true)
+                : options.copyWith(aspectRatio: value),
+          ),
+        ),
+      ),
+    ),
+    _ImageOptionChip(
+      label: '分辨率',
+      value: options.resolution ?? '默认',
+      active: options.resolution != null,
+      onTap: () => _showChoices<String>(
+        context,
+        title: '视频分辨率',
+        values: ImageGenerationOptions.videoResolutions,
+        selected: options.resolution,
+        label: (value) => value,
+        onPick: (value) => onChange(
+          value == null
+              ? options.copyWith(clearResolution: true)
+              : options.copyWith(resolution: value),
+        ),
+      ),
+    ),
+  ];
+
+  /// 扁平的 chip 列表，不带外层滚动容器。
+  /// 供工具栏把它们和自己同一行的其他按钮一起放进同一个 horizontal Row，
+  /// 避免 SingleChildScrollView 嵌套导致滚动冲突。
+  List<Widget> buildChips(BuildContext context) {
+    if (video) return _videoChips(context);
+    return <Widget>[
+      // 尺寸与比例互斥：OpenAI 用尺寸，xAI 用比例。
+      if (_sizes.isNotEmpty && options.aspectRatio == null)
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: _ImageOptionChip(
+            label: '尺寸',
+            value: options.size == null ? '默认' : _sizeLabel(options.size!),
+            active: options.size != null,
+            onTap: () => _pickSize(context),
+          ),
+        ),
+      if (_aspectRatios.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: _ImageOptionChip(
+            label: '比例',
+            value: options.aspectRatio ?? '默认',
+            active: options.aspectRatio != null,
+            onTap: () => _pickAspectRatio(context),
+          ),
+        ),
+      if (_resolutions.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: _ImageOptionChip(
+            label: '分辨率',
+            value: options.resolution?.toUpperCase() ?? '默认',
+            active: options.resolution != null,
+            onTap: () => _pickResolution(context),
+          ),
+        ),
+      Padding(
+        padding: const EdgeInsets.only(right: 6),
+        child: _ImageOptionChip(
+          label: '张数',
+          value: options.count == null ? '1' : '${options.count}',
+          active: options.count != null && options.count! > 1,
+          onTap: () => _pickCount(context),
+        ),
+      ),
+      if (_qualities.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: _ImageOptionChip(
+            label: '质量',
+            value: options.quality == null
+                ? '默认'
+                : _qualityLabel(options.quality!),
+            active: options.quality != null,
+            onTap: () => _pickQuality(context),
+          ),
+        ),
+      if (_formats.isNotEmpty)
+        _ImageOptionChip(
+          label: '格式',
+          value: (options.format ?? _formats.first).toUpperCase(),
+          active: options.format != null,
+          onTap: () => _pickFormat(context),
+        ),
+    ];
+  }
+}
+
+void _showChoices<T>(
+  BuildContext context, {
+  required String title,
+  required List<T> values,
+  required T? selected,
+  required String Function(T value) label,
+  required ValueChanged<T?> onPick,
+  Widget? customInput,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: customInput != null,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+            child: Row(
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (final value in values)
+            ListTile(
+              dense: true,
+              title: Text(
+                label(value),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: value == selected
+                      ? AppColors.primary
+                      : AppColors.textPrimary,
+                  fontWeight: value == selected
+                      ? FontWeight.w600
+                      : FontWeight.w400,
+                ),
+              ),
+              trailing: value == selected
+                  ? const Icon(
+                      Icons.check_rounded,
+                      size: 18,
+                      color: AppColors.primary,
+                    )
+                  : null,
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                onPick(value);
+              },
+            ),
+          if (selected != null)
+            ListTile(
+              dense: true,
+              title: const Text(
+                '恢复默认',
+                style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+              ),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                onPick(null);
+              },
+            ),
+          if (customInput != null) customInput,
+          const SizedBox(height: 6),
+        ],
+      ),
+    ),
+  );
+}
+
+class _DurationInput extends StatefulWidget {
+  final int? initial;
+  final ValueChanged<int?> onSubmit;
+  const _DurationInput({required this.initial, required this.onSubmit});
+
+  @override
+  State<_DurationInput> createState() => _DurationInputState();
+}
+
+class _DurationInputState extends State<_DurationInput> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial?.toString() ?? '',
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final text = _controller.text.trim();
+    if (text.isEmpty) {
+      Navigator.of(context).pop();
+      widget.onSubmit(null);
+      return;
+    }
+    final value = int.tryParse(text);
+    if (value == null || value < 1 || value > 15) {
+      setState(() => _error = '请输入 1 到 15 的整数秒');
+      return;
+    }
+    Navigator.of(context).pop();
+    widget.onSubmit(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        4,
+        16,
+        8 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              autofocus: false,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: '自定义秒数',
+                hintText: '1 - 15',
+                errorText: _error,
+                border: const OutlineInputBorder(),
+              ),
+              onSubmitted: (_) => _submit(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(onPressed: _submit, child: const Text('确定')),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImageOptionChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _ImageOptionChip({
+    required this.label,
+    required this.value,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: AppRadius.smRadius,
+      child: Container(
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 9),
+        decoration: BoxDecoration(
+          color: active ? AppColors.primaryLight : AppColors.inputBackground,
+          borderRadius: AppRadius.smRadius,
+          border: Border.all(
+            color: active ? AppColors.primaryMuted : AppColors.border,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.textMuted,
+              ),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                color: active ? AppColors.primary : AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 2),
+            Icon(
+              Icons.expand_more,
+              size: 13,
+              color: active ? AppColors.primary : AppColors.textMuted,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // 模型选择器
 class _ModelSelector extends StatelessWidget {
   final ModelInfo? selectedModel;
@@ -8478,7 +9605,9 @@ class _ModelSelector extends StatelessWidget {
       onTap: () => _showModelPicker(context),
       borderRadius: AppRadius.smRadius,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: selectedModel != null
               ? AppColors.primaryLight
@@ -10930,7 +12059,9 @@ class _VariantSelector extends StatelessWidget {
         for (final v in variants) PopupMenuItem(value: v, child: _item(v)),
       ],
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: selected != null
               ? AppColors.primaryLight
@@ -11009,7 +12140,9 @@ class _PermissionModeButton extends StatelessWidget {
       onTap: () => _showPicker(context),
       borderRadius: AppRadius.smRadius,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.1),
           borderRadius: AppRadius.smRadius,
@@ -11167,7 +12300,9 @@ class _ProjectPromptButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: AppRadius.smRadius,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: hasPrompt ? AppColors.primaryLight : AppColors.inputBackground,
           borderRadius: AppRadius.smRadius,
@@ -11224,7 +12359,9 @@ class _ProjectMemoryButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: AppRadius.smRadius,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        height: 28,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: AppColors.inputBackground,
           borderRadius: AppRadius.smRadius,

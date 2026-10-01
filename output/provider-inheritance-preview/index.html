@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>来源提供商（Provider Inheritance）交互示意</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+    background: #f4f5f7;
+    color: #1a1a1a;
+    padding: 32px 20px 60px;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  .sub { color: #666; font-size: 14px; margin-bottom: 26px; line-height: 1.6; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+  .pane { background: #fff; border-radius: 10px; border: 1px solid #e3e4e8; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+  .pane-head { padding: 18px 22px; border-bottom: 1px solid #eee; }
+  .pane-head .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 4px; margin-bottom: 8px; letter-spacing: .4px; }
+  .before .tag { background: #fdecec; color: #c0392b; }
+  .after .tag { background: #e6f4ea; color: #137333; }
+  .pane-head h2 { font-size: 17px; margin-bottom: 4px; }
+  .pane-head p { font-size: 13px; color: #777; }
+  .pane-body { padding: 22px; }
+
+  .field { margin-bottom: 18px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; color: #333; margin-bottom: 6px; }
+  .field .hint { font-size: 12px; color: #999; margin-top: 5px; line-height: 1.5; }
+  .control { display: flex; align-items: center; gap: 10px; }
+
+  input[type=text], select {
+    width: 100%; padding: 10px 12px; font-size: 13px;
+    border: 1px solid #d0d3d8; border-radius: 6px;
+    background: #fff; color: #1a1a1a; appearance: none;
+  }
+  input[disabled], select[disabled] { background: #f5f5f6; color: #a0a3a8; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px; cursor: pointer; }
+  select:focus { outline: none; border-color: #7c6cf0; box-shadow: 0 0 0 3px rgba(124,108,240,.12); }
+
+  .section-title { font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: .6px; margin: 22px 0 12px; padding-top: 18px; border-top: 1px solid #f0f0f1; }
+
+  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    padding: 7px 14px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    border: 1px solid #d0d3d8; cursor: pointer; background: #fff; color: #555;
+    transition: all .15s ease;
+  }
+  .chip:hover { border-color: #7c6cf0; color: #7c6cf0; }
+  .chip.on { background: #7c6cf0; border-color: #7c6cf0; color: #fff; }
+  .chip:disabled { background: #f5f5f6; color: #c0c2c6; border-color: #e3e4e8; cursor: not-allowed; }
+
+  .manual-cue { font-size: 11px; color: #b45309; background: #fef3e6; border: 1px dashed #e6b877; padding: 4px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  .auto-tag { font-size: 10px; font-weight: 700; color: #137333; background: #e6f4ea; padding: 2px 6px; border-radius: 3px; }
+
+  .effort-state { font-size: 12.5px; line-height: 1.65; padding: 14px 15px; border-radius: 6px; }
+  .empty { background: #fbfcfd; border: 1px dashed #d7dae0; color: #888; }
+  .filled { background: #f3f0ff; border: 1px solid #d9d1f7; color: #4a3d99; }
+  .empty code, .filled code { font-size: 11.5px; }
+
+  .preview { margin-top: 18px; padding: 14px 16px; background: #1e1f24; border-radius: 8px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #c9d1d9; overflow-x: auto; }
+  .preview .c-key { color: #79c0ff; }
+  .preview .c-str { color: #a5d6ff; }
+  .preview-label { font-size: 11px; font-weight: 700; color: #888; letter-spacing: .5px; margin-bottom: 8px; }
+
+  .source-bar {
+    background: linear-gradient(135deg, #eef0ff 0%, #f6f3ff 100%);
+    border: 1px solid #d7d3f7; border-radius: 8px; padding: 14px 16px; margin-bottom: 20px;
+  }
+  .source-bar strong { display: block; font-size: 13px; margin-bottom: 8px; color: #3d3570; }
+  .src-badge { margin-top: 10px; font-size: 12px; color: #4a3d99; display: none; }
+
+  .note { margin-top: 26px; padding: 16px 18px; background: #fffbe8; border: 1px solid #eee3b0; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #6a5a1f; }
+  .note b { color: #4a3a10; }
+
+  @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>来源提供商（Provider Inheritance）</h1>
+  <div class="sub">同一个中转站模型（比如 <code>订阅Grok / Kun</code>）在两种方案下面的设置体验。<b>交互点：</b>左边手填档位；右边先选一次来源，再点模型看档位自动从真实供应商继承。</div>
+
+  <div class="grid">
+    <!-- BEFORE -->
+    <div class="pane before">
+      <div class="pane-head">
+        <span class="tag">现状 · 手动配置</span>
+        <h2>每个模型都让你全部手填</h2>
+        <p>系统不知道 Kun＝Grok，当陌生模型处理。</p>
+      </div>
+      <div class="pane-body">
+        <div class="field">
+          <label>模型 ID</label>
+          <input type="text" value="订阅Grok / Kun" disabled>
+        </div>
+
+        <div class="section-title">上下文窗口</div>
+        <div class="field">
+          <div class="control">
+            <input type="text" placeholder="例如 500000" id="b-ctx">
+            <span class="manual-cue">手填</span>
+          </div>
+          <div class="hint">你不知道该填多少就乱猜，或者去查 xAI 文档抄过来。</div>
+        </div>
+
+        <div class="section-title">思考强度</div>
+        <div class="field">
+          <div class="chip-row">
+            <button class="chip" data-effort="low">低</button>
+            <button class="chip" data-effort="high">高</button>
+          </div>
+          <div class="hint">没有"低/高"两个选项是因为<b>你没填配置</b>。填错档位名（比如 xAI 其实不认"medium"），发出去会被直接报错。</div>
+          <div class="effort-state empty" id="b-effort">
+            当前：<b>没有可调思考档位</b>。<br>你只能想"要不要那块函数"——因为手上没有旋钮。
+          </div>
+        </div>
+
+        <div class="preview-label">附加参数请求体</div>
+        <div class="preview" id="b-req">{}</div>
+      </div>
+    </div>
+
+    <!-- AFTER -->
+    <div class="pane after">
+      <div class="pane-head">
+        <span class="tag">新方案 · 继承来源</span>
+        <h2>选一次来源，模型自动跟上</h2>
+        <p>你告诉系统：这个中转站是从哪家供应商拿的。</p>
+      </div>
+      <div class="pane-body">
+        <div class="source-bar">
+          <strong>来源提供商（provider）</strong>
+          <select id="a-source">
+            <option value="">-- 请选择 --</option>
+            <option value="xai">xAI（Grok）</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+          <div class="src-badge" id="a-src-badge"></div>
+        </div>
+
+        <div class="field">
+          <label>选择模型</label>
+          <select id="a-model">
+            <option value="">-- 先选来源 --</option>
+          </select>
+        </div>
+
+        <div class="section-title">上下文窗口 <span class="auto-tag">按模型自动</span></div>
+        <div class="field">
+          <div class="control">
+            <input type="text" id="a-ctx" disabled value="--">
+            <span class="auto-tag">自动</span>
+          </div>
+          <div class="hint">每个模型的上下文不一样（grok-4.3=100万、grok-build=25.6万），这里按你选的那个模型给它的值，<b>不会用一个供应商统一值盖掉</b>。</div>
+        </div>
+
+        <div class="section-title">思考强度 <span class="auto-tag">档位自动继承</span></div>
+        <div class="field">
+          <div class="chip-row">
+            <button class="chip" id="a-e-low" disabled data-effort="low">低</button>
+            <button class="chip" id="a-e-high" disabled data-effort="high">高</button>
+          </div>
+          <div class="hint">档位是从<b>真实供应商（你选的来源）</b>那边自动拿到的，名称、参数形状都对，不会再你手填。</div>
+          <div class="effort-state empty" id="a-effort">先选来源，再选模型。</div>
+        </div>
+
+        <div class="preview-label">附加参数请求体</div>
+        <div class="preview" id="a-req">{}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>看这里就懂了：</b>两边的<b>上下文数字是一样的</b>（都按模型自己推），但左边的「思考强度」要你一个一个手填，右边只要<b>选一次来源，再选模型</b>，「低/高」两个档位自动从 xAI 那套继承过来——不用记档位名，也不怕填错参数名。
+    <br><br>
+    多做的：中转站页只多一个「来源提供商」下拉框。少做的：之后这个中转站下所有 Grok 模型，不用再挨个手填档位。
+  </div>
+</div>
+
+<script>
+  const MODELS = {
+    xai: [
+      { id: 'Kun', real: 'Grok 4.5 → Kun', ctx: 500000, efforts: [{k:'low',l:'低'},{k:'high',l:'高'}], sample: { low: {reasoningEffort:'low'}, high: {reasoningEffort:'high'} } },
+      { id: 'grok-4.3', real: 'Grok 4.3', ctx: 1000000, efforts: [{k:'low',l:'低'},{k:'high',l:'高'}], sample: { low: {reasoningEffort:'low'}, high: {reasoningEffort:'high'} } },
+      { id: 'grok-build-0.1', real: 'Grok Build 0.1', ctx: 256000, efforts: [{k:'low',l:'低'},{k:'high',l:'高'}], sample: { low: {reasoningEffort:'low'}, high: {reasoningEffort:'high'} } },
+    ],
+    openai: [
+      { id: 'gpt-image-1', real: 'GPT Image 1', ctx: 128000, efforts: [{k:'low',l:'低'},{k:'medium',l:'标准'},{k:'high',l:'高'}], sample: { low: {reasoningEffort:'low'}, high: {reasoningEffort:'high'} } },
+      { id: 'gpt-5.2', real: 'GPT 5.2', ctx: 400000, efforts: [{k:'low',l:'低'},{k:'medium',l:'标准'},{k:'high',l:'高'}], sample: { low: {reasoningEffort:'low'}, high: {reasoningEffort:'high'} } },
+    ],
+    anthropic: [
+      { id: 'claude-sonnet-4.5', real: 'Claude Sonnet 4.5', ctx: 1000000, efforts: [{k:'low',l:'低'},{k:'medium',l:'标准'},{k:'high',l:'高'}], sample: { low: {thinking:{type:'enabled',budgetTokens:8000}}, high: {thinking:{type:'enabled',budgetTokens:16000}} } },
+    ],
+  };
+  const SOURCE_NAME = { xai:'xAI（Grok）', openai:'OpenAI', anthropic:'Anthropic' };
+
+  const bRequest = document.getElementById('b-req');
+  document.querySelectorAll('.before .chip[data-effort]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.before .chip[data-effort]').forEach(c => c.classList.remove('on'));
+      btn.classList.add('on');
+      const eff = btn.dataset.effort;
+      document.getElementById('b-effort').className = 'effort-state filled';
+      document.getElementById('b-effort').innerHTML = `你手动填了「${eff === 'low' ? '低' : '高'}」。<br>这是你<em>自己</em>敲的，如果中转站模型其实不接受 <code>${eff}</code>，就要你自己想办法。`;
+      bRequest.innerHTML = `<span class="c-key">reasoningEffort</span>: <span class="c-str">"${eff}"</span>  <span style="color:#7d8590">← 你自填</span>`;
+    });
+  });
+
+  const srcSel = document.getElementById('a-source');
+  const modelSel = document.getElementById('a-model');
+  const ctxIn = document.getElementById('a-ctx');
+  const eagerLow = document.getElementById('a-e-low');
+  const eagerHigh = document.getElementById('a-e-high');
+  const aState = document.getElementById('a-effort');
+  const aReq = document.getElementById('a-req');
+  const srcBadge = document.getElementById('a-src-badge');
+  let curModel = null;
+
+  function paintAfterState() {
+    const showBoth = curModel && curModel.efforts && curModel.efforts.length >= 2;
+    eagerLow.disabled = !showBoth;
+    eagerHigh.disabled = !showBoth;
+    eagerLow.classList.toggle('on', false);
+    eagerHigh.classList.toggle('on', false);
+    if (!curModel) {
+      aState.className = 'effort-state empty';
+      aState.textContent = '先选来源，再选模型。';
+      aReq.textContent = '{}';
+      return;
+    }
+    aState.className = 'effort-state filled';
+    const names = curModel.efforts.map(e => e.l).join(' / ');
+    aState.innerHTML =
+      `<b>${curModel.real}</b> · 上下文 <b>${curModel.ctx.toLocaleString()}</b><br>` +
+      `可选思考档位：<b>${names}</b>（自动继承自 <b>${SOURCE_NAME[document.querySelector('#a-source').value]}</b>）`;
+    aReq.textContent = '{}';
+  }
+
+  srcSel.addEventListener('change', () => {
+    const s = srcSel.value;
+    curModel = null;
+    modelSel.innerHTML = '<option value="">-- 再选模型 --</option>';
+    if (s && MODELS[s]) {
+      MODELS[s].forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = `${m.id}（${m.real}）`;
+        modelSel.appendChild(opt);
+      });
+      modelSel.disabled = false;
+      modelSel.value = '';
+      srcBadge.style.display = 'block';
+      srcBadge.textContent = `已选来源 ${SOURCE_NAME[s]} → 底下所有这个供应商的模型都会继承它的档位规则。`;
+    } else {
+      modelSel.disabled = true;
+      srcBadge.style.display = 'none';
+    }
+    ctxIn.value = '--';
+    paintAfterState();
+  });
+
+  modelSel.addEventListener('change', () => {
+    const s = srcSel.value;
+    if (!s || !modelSel.value) {
+      curModel = null;
+    } else {
+      curModel = MODELS[s].find(m => m.id === modelSel.value) || null;
+    }
+    ctxIn.value = curModel ? curModel.ctx.toLocaleString() : '--';
+    paintAfterState();
+  });
+
+  [eagerLow, eagerHigh].forEach(btn => btn.addEventListener('click', () => {
+    if (!curModel) return;
+    eagerLow.classList.toggle('on', btn === eagerLow);
+    eagerHigh.classList.toggle('on', btn === eagerHigh);
+    const key = btn.dataset.effort;
+    const param = curModel.sample?.[key];
+    if (!param) return;
+    const raw = JSON.stringify(param, null, 2)
+      .replace(/"([^"]+)":/g, '<span class="c-key">"$1"</span>:')
+      .replace(/: "([^"\\-.ea-zAZ\u4e00-\u9fa5]+)"/g, ': <span class="c-str">"$1"</span>')
+      .replace(/\b(\d+)\b/g, '<span class="c-num">$1</span>');
+    aReq.innerHTML = raw + '  <span style="color:#7d8590">← 自动继承（不用你填）</span>';
+  }));
+</script>
+</body>
+</html>

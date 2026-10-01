@@ -8,7 +8,7 @@ const (
 	defaultSeedEnvironmentPresetsKey = "env_presets"
 	defaultSeedSkillsKey             = "skills_v6"
 	defaultSeedMCPCatalogKey         = "mcp_catalog_v5"
-	defaultSeedRuntimeCatalogKey     = "runtime_catalog_v6"
+	defaultSeedRuntimeCatalogKey     = "runtime_catalog_v7"
 	defaultSeedSemanticAgentsKey     = "semantic_agents_v5"
 	defaultSeedToolCatalogKey        = "tool_catalog"
 )

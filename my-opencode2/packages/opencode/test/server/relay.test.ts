@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { ServerWebSocket } from "bun"
 import { Relay } from "../../src/server/relay"
@@ -70,6 +70,33 @@ test("task completion prefers the final assistant round over accumulated stream 
   expect(Relay.testInternals.finalTaskResult("", "仅有流式正文")).toBe("仅有流式正文")
   const longReply = "继续分析。先做更严谨的结构检测。\n" + "正文内容。".repeat(5_000)
   expect(Relay.testInternals.finalTaskResult(longReply, "")).toBe(longReply)
+})
+
+test("image and video options travel as task metadata, not prompt text", () => {
+  expect(
+    Relay.testInternals.relayMedia({
+      metadata: {
+        image_count: "3",
+        image_size: "1024x1024",
+        image_quality: "high",
+        image_aspect_ratio: "16:9",
+      },
+    } as never),
+  ).toEqual({
+    count: 3,
+    size: "1024x1024",
+    quality: "high",
+    aspectRatio: "16:9",
+  })
+  // 视频参数同样识别，非法时长（0）不落进 media。
+  expect(
+    Relay.testInternals.relayMedia({
+      metadata: { image_duration: "8", image_resolution: "720p" },
+    } as never),
+  ).toEqual({ duration: 8, resolution: "720p" })
+  // 没有生图/视频参数的普通任务返回 undefined，不影响对话。
+  expect(Relay.testInternals.relayMedia({ metadata: { model: "x/y" } } as never)).toBeUndefined()
+  expect(Relay.testInternals.relayMedia({} as never)).toBeUndefined()
 })
 
 test("project memory candidate parser rejects string artifact and source references", () => {
@@ -1120,6 +1147,141 @@ describe.serial("Relay", () => {
         ] as any,
       }).empty,
     ).toBe(false)
+  })
+
+  test("video results count as output and are collected as files", () => {
+    const clip = {
+      id: "file_clip",
+      messageID: "msg",
+      sessionID: "ses",
+      type: "file",
+      mime: "video/mp4",
+      filename: "grok-imagine-video-1.5.mp4",
+      url: "data:video/mp4;base64,AAAA",
+    }
+    // 只认 image/* 时视频会被丢掉，任务被判空正文并下发「模型未返回正文」。
+    const collected = Relay.files([clip])
+    expect(collected).toHaveLength(1)
+    expect(collected[0].mime).toBe("video/mp4")
+
+    const state = Relay.taskOutputState({ parts: [clip] as any, files: collected as any })
+    expect(state.empty).toBe(false)
+
+    // 图片仍然照常收集，混排时两类都在。
+    const picture = {
+      id: "file_pic",
+      messageID: "msg",
+      sessionID: "ses",
+      type: "file",
+      mime: "image/png",
+      filename: "shot.png",
+      url: "data:image/png;base64,AAAA",
+    }
+    expect(Relay.files([clip, picture])).toHaveLength(2)
+  })
+
+  test("media results including the video poster are persisted for playback", async () => {
+    await using tmp = await tmpdir()
+    // macOS 上 /var 是符号链接：路径必须先解析成真实路径，否则落盘时的
+    // 相对路径校验会失败（artifact path invalid）。
+    const root = await realpath(tmp.path)
+    const artifactDir = path.join(root, ".chatcodex-artifacts", "task_video")
+    await mkdir(artifactDir, { recursive: true })
+    const parts = [
+      {
+        id: "poster",
+        type: "file",
+        mime: "image/jpeg",
+        filename: "grok-imagine-video-1.5.poster.jpg",
+        url: "data:image/jpeg;base64,AAAA",
+      },
+      {
+        id: "clip",
+        type: "file",
+        mime: "video/mp4",
+        filename: "grok-imagine-video-1.5.mp4",
+        url: "data:video/mp4;base64,AAAA",
+      },
+      {
+        id: "shot",
+        type: "file",
+        mime: "image/png",
+        filename: "shot-1.png",
+        url: "data:image/png;base64,AAAA",
+      },
+    ]
+    const artifacts = await Relay.persistArtifacts(
+      root,
+      { id: "task_video", artifactDirAbs: artifactDir } as never,
+      parts as never,
+    )
+    // 视频与封面都落盘：客户端通过我们的下载通道播放视频，封面用于播放卡片。
+    expect(artifacts.map((item) => item.filename)).toEqual([
+      "grok-imagine-video-1.5.poster.jpg",
+      "grok-imagine-video-1.5.mp4",
+      "shot-1.png",
+    ])
+  })
+
+  test("remote media is downloaded with the provider auth headers", async () => {
+    await using tmp = await tmpdir()
+    const root = await realpath(tmp.path)
+    const artifactDir = path.join(root, ".chatcodex-artifacts", "task_video_auth")
+    await mkdir(artifactDir, { recursive: true })
+
+    // 上游视频地址需要鉴权：不带 Authorization 会 401，产物落不了盘，
+    // 客户端只能退回中转站临时地址，播放时必然失败。
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        const auth = req.headers.get("authorization")
+        if (auth !== "Bearer secret-key") return new Response("unauthorized", { status: 401 })
+        return new Response(new Uint8Array([1, 2, 3, 4]), {
+          headers: { "content-type": "video/mp4" },
+        })
+      },
+    })
+    try {
+      const url = `http://127.0.0.1:${server.port}/videos/clip/content`
+      const parts = [
+        { id: "clip", type: "file", mime: "video/mp4", filename: "clip.mp4", url },
+      ]
+
+      const withoutHeaders = await Relay.persistArtifacts(
+        root,
+        { id: "task_video_auth", artifactDirAbs: artifactDir } as never,
+        parts as never,
+      )
+      expect(withoutHeaders).toHaveLength(0)
+
+      const withHeaders = await Relay.persistArtifacts(
+        root,
+        { id: "task_video_auth", artifactDirAbs: artifactDir } as never,
+        parts as never,
+        { Authorization: "Bearer secret-key" },
+      )
+      expect(withHeaders.map((item) => item.filename)).toEqual(["clip.mp4"])
+      expect(await readFile(path.join(root, withHeaders[0].relative_path))).toEqual(
+        Buffer.from([1, 2, 3, 4]),
+      )
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("resolves the provider api key into media download headers", async () => {
+    await using tmp = await tmpdir()
+    const root = await realpath(tmp.path)
+    // 供应商配置里带 apiKey：下载上游媒体产物时必须用它做 Authorization，
+    // 否则视频地址会 401，产物落不了盘。
+    await writeRelayConfig(root, "http://127.0.0.1:1/v1", {})
+
+    const headers = await Relay.testInternals.mediaAuthHeaders(root, {
+      id: "task_media_headers",
+      model: { providerID: "test", modelID: "test-model" },
+    } as never)
+
+    expect(headers?.Authorization).toBe("Bearer test-key")
   })
 
   test("evaluates build completion from structured action state", () => {

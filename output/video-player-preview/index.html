@@ -1,0 +1,1095 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>视频播放器 · 专业版设计稿</title>
+<style>
+  /* 取值全部来自 flutter_app/lib/core/theme/app_colors.dart 与 app_theme.dart */
+  :root{
+    /* AppColors */
+    --primary:#2563EB;          /* AppColors.primary */
+    --primary-hover:#1D4ED8;    /* AppColors.primaryHover */
+    --primary-light:#EFF6FF;    /* AppColors.primaryLight（浅底，非深色上的强调色） */
+    --primary-muted:#BFD7FF;    /* AppColors.primaryMuted（深色背景上的强调色） */
+    --ink:#0F1729;              /* AppColors.textPrimary */
+    --ink-2:#4A5D7A;            /* AppColors.textSecondary */
+    --ink-3:#8FA3BF;            /* AppColors.textMuted */
+    --line:#E8EFF8;             /* AppColors.borderLight */
+    --line-2:#D0DDEF;           /* AppColors.border */
+    --surface:#FFFFFF;          /* AppColors.surface */
+    --surface-elevated:#FAFCFF; /* AppColors.surfaceElevated */
+    --bg:#F2F6FC;               /* AppColors.background */
+    --divider:#E4ECF5;          /* AppColors.divider */
+    --err:#DC2626;              /* AppColors.statusError */
+    --err-soft:#FEE2E2;         /* AppColors.statusErrorLight */
+
+    /* 播放页真实底色：Scaffold backgroundColor = Colors.black */
+    --stage:#000000;
+    /* 进度条真实取值：VideoProgressColors */
+    --played:#2563EB;                 /* playedColor: AppColors.primary（纯色，非渐变） */
+    --buffered:rgba(255,255,255,.24); /* bufferedColor: Colors.white24 */
+    --track:rgba(255,255,255,.10);    /* backgroundColor: Colors.white10 */
+    --on-dark:#FFFFFF;                /* Colors.white */
+    --on-dark-70:rgba(255,255,255,.70);/* Colors.white70 */
+
+    /* 图标统一尺度：所有图标只用这 4 档，禁止零散数值 */
+    --ico-inline:14px;  /* 文字行内：eyebrow、分组标题、手势 HUD */
+    --ico-compact:16px; /* 紧凑：弹层行、状态缩略图、竖滑提示 */
+    --ico-button:18px;  /* 所有圆角按钮：顶栏、控制栏、桌面控制栏 */
+    --ico-hero:24px;    /* 中央主播放键（移动端） */
+    --ico-hero-lg:28px; /* 中央主播放键（桌面端） */
+
+    /* AppRadius：sm 6 / md 10 / lg 14 / xl 20 */
+    --r-sm:6px;
+    --r-md:10px;
+    --r-lg:14px;
+    --r-xl:20px;
+    --shadow-1:0 1px 2px rgba(15,23,41,.05);
+    --shadow-2:0 12px 34px rgba(15,23,41,.11);
+    --ease:cubic-bezier(.22,.61,.36,1);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0}
+  body{
+    font-family:"Helvetica Neue",Helvetica,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:
+      radial-gradient(900px 420px at 12% -6%,#EFF4FB 0%,rgba(228,237,251,0) 62%),
+      linear-gradient(168deg,#EFF4FB 0%,#F7FAFF 100%);
+    background-attachment:fixed;
+    color:var(--ink);
+    padding:34px 22px 72px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1360px;margin:0 auto}
+
+  /* ================= 页头 ================= */
+  .head{margin-bottom:30px}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:7px;
+    font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--primary);background:var(--primary-soft);
+    padding:5px 11px;border-radius:999px;margin-bottom:14px;
+  }
+  .head h1{font-size:25px;line-height:1.3;margin:0 0 10px;font-weight:800;letter-spacing:-.01em}
+  .head p{margin:0;max-width:660px;font-size:13.5px;line-height:1.75;color:var(--ink-2)}
+
+  /* ================= 区块 ================= */
+  .section{margin-top:44px}
+  .section-head{display:flex;align-items:baseline;gap:11px;margin-bottom:18px}
+  .section-head h2{font-size:16px;margin:0;font-weight:750;letter-spacing:-.005em}
+  .section-head .hint{font-size:12.5px;color:var(--ink-3)}
+
+  /* ================= 主区：播放器 + 图例 ================= */
+  .showcase{
+    display:grid;gap:34px;
+    grid-template-columns:minmax(300px,352px) minmax(280px,1fr);
+    align-items:start;
+  }
+  @media (max-width:860px){ .showcase{grid-template-columns:1fr} }
+
+  /* ---------- 手机外框 ---------- */
+  .device{
+    position:relative;
+    background:linear-gradient(170deg,#161C26,#0A0E14);
+    border-radius:var(--r-xl);padding:9px;
+    box-shadow:var(--shadow-2),0 0 0 1px rgba(255,255,255,.05) inset;
+  }
+  .device::after{
+    content:"";position:absolute;top:16px;left:50%;transform:translateX(-50%);
+    width:56px;height:4px;border-radius:999px;background:rgba(255,255,255,.14);
+  }
+  .viewport{
+    position:relative;border-radius:var(--r-lg);overflow:hidden;background:var(--stage);
+    aspect-ratio:9/16.6;display:flex;flex-direction:column;
+  }
+
+  /* ---------- 舞台 ---------- */
+  .stage{
+    position:relative;flex:1;overflow:hidden;cursor:pointer;user-select:none;
+    background:radial-gradient(118% 86% at 32% 16%,#33445F 0%,#1A2331 46%,#0A0E14 100%);
+  }
+  /* 仅用于模拟"视频画面"的占位渐变，不属于主题色板（真实播放时由视频帧填充） */
+  .scene{
+    position:absolute;inset:0;
+    background:
+      radial-gradient(56% 42% at 52% 62%,rgba(37,99,235,.50) 0%,rgba(37,99,235,0) 72%),
+      radial-gradient(38% 28% at 74% 32%,rgba(96,165,250,.34) 0%,rgba(96,165,250,0) 74%),
+      radial-gradient(30% 22% at 26% 78%,rgba(147,184,255,.22) 0%,rgba(147,184,255,0) 76%);
+  }
+  .scene::after{
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(to bottom,rgba(4,8,14,.55),rgba(4,8,14,0) 22%,rgba(4,8,14,0) 68%,rgba(4,8,14,.62));
+  }
+  .scene-tag{
+    position:absolute;left:0;right:0;bottom:34%;text-align:center;
+    color:rgba(255,255,255,.26);font-size:11px;letter-spacing:.22em;font-weight:600;
+  }
+
+  /* 中央播放键 */
+  .center{
+    position:absolute;inset:0;display:grid;place-items:center;
+    transition:opacity .26s var(--ease);
+  }
+  .center .orb{
+    width:66px;height:66px;border-radius:50%;
+    background:rgba(10,14,20,.42);
+    border:1.5px solid rgba(255,255,255,.42);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    display:grid;place-items:center;
+    box-shadow:0 8px 26px rgba(0,0,0,.34);
+    transition:transform .2s var(--ease),background .2s var(--ease),border-color .2s var(--ease);
+  }
+  .stage:hover .center .orb{background:rgba(37,99,235,.62);border-color:rgba(147,184,255,.7)}
+  .center .orb:active{transform:scale(.94)}
+  .center svg{width:var(--ico-hero);height:var(--ico-hero);color:#fff;margin-left:2px}
+  .center svg.replay{display:none;margin-left:0}
+  .stage.playing .center{opacity:0;pointer-events:none}
+  .stage.ended .center{opacity:1;pointer-events:auto}
+  .stage.ended .center svg.play{display:none}
+  .stage.ended .center svg.replay{display:block}
+
+  /* 缓冲 */
+  .buffering{
+    position:absolute;inset:0;display:none;place-items:center;
+    background:rgba(6,10,16,.30);backdrop-filter:blur(1px);
+  }
+  .buffering.on{display:grid}
+  .spinner{
+    width:30px;height:30px;border-radius:50%;
+    border:2.5px solid rgba(255,255,255,.20);border-top-color:#fff;
+    animation:spin .78s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* 手势 HUD */
+  .hud{
+    position:absolute;top:50%;transform:translateY(-50%);
+    display:flex;align-items:center;gap:6px;
+    background:rgba(8,12,20,.68);backdrop-filter:blur(10px);
+    color:#fff;font-size:11.5px;font-weight:650;letter-spacing:.01em;
+    padding:9px 13px;border-radius:999px;
+    opacity:0;transition:opacity .22s var(--ease),transform .22s var(--ease);
+    pointer-events:none;white-space:nowrap;
+    border:1px solid rgba(255,255,255,.10);
+  }
+  .hud svg{width:var(--ico-inline);height:var(--ico-inline);flex:none}
+  .hud.left{left:16px}
+  .hud.right{right:16px}
+  .hud.on{opacity:1}
+
+  /* 竖向手势提示条 */
+  .vslider{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    background:rgba(8,12,20,.72);backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:14px;padding:11px 13px;opacity:0;pointer-events:none;
+    transition:opacity .2s var(--ease),transform .2s var(--ease);
+  }
+  .vslider.on{opacity:1}
+  .vslider .glyph{width:var(--ico-compact);height:var(--ico-compact);margin:0 auto 7px;display:block;color:#fff}
+  .vslider .rail{width:5px;height:74px;border-radius:999px;background:rgba(255,255,255,.20);overflow:hidden;margin:0 auto}
+  .vslider .rail i{display:block;width:100%;height:58%;background:#fff;border-radius:999px}
+  .vslider .pct{color:#fff;font-size:10.5px;font-weight:700;text-align:center;margin-top:6px;font-variant-numeric:tabular-nums}
+
+  /* ---------- 顶部栏 ---------- */
+  .topbar{
+    position:absolute;top:0;left:0;right:0;z-index:5;
+    display:flex;align-items:center;gap:9px;padding:13px 12px 20px;
+    background:linear-gradient(to bottom,rgba(4,8,14,.80),rgba(4,8,14,0));
+    color:#fff;transition:opacity .26s var(--ease),transform .26s var(--ease);
+  }
+  .icon-btn{
+    width:32px;height:32px;flex:none;border:none;border-radius:9px;
+    background:rgba(255,255,255,.10);color:#fff;
+    display:grid;place-items:center;cursor:pointer;
+    transition:background .16s var(--ease),transform .16s var(--ease);
+  }
+  .icon-btn:hover{background:rgba(255,255,255,.20)}
+  .icon-btn:active{transform:scale(.93)}
+  .icon-btn svg{width:var(--ico-button);height:var(--ico-button)}
+  .topbar .titles{flex:1;min-width:0;padding:0 2px}
+  .topbar .titles .t1{
+    font-size:12.5px;font-weight:650;line-height:1.35;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .topbar .titles .t2{
+    font-size:10.5px;color:rgba(255,255,255,.52);margin-top:2px;
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* ---------- 底部控制 ---------- */
+  .dock{
+    position:absolute;left:0;right:0;bottom:0;z-index:5;
+    padding:40px 12px 13px;
+    background:linear-gradient(to top,rgba(4,8,14,.90),rgba(4,8,14,.42) 46%,rgba(4,8,14,0));
+    color:#fff;transition:opacity .26s var(--ease),transform .26s var(--ease);
+  }
+  .chrome-hidden .topbar{opacity:0;transform:translateY(-8px);pointer-events:none}
+  .chrome-hidden .dock{opacity:0;transform:translateY(8px);pointer-events:none}
+
+  /* 进度条 */
+  .seek{position:relative;height:24px;display:flex;align-items:center;cursor:pointer;margin-bottom:2px}
+  .rail{
+    position:relative;width:100%;height:4px;border-radius:999px;
+    background:rgba(255,255,255,.20);
+    transition:height .16s var(--ease);
+  }
+  .seek:hover .rail,.seek.dragging .rail{height:6px}
+  .rail .buf{position:absolute;inset:0 auto 0 0;border-radius:999px;background:rgba(255,255,255,.30);width:64%}
+  .rail .done{position:absolute;inset:0 auto 0 0;border-radius:999px;background:var(--played);width:31%}
+  .thumb{
+    position:absolute;top:50%;left:31%;transform:translate(-50%,-50%) scale(.7);
+    width:13px;height:13px;border-radius:50%;background:#fff;
+    box-shadow:0 0 0 4px rgba(37,99,235,.30),0 2px 6px rgba(0,0,0,.4);
+    opacity:0;transition:opacity .16s var(--ease),transform .16s var(--ease);
+  }
+  .seek:hover .thumb,.seek.dragging .thumb{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  .seek-tip{
+    position:absolute;bottom:26px;left:31%;transform:translateX(-50%) scale(.94);
+    background:rgba(8,12,20,.92);backdrop-filter:blur(8px);
+    border:1px solid rgba(255,255,255,.12);
+    font-size:11px;font-weight:700;padding:4px 8px;border-radius:7px;
+    opacity:0;pointer-events:none;transition:opacity .16s var(--ease),transform .16s var(--ease);
+    font-variant-numeric:tabular-nums;white-space:nowrap;
+  }
+  .seek:hover .seek-tip,.seek.dragging .seek-tip{opacity:1;transform:translateX(-50%) scale(1)}
+
+  /* 控制行 */
+  .row{display:flex;align-items:center;gap:2px;margin-top:4px}
+  .row .spacer{flex:1}
+  .time{
+    font-size:11.5px;color:rgba(255,255,255,.86);flex:none;padding:0 6px;
+    font-variant-numeric:tabular-nums;letter-spacing:.01em;
+  }
+  .time .sep{color:rgba(255,255,255,.34);margin:0 3px}
+  .time .total{color:rgba(255,255,255,.50)}
+  .cbtn{
+    height:32px;min-width:32px;padding:0 7px;border:none;border-radius:9px;
+    background:transparent;color:#fff;display:inline-flex;align-items:center;justify-content:center;
+    gap:5px;cursor:pointer;font-size:11.5px;font-weight:700;
+    transition:background .16s var(--ease),transform .16s var(--ease);
+    font-variant-numeric:tabular-nums;
+  }
+  .cbtn:hover{background:rgba(255,255,255,.15)}
+  .cbtn:active{transform:scale(.93)}
+  .cbtn svg{width:var(--ico-button);height:var(--ico-button)}
+  .cbtn.on{color:var(--primary-muted)}
+  .cbtn .badge{font-size:9.5px;font-weight:800;opacity:.85;margin-left:-2px}
+
+  /* 倍速弹层 */
+  .popover{
+    position:absolute;right:12px;bottom:88px;z-index:8;
+    min-width:132px;padding:6px;
+    background:rgba(14,20,30,.96);backdrop-filter:blur(16px);
+    border:1px solid rgba(255,255,255,.12);border-radius:13px;
+    box-shadow:0 18px 44px rgba(0,0,0,.48);
+    opacity:0;transform:translateY(7px);pointer-events:none;
+    transition:opacity .18s var(--ease),transform .18s var(--ease);
+  }
+  .popover.on{opacity:1;transform:none;pointer-events:auto}
+  .popover .ph{
+    font-size:10px;font-weight:700;letter-spacing:.08em;color:rgba(255,255,255,.42);
+    padding:5px 9px 7px;text-transform:uppercase;
+  }
+  .popover button{
+    display:flex;align-items:center;justify-content:space-between;gap:14px;
+    width:100%;border:none;background:transparent;color:#fff;
+    font-size:12px;font-weight:600;padding:8px 9px;border-radius:8px;cursor:pointer;
+    font-variant-numeric:tabular-nums;transition:background .14s var(--ease);
+  }
+  .popover button:hover{background:rgba(255,255,255,.10)}
+  .popover button .tick{width:var(--ico-compact);height:var(--ico-compact);opacity:0;color:var(--primary-muted)}
+  .popover button.active{color:var(--primary-muted)}
+  .popover button.active .tick{opacity:1}
+  .popover .divider{height:1px;background:rgba(255,255,255,.09);margin:5px 7px}
+  .popover button .lbl{display:flex;align-items:center;gap:8px}
+  .popover button svg{width:var(--ico-compact);height:var(--ico-compact)}
+
+  /* 桌面端音量滑条 */
+  .volume{display:flex;align-items:center;gap:6px;padding-right:4px}
+  .volume .vrail{width:62px;height:4px;border-radius:999px;background:rgba(255,255,255,.22);position:relative;cursor:pointer}
+  .volume .vrail i{position:absolute;inset:0 auto 0 0;width:72%;border-radius:999px;background:#fff}
+
+  /* ================= 桌面端 ================= */
+  .desk{
+    background:var(--stage);border-radius:var(--r-lg);overflow:hidden;
+    box-shadow:var(--shadow-2);border:1px solid rgba(255,255,255,.06);
+  }
+  .desk .stage{aspect-ratio:16/9;flex:none}
+  .desk .scene-tag{bottom:34%}
+  .desk .stage:hover .center .orb{background:rgba(10,14,20,.5);border-color:rgba(255,255,255,.5)}
+  .desk .center .orb{width:72px;height:72px}
+  .desk .center svg{width:var(--ico-hero-lg);height:var(--ico-hero-lg)}
+  .desk-bar{
+    display:flex;align-items:center;gap:3px;
+    padding:9px 12px;background:var(--stage);
+    border-top:1px solid rgba(255,255,255,.07);color:#fff;
+  }
+  .desk-bar .cbtn{height:34px;min-width:34px}
+  .desk-meta{
+    display:flex;flex-wrap:wrap;gap:26px;
+    padding:15px 16px 17px;background:var(--stage);
+    border-top:1px solid rgba(255,255,255,.07);
+  }
+  .desk-meta .kv{display:flex;flex-direction:column;gap:4px}
+  .desk-meta .k{font-size:10.5px;color:rgba(255,255,255,.42);font-weight:600;letter-spacing:.04em}
+  .desk-meta .v{font-size:12.5px;color:rgba(255,255,255,.92);font-weight:650;font-variant-numeric:tabular-nums}
+  .kbd-row{
+    display:flex;flex-wrap:wrap;gap:8px;margin-top:15px;
+  }
+  .kbd{
+    display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-2);
+    background:var(--surface);border:1px solid var(--line);border-radius:9px;
+    padding:6px 10px;box-shadow:var(--shadow-1);
+  }
+  .kbd kbd{
+    font-family:inherit;font-size:10.5px;font-weight:700;color:var(--ink);
+    background:#F8FAFD;border:1px solid var(--line-2);border-radius:5px;padding:1.5px 6px;
+  }
+
+  /* ================= 状态 ================= */
+  .states{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+  .state{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);
+    padding:13px;box-shadow:var(--shadow-1);
+  }
+  .state .cap{
+    display:flex;align-items:center;gap:7px;margin-bottom:10px;
+    font-size:12.5px;font-weight:700;color:var(--ink);
+  }
+  .state .cap .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  /* 状态缩略图的画面占位，同上 */
+  .mini{
+    position:relative;border-radius:var(--r-sm);overflow:hidden;aspect-ratio:16/10;
+    background:radial-gradient(120% 100% at 40% 20%,#2C3B54,#0E141D 72%);
+    display:grid;place-items:center;
+  }
+  .mini .mk{
+    position:absolute;left:0;right:0;bottom:0;height:34%;
+    background:linear-gradient(to top,rgba(4,8,14,.86),rgba(4,8,14,0));
+  }
+  .mini .mbar{position:absolute;left:9px;right:9px;bottom:9px;height:3px;border-radius:999px;background:rgba(255,255,255,.22)}
+  .mini .mbar i{position:absolute;inset:0 auto 0 0;border-radius:999px;background:var(--primary)}
+  .mini .label{
+    position:relative;color:#fff;font-size:11px;font-weight:650;text-align:center;
+    display:flex;flex-direction:column;align-items:center;gap:9px;padding:0 12px;
+  }
+  .mini .label .sub{font-size:10.5px;color:rgba(255,255,255,.55);font-weight:500;line-height:1.6}
+  .mini .ring-lg{
+    width:36px;height:36px;border-radius:50%;
+    background:rgba(10,14,20,.42);border:1.5px solid rgba(255,255,255,.42);
+    display:grid;place-items:center;
+  }
+  .mini .ring-lg svg{width:var(--ico-compact);height:var(--ico-compact);color:#fff}
+  .mini .err-orb{
+    width:34px;height:34px;border-radius:11px;display:grid;place-items:center;
+    background:rgba(220,38,38,.16);border:1px solid rgba(220,38,38,.4);
+  }
+  .mini .err-orb svg{width:var(--ico-compact);height:var(--ico-compact);color:#FEE2E2}
+  .mini .retry{
+    margin-top:2px;font-size:10.5px;font-weight:700;color:#fff;
+    background:var(--primary);border:none;border-radius:8px;padding:6px 13px;cursor:pointer;
+    box-shadow:0 4px 12px rgba(37,99,235,.4);
+  }
+  .mini .retry:hover{background:var(--primary-600)}
+  .mini .spinner{width:26px;height:26px;border-width:2px}
+
+  /* ================= 功能清单 ================= */
+  .feats{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(258px,1fr))}
+  .fgroup{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);
+    padding:15px 16px 16px;box-shadow:var(--shadow-1);
+  }
+  .fgroup h3{
+    margin:0 0 11px;font-size:12.5px;font-weight:750;color:var(--ink);
+    display:flex;align-items:center;gap:8px;
+  }
+  .fgroup h3 .ic{
+    width:22px;height:22px;border-radius:7px;display:grid;place-items:center;
+    background:var(--primary-soft);color:var(--primary);flex:none;
+  }
+  .fgroup h3 .ic svg{width:var(--ico-inline);height:var(--ico-inline)}
+  .fgroup ul{margin:0;padding:0;list-style:none}
+  .fgroup li{
+    font-size:12px;color:var(--ink-2);line-height:1.5;
+    padding:5px 0 5px 16px;position:relative;
+  }
+  .fgroup li::before{
+    content:"";position:absolute;left:2px;top:11px;
+    width:5px;height:5px;border-radius:50%;background:var(--primary);
+    opacity:.5;
+  }
+  .fgroup li b{color:var(--ink);font-weight:650}
+
+  .footnote{
+    margin-top:26px;font-size:12px;color:var(--ink-3);line-height:1.75;
+    padding:14px 16px;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r-md);border-left:3px solid var(--primary);
+  }
+  .footnote b{color:var(--ink-2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <span class="eyebrow">
+      <svg data-size="14" viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4.8 4.4v15.2L19.6 12z"/></svg>
+      视频播放器 · 设计稿
+    </span>
+    <h1>专业级播放体验</h1>
+    <p>
+      覆盖播放控制、手势、状态反馈与文件操作。视觉沿用现有设计语言（黑底舞台 + 品牌蓝 <b>#2563EB</b>），
+      控件尺寸统一、图标同一笔画风格。可直接点击画面、拖动进度条、切换倍速试用。
+    </p>
+  </header>
+
+  <!-- ============ 主设计 ============ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>沉浸式播放（移动端）</h2>
+      <span class="hint">控制栏 3 秒自动隐藏 · 双击左右快进退 · 上下滑调亮度/音量</span>
+    </div>
+
+    <div class="showcase">
+      <div class="device">
+        <div class="viewport" id="phone">
+          <div class="stage" id="stage">
+            <div class="scene"></div>
+            <div class="scene-tag">视频画面</div>
+
+            <!-- 顶部栏 -->
+            <div class="topbar">
+              <button class="icon-btn" title="返回">
+                <svg data-size="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.6 5.4 8 12l6.6 6.6"/></svg>
+              </button>
+              <div class="titles">
+                <div class="t1">grok-imagine-video-1.5.mp4</div>
+                <div class="t2">1280 × 720 · 13.0 MB</div>
+              </div>
+              <button class="icon-btn" title="保存到本地">
+                <svg data-size="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.6v11M12 14.6 8 10.6M12 14.6l4-4M4.8 19.4h14.4"/></svg>
+              </button>
+              <button class="icon-btn" title="更多">
+                <svg data-size="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="6.2" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="17.8" r="1.9"/></svg>
+              </button>
+            </div>
+
+            <!-- 缓冲 / HUD / 竖滑 -->
+            <div class="buffering" id="buffering"><div class="spinner"></div></div>
+
+            <div class="hud left" id="hudL">
+              <svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.4 6.4 4.8 12l5.6 5.6M18.6 6.4 13 12l5.6 5.6"/></svg>
+              10 秒
+            </div>
+            <div class="hud right" id="hudR">
+              10 秒
+              <svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13.6 6.4 19.2 12l-5.6 5.6M5.4 6.4 11 12l-5.6 5.6"/></svg>
+            </div>
+
+            <div class="vslider" id="vslide">
+              <svg data-size="16" class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 3.4v2.4M12 18.2v2.4M3.4 12h2.4M18.2 12h2.4M5.9 5.9l1.7 1.7M16.4 16.4l1.7 1.7M18.1 5.9l-1.7 1.7M7.6 16.4l-1.7 1.7"/></svg>
+              <div class="rail"><i id="vfill"></i></div>
+              <div class="pct" id="vpct">58%</div>
+            </div>
+
+            <!-- 中央播放键 -->
+            <div class="center" id="centerBtn">
+              <div class="orb">
+                <svg data-size="24" class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M4.8 4.4v15.2L19.6 12z"/></svg>
+                <svg data-size="24" class="replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19.6 12a7.6 7.6 0 1 1-2.2-5.4"/><path d="M12 3.6v5h5"/></svg>
+              </div>
+            </div>
+
+            <!-- 倍速弹层 -->
+            <div class="popover" id="pop">
+              <div class="ph">播放速度</div>
+              <button data-rate="0.5"><span class="lbl">0.5×</span><svg data-size="16" class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.4 9.8 17.6 19.4 6.8"/></svg></button>
+              <button data-rate="0.75"><span class="lbl">0.75×</span><svg data-size="16" class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.4 9.8 17.6 19.4 6.8"/></svg></button>
+              <button data-rate="1" class="active"><span class="lbl">1.0×</span><svg data-size="16" class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.4 9.8 17.6 19.4 6.8"/></svg></button>
+              <button data-rate="1.25"><span class="lbl">1.25×</span><svg data-size="16" class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.4 9.8 17.6 19.4 6.8"/></svg></button>
+              <button data-rate="1.5"><span class="lbl">1.5×</span><svg data-size="16" class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.4 9.8 17.6 19.4 6.8"/></svg></button>
+              <button data-rate="2"><span class="lbl">2.0×</span><svg data-size="16" class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.4 9.8 17.6 19.4 6.8"/></svg></button>
+              <div class="divider"></div>
+              <button data-loop><span class="lbl"><svg data-size="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4 19.6 7.6 16 11.2"/><path d="M19.6 7.6H7.4a4.3 4.3 0 0 0 0 8.6h.9"/><path d="M8 20 4.4 16.4 8 12.8"/><path d="M4.4 16.4h12.2a4.3 4.3 0 0 0 0-8.6h-.9"/></svg>循环播放</span><svg data-size="16" class="tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 12.4 9.8 17.6 19.4 6.8"/></svg></button>
+            </div>
+
+            <!-- 底部控制 -->
+            <div class="dock">
+              <div class="seek" id="seek">
+                <div class="rail">
+                  <div class="buf"></div>
+                  <div class="done" id="done"></div>
+                  <div class="thumb" id="thumb"></div>
+                </div>
+                <div class="seek-tip" id="tip">00:04</div>
+              </div>
+
+              <div class="row">
+                <button class="cbtn" id="playBtn" title="播放/暂停">
+                  <svg data-size="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4.8 4.4v15.2L19.6 12z"/></svg>
+                </button>
+                <button class="cbtn" data-skip="-10" title="快退 10 秒">
+                  <svg data-size="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>
+                </button>
+                <button class="cbtn" data-skip="10" title="快进 10 秒">
+                  <svg data-size="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/></svg>
+                </button>
+                <span class="time"><span id="cur">00:00</span><span class="sep">/</span><span class="total" id="dur">00:12</span></span>
+                <span class="spacer"></span>
+                <button class="cbtn" id="rateBtn" title="播放速度">1.0×</button>
+                <button class="cbtn" id="fsBtn" title="全屏">
+                  <svg data-size="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 9.2V5.5a1.1 1.1 0 0 1 1.1-1.1h3.7M14.8 4.4h3.7a1.1 1.1 0 0 1 1.1 1.1v3.7M19.6 14.8v3.7a1.1 1.1 0 0 1-1.1 1.1h-3.7M9.2 19.6H5.5a1.1 1.1 0 0 1-1.1-1.1v-3.7"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 图例 -->
+      <div>
+        <div class="feats">
+          <div class="fgroup">
+            <h3><span class="ic"><svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 5.5v13l10.5-6.5z"/></svg></span>播放控制</h3>
+            <ul>
+              <li>点画面播放/暂停，播放时控制栏淡出</li>
+              <li>双击左侧快退 10 秒、右侧快进 10 秒</li>
+              <li>快退/快进按钮，长按连续快进</li>
+              <li>倍速 <b>0.5× – 2.0×</b>，六档可选</li>
+              <li>循环播放开关</li>
+            </ul>
+          </div>
+          <div class="fgroup">
+            <h3><span class="ic"><svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 12h16M8 8v8M16 8v8"/></svg></span>进度与时间</h3>
+            <ul>
+              <li>进度条区分<b>已缓冲</b>与<b>已播放</b>两段</li>
+              <li>拖动/悬停浮出时间气泡，精确定位</li>
+              <li>当前时间 / 总时长，等宽数字不跳动</li>
+              <li>记住上次播放位置，下次续播</li>
+            </ul>
+          </div>
+          <div class="fgroup">
+            <h3><span class="ic"><svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 8l7-5 7 5M5 16l7 5 7-5"/></svg></span>手势</h3>
+            <ul>
+              <li>单击：显示/隐藏控制栏</li>
+              <li>双击左/右：快退/快进 10 秒</li>
+              <li>上下滑：调亮度 / 音量（带数值反馈）</li>
+              <li>左右滑：拖动进度</li>
+            </ul>
+          </div>
+          <div class="fgroup">
+            <h3><span class="ic"><svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg></span>状态反馈</h3>
+            <ul>
+              <li>加载中、缓冲中转圈提示</li>
+              <li>播放结束显示重播按钮</li>
+              <li>加载失败给出中文原因与重试</li>
+              <li>手势操作即时 HUD 反馈</li>
+            </ul>
+          </div>
+          <div class="fgroup">
+            <h3><span class="ic"><svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0l-3.6-3.6M12 14l3.6-3.6M5 19h14"/></svg></span>文件操作</h3>
+            <ul>
+              <li>保存到本地相册 / 下载目录</li>
+              <li>分享到其他应用</li>
+              <li>截取当前帧为图片</li>
+              <li>画中画（桌面端）</li>
+            </ul>
+          </div>
+          <div class="fgroup">
+            <h3><span class="ic"><svg data-size="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v13H4z"/><path d="M9 10.5l6 3.5-6 3.5z"/></svg></span>画面与全屏</h3>
+            <ul>
+              <li>横屏全屏，自动隐藏系统栏</li>
+              <li>画面比例：适应 / 填充 / 原始</li>
+              <li>横竖屏切换保持播放位置</li>
+              <li>锁定横屏可选</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 桌面端 ============ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>桌面端布局</h2>
+      <span class="hint">控制栏常显 · 带音量滑条 · 支持键盘快捷键</span>
+    </div>
+
+    <div class="desk" id="desk">
+      <div class="stage" id="stageD">
+        <div class="scene"></div>
+        <div class="scene-tag">视频画面</div>
+        <div class="buffering" id="bufferingD"><div class="spinner"></div></div>
+        <div class="center" id="centerBtnD">
+          <div class="orb">
+            <svg data-size="28" class="play" viewBox="0 0 24 24" fill="currentColor"><path d="M4.8 4.4v15.2L19.6 12z"/></svg>
+            <svg data-size="28" class="replay" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19.6 12a7.6 7.6 0 1 1-2.2-5.4"/><path d="M12 3.6v5h5"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div class="desk-bar">
+        <button class="cbtn" id="playBtnD" title="播放/暂停">
+          <svg data-size="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4.8 4.4v15.2L19.6 12z"/></svg>
+        </button>
+        <button class="cbtn" data-skipd="-10" title="快退 10 秒">
+          <svg data-size="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg>
+        </button>
+        <button class="cbtn" data-skipd="10" title="快进 10 秒">
+          <svg data-size="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/></svg>
+        </button>
+        <span class="time"><span id="curD">00:00</span><span class="sep">/</span><span class="total" id="durD">00:12</span></span>
+
+        <div style="flex:1;padding:0 12px">
+          <div class="seek" id="seekD" style="margin:0">
+            <div class="rail">
+              <div class="buf"></div>
+              <div class="done" id="doneD"></div>
+              <div class="thumb" id="thumbD"></div>
+            </div>
+            <div class="seek-tip" id="tipD">00:04</div>
+          </div>
+        </div>
+
+        <div class="volume">
+          <button class="cbtn" id="muteBtn" title="静音">
+            <svg data-size="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10.8 4.4 6 8.9H3.2v6.2H6l4.8 4.5z"/><path d="M14.2 9.2a3.9 3.9 0 0 1 0 5.6M17.4 6.4a8 8 0 0 1 0 11.2"/></svg>
+          </button>
+          <div class="vrail" id="vrail"><i id="vfillD"></i></div>
+        </div>
+
+        <button class="cbtn" title="截取当前帧">
+          <svg data-size="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 9h3.4l1.4-2h5.6l1.4 2h3.4v10H4.4z"/><circle cx="12" cy="13.6" r="3.2"/></svg>
+        </button>
+        <button class="cbtn" id="pipBtn" title="画中画">
+          <svg data-size="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 5.2h15.2v13.6H4.4z"/><path d="M12.4 12h5.6v4.8h-5.6z"/></svg>
+        </button>
+        <button class="cbtn" id="rateBtnD" title="播放速度">1.0×</button>
+        <button class="cbtn" id="fsBtnD" title="全屏">
+          <svg data-size="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4.4 9.2V5.5a1.1 1.1 0 0 1 1.1-1.1h3.7M14.8 4.4h3.7a1.1 1.1 0 0 1 1.1 1.1v3.7M19.6 14.8v3.7a1.1 1.1 0 0 1-1.1 1.1h-3.7M9.2 19.6H5.5a1.1 1.1 0 0 1-1.1-1.1v-3.7"/></svg>
+        </button>
+      </div>
+
+      <div class="desk-meta">
+        <div class="kv"><span class="k">文件名</span><span class="v">grok-imagine-video-1.5.mp4</span></div>
+        <div class="kv"><span class="k">时长</span><span class="v">00:12</span></div>
+        <div class="kv"><span class="k">分辨率</span><span class="v">1280 × 720</span></div>
+        <div class="kv"><span class="k">大小</span><span class="v">13.0 MB</span></div>
+        <div class="kv"><span class="k">格式</span><span class="v">MP4 / H.264</span></div>
+      </div>
+    </div>
+
+    <div class="kbd-row">
+      <span class="kbd"><kbd>空格</kbd>播放 / 暂停</span>
+      <span class="kbd"><kbd>←</kbd><kbd>→</kbd>快退 / 快进 5 秒</span>
+      <span class="kbd"><kbd>↑</kbd><kbd>↓</kbd>音量</span>
+      <span class="kbd"><kbd>F</kbd>全屏</span>
+      <span class="kbd"><kbd>M</kbd>静音</span>
+      <span class="kbd"><kbd>Esc</kbd>退出全屏</span>
+    </div>
+  </section>
+
+  <!-- ============ 状态 ============ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>播放状态</h2>
+      <span class="hint">每种状态都有明确反馈，不留空白画面</span>
+    </div>
+
+    <div class="states">
+      <div class="state">
+        <div class="cap"><span class="dot" style="background:#2563EB"></span>加载中</div>
+        <div class="mini">
+          <div class="label"><div class="spinner"></div><div class="sub">正在加载视频…</div></div>
+        </div>
+      </div>
+
+      <div class="state">
+        <div class="cap"><span class="dot" style="background:#2563EB"></span>缓冲中</div>
+        <div class="mini">
+          <div class="scene" style="position:absolute;inset:0"></div>
+          <div class="label" style="position:absolute;inset:0;justify-content:center"><div class="spinner"></div><div class="sub">缓冲中…</div></div>
+          <div class="mbar"><i style="width:31%"></i></div>
+        </div>
+      </div>
+
+      <div class="state">
+        <div class="cap"><span class="dot" style="background:#16A34A"></span>播放中</div>
+        <div class="mini">
+          <div class="scene" style="position:absolute;inset:0"></div>
+          <div class="mk"></div>
+          <div class="mbar"><i style="width:31%"></i></div>
+        </div>
+      </div>
+
+      <div class="state">
+        <div class="cap"><span class="dot" style="background:#8FA3BF"></span>已暂停</div>
+        <div class="mini">
+          <div class="scene" style="position:absolute;inset:0"></div>
+          <div class="label"><div class="ring-lg"><svg data-size="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19.6 12a7.6 7.6 0 1 1-2.2-5.4"/><path d="M12 3.6v5h5"/></svg></div></div>
+          <div class="mbar"><i style="width:31%"></i></div>
+        </div>
+      </div>
+
+      <div class="state">
+        <div class="cap"><span class="dot" style="background:#D97706"></span>播放结束</div>
+        <div class="mini">
+          <div class="scene" style="position:absolute;inset:0;filter:saturate(.55)"></div>
+          <div class="label">
+            <div class="ring-lg"><svg data-size="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19.6 12a7.6 7.6 0 1 1-2.2-5.4"/><path d="M12 3.6v5h5"/></svg></div>
+            <div class="sub">重新播放</div>
+          </div>
+          <div class="mbar"><i style="width:100%"></i></div>
+        </div>
+      </div>
+
+      <div class="state">
+        <div class="cap"><span class="dot" style="background:#DC2626"></span>加载失败</div>
+        <div class="mini" style="background:linear-gradient(160deg,#1B1315,#0E0B0C)">
+          <div class="label">
+            <div class="err-orb"><svg data-size="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19.6 12a7.6 7.6 0 1 1-2.2-5.4"/><path d="M12 3.6v5h5"/></svg></div>
+            <div class="sub">视频加载失败，请检查网络后重试</div>
+            <button class="retry">重试</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 图标规范 ============ -->
+  <section class="section">
+    <div class="section-head">
+      <h2>图标规范</h2>
+      <span class="hint">全稿只用这 5 档尺寸，描边统一 1.9（勾选标记 2.2）</span>
+    </div>
+
+    <div class="feats">
+      <div class="fgroup">
+        <h3><span class="ic" style="width:auto;padding:0 7px;height:22px;font-size:11px;font-weight:800">14</span>行内图标</h3>
+        <ul>
+          <li>顶部标签、分组标题</li>
+          <li>手势 HUD（快进 / 快退）</li>
+          <li>用于与 12–13px 文字同行</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h3><span class="ic" style="width:auto;padding:0 7px;height:22px;font-size:11px;font-weight:800">16</span>紧凑图标</h3>
+        <ul>
+          <li>倍速弹层行内图标与勾选标记</li>
+          <li>竖滑提示（亮度 / 音量）</li>
+          <li>状态缩略图（重播、失败）</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h3><span class="ic" style="width:auto;padding:0 7px;height:22px;font-size:11px;font-weight:800">18</span>按钮图标</h3>
+        <ul>
+          <li>顶栏按钮（返回 / 保存 / 更多）</li>
+          <li>控制栏按钮（播放、±10 秒、全屏）</li>
+          <li>桌面控制栏全部按钮</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h3><span class="ic" style="width:auto;padding:0 7px;height:22px;font-size:11px;font-weight:800">24</span>主播放键</h3>
+        <ul>
+          <li>移动端画面中央播放 / 重播</li>
+          <li>画面上唯一的大图标</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h3><span class="ic" style="width:auto;padding:0 7px;height:22px;font-size:11px;font-weight:800">28</span>主播放键（桌面）</h3>
+        <ul>
+          <li>桌面端画面中央播放 / 重播</li>
+          <li>与更大的画面尺寸匹配</li>
+        </ul>
+      </div>
+      <div class="fgroup">
+        <h3><span class="ic" style="width:auto;padding:0 7px;height:22px;font-size:11px;font-weight:800">—</span>统一规则</h3>
+        <ul>
+          <li>全部图标同一笔画风格（1.9px 圆头描边）</li>
+          <li>实心仅用于播放 / 暂停 / 更多</li>
+          <li>按钮触控目标 32px（桌面 34px）</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <div class="footnote">
+    <b>说明：</b>以上为设计稿，功能取舍待你确认后再落到 Flutter。配色取自 <b>AppColors</b>，
+    圆角取自 <b>AppRadius</b>，字体为 <b>Helvetica Neue</b>，图标尺寸已收敛为 5 档统一规范。
+    需要我调整某一块，或砍掉不想要的功能，直接说。
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const DURATION = 12, BUFFER = 0.64;
+
+  function fmt(s){
+    s = Math.max(0, Math.min(DURATION, Math.floor(s)));
+    return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+  }
+
+  function createPlayer(cfg){
+    const stage   = document.getElementById(cfg.stage);
+    const viewport= cfg.viewport ? document.getElementById(cfg.viewport) : null;
+    const seek    = document.getElementById(cfg.seek);
+    const done    = document.getElementById(cfg.done);
+    const thumb   = document.getElementById(cfg.thumb);
+    const tip     = document.getElementById(cfg.tip);
+    const cur     = document.getElementById(cfg.cur);
+    const dur     = document.getElementById(cfg.dur);
+    const playBtn = document.getElementById(cfg.playBtn);
+    const playIcon= document.getElementById(cfg.playIcon);
+    const buffering = cfg.buffering ? document.getElementById(cfg.buffering) : null;
+    const rateBtn = cfg.rateBtn ? document.getElementById(cfg.rateBtn) : null;
+
+    let pos = 0, playing = false, ended = false, rate = 1, hideTimer = null;
+
+    if (dur) dur.textContent = fmt(DURATION);
+    if (tip) tip.textContent = fmt(0);
+
+    const PLAY = '<path d="M8 5.5v13l10.5-6.5z"/>';
+    const PAUSE = '<path d="M7 5h3.6v14H7zm6.4 0H17v14h-3.6z"/>';
+
+    function paint(){
+      const r = pos / DURATION;
+      if (done)  done.style.width  = (r*100) + '%';
+      if (thumb) thumb.style.left  = (r*100) + '%';
+      if (tip){ tip.style.left = (r*100)+'%'; tip.textContent = fmt(pos); }
+      if (cur)   cur.textContent = fmt(pos);
+      if (playIcon) playIcon.innerHTML = playing ? PAUSE : PLAY;
+      stage.classList.toggle('playing', playing);
+      stage.classList.toggle('ended', ended);
+      if (buffering) buffering.classList.toggle('on', playing && pos < 1.1);
+    }
+    function showChrome(){
+      if (!viewport) return;
+      viewport.classList.remove('chrome-hidden');
+      clearTimeout(hideTimer);
+      if (playing) hideTimer = setTimeout(()=>viewport.classList.add('chrome-hidden'), 3000);
+    }
+    function toggle(){
+      if (ended){ ended=false; pos=0; }
+      playing = !playing;
+      showChrome(); paint();
+    }
+    function skip(d){
+      pos = Math.max(0, Math.min(DURATION, pos + d));
+      if (pos < DURATION) ended = false;
+      flash(d < 0 ? cfg.hudL : cfg.hudR);
+      showChrome(); paint();
+    }
+    function flash(id){
+      const el = id && document.getElementById(id);
+      if (!el) return;
+      el.classList.add('on');
+      clearTimeout(el._t);
+      el._t = setTimeout(()=>el.classList.remove('on'), 760);
+    }
+
+    // 单击 / 双击
+    let lastTap = 0;
+    stage.addEventListener('click', (e)=>{
+      if (viewport && viewport.classList.contains('chrome-hidden')){ showChrome(); return; }
+      const now = Date.now();
+      if (now - lastTap < 320){
+        const rect = stage.getBoundingClientRect();
+        const left = (e.clientX - rect.left) < rect.width/2;
+        skip(left ? -10 : 10);
+        lastTap = 0;
+        return;
+      }
+      lastTap = now;
+      if (cfg.blankClickToggles !== false) toggle();
+    });
+
+    // 中央播放键
+    const centerBtn = cfg.centerBtn && document.getElementById(cfg.centerBtn);
+    if (centerBtn) centerBtn.addEventListener('click', (e)=>{ e.stopPropagation(); toggle(); });
+
+    if (playBtn) playBtn.addEventListener('click', (e)=>{ e.stopPropagation(); toggle(); });
+    document.querySelectorAll(cfg.skipSel).forEach(b=>{
+      b.addEventListener('click', (e)=>{ e.stopPropagation(); skip(Number(b.dataset[cfg.skipData])); });
+    });
+
+    // 进度条拖动
+    const seekTo = (clientX)=>{
+      const rect = seek.getBoundingClientRect();
+      const r = Math.max(0, Math.min(1, (clientX - rect.left)/rect.width));
+      pos = r * DURATION; ended = false; paint();
+    };
+    seek.addEventListener('pointerdown', (e)=>{
+      e.stopPropagation();
+      seek.classList.add('dragging'); seekTo(e.clientX);
+      const move = ev => seekTo(ev.clientX);
+      const up = ()=>{ seek.classList.remove('dragging'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+
+    if (rateBtn) rateBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const pop = document.getElementById(cfg.pop);
+      if (pop) pop.classList.toggle('on');
+      showChrome();
+    });
+
+    paint();
+    return {
+      setRate(r){ rate = r; },
+      tick(){ if(!playing) return; pos += 0.1*rate; if(pos>=DURATION){ pos=DURATION; playing=false; ended=true; } paint(); }
+    };
+  }
+
+  const phone = createPlayer({
+    stage:'stage', viewport:'phone', seek:'seek', done:'done', thumb:'thumb', tip:'tip',
+    cur:'cur', dur:'dur', playBtn:'playBtn', playIcon:'playIcon', buffering:'buffering',
+    rateBtn:'rateBtn', centerBtn:'centerBtn', hudL:'hudL', hudR:'hudR',
+    skipSel:'[data-skip]', skipData:'skip', pop:'pop',
+  });
+
+  const desk = createPlayer({
+    stage:'stageD', seek:'seekD', done:'doneD', thumb:'thumbD', tip:'tipD',
+    cur:'curD', dur:'durD', playBtn:'playBtnD', playIcon:'playIconD', buffering:'bufferingD',
+    rateBtn:'rateBtnD', centerBtn:'centerBtnD', hudL:'hudL', hudR:'hudR',
+    skipSel:'[data-skipd]', skipData:'skipd', pop:'pop', blankClickToggles:false,
+  });
+
+  // 倍速选择
+  document.querySelectorAll('#pop [data-rate]').forEach(b=>{
+    b.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const r = Number(b.dataset.rate);
+      phone.setRate(r); desk.setRate(r);
+      const label = (r % 1 === 0 ? r.toFixed(1) : String(r)) + '×';
+      document.getElementById('rateBtn').textContent = label;
+      document.getElementById('rateBtnD').textContent = label;
+      document.querySelectorAll('#pop [data-rate]').forEach(x=>x.classList.toggle('active', x===b));
+      document.getElementById('pop').classList.remove('on');
+    });
+  });
+  document.querySelector('#pop [data-loop]').addEventListener('click', (e)=>{
+    e.stopPropagation();
+    e.currentTarget.classList.toggle('active');
+  });
+  document.addEventListener('click', ()=>{
+    const pop = document.getElementById('pop');
+    if (pop) pop.classList.remove('on');
+  });
+
+  // 音量
+  const vrail = document.getElementById('vrail'), vfill = document.getElementById('vfillD');
+  if (vrail){
+    const setVol = (clientX)=>{
+      const rect = vrail.getBoundingClientRect();
+      const r = Math.max(0, Math.min(1, (clientX-rect.left)/rect.width));
+      vfill.style.width = (r*100)+'%';
+    };
+    vrail.addEventListener('pointerdown', (e)=>{
+      e.stopPropagation(); setVol(e.clientX);
+      const move = ev=>setVol(ev.clientX);
+      const up = ()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+      window.addEventListener('pointermove',move); window.addEventListener('pointerup',up);
+    });
+  }
+  const muteBtn = document.getElementById('muteBtn');
+  if (muteBtn) muteBtn.addEventListener('click', (e)=>{ e.stopPropagation(); muteBtn.classList.toggle('on'); vfill.style.width = muteBtn.classList.contains('on') ? '0%' : '72%'; });
+
+  // 竖滑演示（移动端）
+  let vTimer = null;
+  const vs = document.getElementById('vslide'), vf = document.getElementById('vfill'), vp = document.getElementById('vpct');
+  if (vs){
+    document.getElementById('stage').addEventListener('dblclick', ()=>{});
+    let dragStart = null;
+    document.getElementById('stage').addEventListener('pointerdown', (e)=>{ dragStart = e.clientY; });
+    document.getElementById('stage').addEventListener('pointermove', (e)=>{
+      if (dragStart === null) return;
+      const dy = dragStart - e.clientY;
+      if (Math.abs(dy) < 26) return;
+      const pct = Math.max(0, Math.min(100, 58 + dy));
+      vf.style.height = pct + '%';
+      vp.textContent = Math.round(pct) + '%';
+      vs.classList.add('on');
+      clearTimeout(vTimer);
+      vTimer = setTimeout(()=>vs.classList.remove('on'), 900);
+    });
+    document.getElementById('stage').addEventListener('pointerup', ()=>{ dragStart = null; });
+  }
+
+  // 全屏
+  ['fsBtn','fsBtnD'].forEach(id=>{
+    const b = document.getElementById(id);
+    if (b) b.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const el = id === 'fsBtn' ? document.querySelector('.device') : document.querySelector('.desk');
+      if (!document.fullscreenElement) el.requestFullscreen && el.requestFullscreen();
+      else document.exitFullscreen && document.exitFullscreen();
+    });
+  });
+
+  setInterval(()=>{ phone.tick(); desk.tick(); }, 100);
+})();
+</script>
+
+<script>
+/* 图标光学归一：按 data-size 指定的设计尺寸，把每个图标的真实笔画范围
+   缩放到同一光学大小。display:none 的图标（如默认隐藏的重播键）在测量
+   期间需要临时可见，否则 getBBox() 返回全 0。 */
+(function(){
+  const INK = { 14: 9.6, 16: 10.4, 18: 11.6, 24: 15.2, 28: 17.6 };
+
+  function withVisible(svg, fn){
+    const prev = svg.getAttribute('style') || '';
+    svg.setAttribute('style', prev + ';display:block!important;visibility:hidden!important;');
+    try { return fn(); } finally { svg.setAttribute('style', prev); }
+  }
+
+  function normalize(svg){
+    const size = Number(svg.dataset.size);
+    const target = INK[size];
+    if (!target) return;
+
+    const result = withVisible(svg, function(){
+      const vb = (svg.getAttribute('viewBox') || '0 0 24 24').split(/\s+/).map(Number);
+      const vbW = vb[2] || 24, vbH = vb[3] || 24;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      svg.querySelectorAll('path,circle,rect,line,polyline,polygon').forEach(function(el){
+        let b; try { b = el.getBBox(); } catch (e) { return; }
+        if (!b || (b.width === 0 && b.height === 0)) return;
+        minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+        maxX = Math.max(maxX, b.x + b.width); maxY = Math.max(maxY, b.y + b.height);
+      });
+      if (!isFinite(minX)) return null;
+      return { vbW: vbW, vbH: vbH, minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+    });
+    if (!result) return;
+
+    const inkW = result.maxX - result.minX, inkH = result.maxY - result.minY;
+    if (inkW <= 0 || inkH <= 0) return;
+    const k = target / (Math.max(inkW, inkH) * (size / result.vbW));
+    const cx = (result.minX + result.maxX) / 2, cy = (result.minY + result.maxY) / 2;
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform',
+      'translate(' + (result.vbW / 2) + ' ' + (result.vbH / 2) + ') scale(' + k +
+      ') translate(' + (-cx) + ' ' + (-cy) + ')');
+    while (svg.firstChild) g.appendChild(svg.firstChild);
+    svg.appendChild(g);
+
+    svg.querySelectorAll('path,circle,rect,line,polyline,polygon').forEach(function(el){
+      const w = parseFloat(el.getAttribute('stroke-width'));
+      if (!isNaN(w)) el.setAttribute('stroke-width', (w / k).toFixed(3));
+    });
+  }
+
+  function run(){ document.querySelectorAll('svg[data-size]').forEach(normalize); }
+  if (document.readyState === 'complete') run();
+  else window.addEventListener('load', run);
+})();
+</script>
+</body>
+</html>

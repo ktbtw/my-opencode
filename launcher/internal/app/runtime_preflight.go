@@ -59,8 +59,11 @@ type preflightReport struct {
 }
 
 type runtimePreflightRunner struct {
-	service      *service
-	payload      model.RuntimePreflightStartPayload
+	service *service
+	payload model.RuntimePreflightStartPayload
+	// runtimeOnly 为真时只安装 payload.Runtimes 列出的运行时，
+	// 跳过 MCP、Skill 与语义 Agent 切换。
+	runtimeOnly  bool
 	reporter     preflightReporter
 	items        []model.RuntimeInstallJobItem
 	itemMu       sync.Mutex
@@ -203,32 +206,41 @@ func (s *service) StartAgentSemanticPreflight(payload model.RuntimePreflightStar
 }
 
 func (s *service) applySemanticRuntimeEnv(cfg model.AgentConfig, env map[string]string) {
-	if env == nil || cfg.SemanticAgentProfile == nil {
+	if env == nil {
 		return
 	}
 	var pathDirs []string
-	for _, req := range cfg.SemanticAgentProfile.RuntimeRequirements {
-		runtimeID := strings.TrimSpace(req.RuntimeID)
-		if runtimeID == "" {
-			continue
-		}
-		manifest, ok := s.bestRuntimeManifest(runtimeID, req.VersionConstraint)
-		if !ok {
-			continue
-		}
-		pathDirs = append(pathDirs, runtimeManifestBinDirs(manifest)...)
-		for key, value := range manifest.EnvPatch {
-			key = strings.TrimSpace(key)
-			if key == "" {
+	if cfg.SemanticAgentProfile != nil {
+		for _, req := range cfg.SemanticAgentProfile.RuntimeRequirements {
+			runtimeID := strings.TrimSpace(req.RuntimeID)
+			if runtimeID == "" {
 				continue
 			}
-			env[key] = value
-		}
-		switch runtimeID {
-		case "java":
-			env["JAVA_HOME"] = manifest.InstallDir
+			manifest, ok := s.bestRuntimeManifest(runtimeID, req.VersionConstraint)
+			if !ok {
+				continue
+			}
+			pathDirs = append(pathDirs, runtimeManifestBinDirs(manifest)...)
+			for key, value := range manifest.EnvPatch {
+				key = strings.TrimSpace(key)
+				if key == "" {
+					continue
+				}
+				env[key] = value
+			}
+			switch runtimeID {
+			case "java":
+				env["JAVA_HOME"] = manifest.InstallDir
+			}
 		}
 	}
+	// FFmpeg 不绑定到某个语义 Agent：任何用到视频生成的 Agent 都可能需要它，
+	// 只要装过就注入 PATH，让 agent 直接 which 得到。
+	if manifest, ok := s.bestRuntimeManifest("ffmpeg", ""); ok {
+		pathDirs = append(pathDirs, runtimeManifestBinDirs(manifest)...)
+	}
+	// 托管运行时根目录始终暴露，供 agent 兜底查找（例如按目录找 ffmpeg）。
+	env["LAUNCHER_MANAGED_RUNTIME_DIR"] = filepath.Join(s.cfg.RuntimeDir, "runtimes")
 	if len(pathDirs) == 0 {
 		return
 	}
@@ -240,7 +252,6 @@ func (s *service) applySemanticRuntimeEnv(cfg model.AgentConfig, env map[string]
 		joined += string(os.PathListSeparator) + current
 	}
 	env[key] = joined
-	env["LAUNCHER_MANAGED_RUNTIME_DIR"] = filepath.Join(s.cfg.RuntimeDir, "runtimes")
 }
 
 func (s *service) bestRuntimeManifest(runtimeID string, constraint string) (installedRuntimeManifest, bool) {
@@ -284,6 +295,9 @@ func (s *service) bestRuntimeManifest(runtimeID string, constraint string) (inst
 }
 
 func (r *runtimePreflightRunner) run() error {
+	if r.runtimeOnly {
+		return r.runRuntimesOnly()
+	}
 	r.emit(preflightStatusRunning, "runtime", 3, nil)
 	if err := r.ensureRuntimes(); err != nil {
 		r.fail("runtime", err)
@@ -331,8 +345,60 @@ func (r *runtimePreflightRunner) run() error {
 	return nil
 }
 
+// runRuntimesOnly 只跑运行时安装：给「按需安装单个运行时」（如 FFmpeg）用，
+// 不触碰 MCP、Skill 和语义 Agent 切换。
+func (r *runtimePreflightRunner) runRuntimesOnly() error {
+	r.emit(preflightStatusRunning, "runtime", 3, nil)
+	if err := r.ensureRuntimes(); err != nil {
+		r.fail("runtime", err)
+		r.flushReports()
+		return err
+	}
+	r.emit(preflightStatusCompleted, "completed", 100, []model.RuntimeInstallEvent{{
+		ItemType:        "job",
+		Phase:           "completed",
+		Status:          "success",
+		Message:         "运行时安装完成",
+		ProgressPercent: 100,
+	}})
+	r.enqueueReport(model.RuntimePreflightStatusPayload{
+		JobID:           r.payload.JobID,
+		MachineID:       r.payload.MachineID,
+		LauncherAgentID: r.payload.LauncherAgentID,
+		Status:          preflightStatusCompleted,
+		CurrentStep:     "completed",
+		ProgressPercent: 100,
+		Items:           r.itemsSnapshot(),
+	})
+	r.flushReports()
+	if reportErr := r.reporterError(); reportErr != nil {
+		return fmt.Errorf("运行时安装最终状态上报失败：%w", reportErr)
+	}
+	return nil
+}
+
+// effectiveRequirements 决定本轮要保证哪些运行时：单独安装模式用下发清单，
+// 预检模式用语义 Agent 声明的依赖。
+func (r *runtimePreflightRunner) effectiveRequirements() []model.SemanticAgentRuntime {
+	if r.runtimeOnly {
+		out := make([]model.SemanticAgentRuntime, 0, len(r.payload.Runtimes))
+		for _, item := range r.payload.Runtimes {
+			id := strings.TrimSpace(item.ID)
+			if id == "" {
+				continue
+			}
+			out = append(out, model.SemanticAgentRuntime{RuntimeID: id, Required: true})
+		}
+		return out
+	}
+	if r.payload.SemanticAgent == nil {
+		return nil
+	}
+	return r.payload.SemanticAgent.RuntimeRequirements
+}
+
 func (r *runtimePreflightRunner) ensureRuntimes() error {
-	requirements := r.payload.SemanticAgent.RuntimeRequirements
+	requirements := r.effectiveRequirements()
 	if len(requirements) == 0 {
 		r.emit(preflightStatusRunning, "runtime", 20, []model.RuntimeInstallEvent{{
 			ItemType:        preflightItemRuntime,
@@ -2973,6 +3039,25 @@ func buildPreflightItems(payload model.RuntimePreflightStartPayload) []model.Run
 	runtimeNames := map[string]string{}
 	for _, runtimeItem := range payload.Runtimes {
 		runtimeNames[runtimeItem.ID] = firstNonEmpty(runtimeItem.Name, runtimeItem.ID)
+	}
+	// 单独安装运行时：只列运行时项，没有 MCP / Skill / 切换步骤。
+	if payload.RuntimeOnly || payload.SemanticAgent == nil {
+		for _, runtimeItem := range payload.Runtimes {
+			runtimeID := strings.TrimSpace(runtimeItem.ID)
+			if runtimeID == "" {
+				continue
+			}
+			items = append(items, model.RuntimeInstallJobItem{
+				JobID:     payload.JobID,
+				ItemType:  preflightItemRuntime,
+				ItemID:    runtimeID,
+				Name:      firstNonEmpty(runtimeNames[runtimeID], runtimeID),
+				Required:  true,
+				Status:    preflightStatusPending,
+				UpdatedAt: now,
+			})
+		}
+		return items
 	}
 	if payload.SemanticAgent != nil {
 		hasUV := false

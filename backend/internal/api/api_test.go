@@ -3184,6 +3184,37 @@ func TestNormalizeDeviceAIModelsInfersKunContext(t *testing.T) {
 	}
 }
 
+func TestNormalizeDeviceAIImageCapabilityKeepsAllFields(t *testing.T) {
+	got := normalizeDeviceAIImageCapability(&model.DeviceAIImageCapability{
+		Sizes:         []string{"1024x1024", " 1536x1024 "},
+		AspectRatios:  []string{"1:1", "16:9"},
+		Resolutions:   []string{"1k", "2k"},
+		Qualities:     []string{"low", "medium"},
+		Formats:       []string{"jpeg"},
+		MaxCount:      4,
+		MaxReferences: 3,
+	})
+	if got == nil {
+		t.Fatal("expected capability map")
+	}
+	sizes, _ := got["sizes"].([]string)
+	if len(sizes) != 2 || sizes[1] != "1536x1024" {
+		t.Fatalf("sizes not normalized: %+v", sizes)
+	}
+	if got["max_count"] != 4 || got["max_references"] != 3 {
+		t.Fatalf("limits lost: %+v", got)
+	}
+}
+
+func TestNormalizeDeviceAIImageCapabilityNilWhenEmpty(t *testing.T) {
+	if got := normalizeDeviceAIImageCapability(&model.DeviceAIImageCapability{}); got != nil {
+		t.Fatalf("expected nil for empty capability, got %+v", got)
+	}
+	if got := normalizeDeviceAIImageCapability(nil); got != nil {
+		t.Fatalf("expected nil for nil capability, got %+v", got)
+	}
+}
+
 func TestGetDeviceAIConfigInfersKunContextBeforeReturning(t *testing.T) {
 	mem := store.NewMemory(nil)
 	authManager := auth.NewManager(time.Hour)

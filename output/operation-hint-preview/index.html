@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>恢复 / 停止流程：融入气泡下方轻提示文案</title>
+<style>
+  :root{
+    --bg:#F2F6FC; --surface:#FFFFFF; --border:#D0DDEF; --border-light:#E8EFF8;
+    --primary:#2563EB; --primary-light:#EFF6FF;
+    --text-primary:#0F1729; --text-secondary:#4A5D7A; --text-muted:#8FA3BF;
+    --ok:#16A34A; --err:#DC2626;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 24px 60px;background:var(--bg);color:var(--text-primary);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  h1{font-size:19px;margin:0 0 6px}
+  h2{font-size:15px;margin:34px 0 12px}
+  .sub{font-size:13px;color:var(--text-secondary);margin:0 0 22px;line-height:1.7;max-width:900px}
+  .caption{font-size:13px;font-weight:600;color:var(--text-secondary);margin:0 0 10px}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);background:#fff;color:var(--text-secondary);margin-left:8px}
+  .badge.old{border-color:#FCA5A5;background:#FEF2F2;color:#B91C1C}
+  .badge.new{border-color:#86EFAC;background:#F0FDF4;color:#15803D}
+  .phone{width:430px;max-width:100%;background:var(--bg);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,41,.06)}
+  .topbar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-secondary)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .conn{display:flex;align-items:center;justify-content:space-between;padding:7px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:11px;color:var(--text-secondary)}
+  .conn .right{color:var(--text-muted)}
+  /* 已删除的独立进度条 */
+  .strip{padding:7px 20px 8px;background:var(--surface);border-bottom:1px solid var(--border)}
+  .strip .title{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:600;color:var(--text-secondary)}
+  .strip .steps{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}
+  .chev{color:var(--text-muted);font-size:12px}
+  .st{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--text-secondary)}
+  .st.pending{color:var(--text-muted)}
+  .msgs{padding:16px 14px 20px;display:flex;flex-direction:column;gap:16px}
+  .row{display:flex;gap:10px;align-items:flex-start}
+  .avatar{width:26px;height:26px;border-radius:50%;background:var(--primary-light);color:var(--primary);font-size:11px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-weight:600}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;color:var(--text-primary);max-width:330px}
+  /* 轻提示：现在只有一行文案（+ 可选小字） */
+  .hint{margin-top:4px;max-width:330px}
+  .hint .line{display:flex;align-items:center;gap:9px}
+  .hint .label{font-size:12px;font-weight:500;color:var(--text-secondary);line-height:1.6}
+  .hint .label.err{color:var(--err)}
+  .hint .small{font-size:11px;color:var(--text-muted);margin:3px 0 0 27px}
+  .glyph{width:18px;height:18px;flex:0 0 auto;position:relative}
+  .glyph i{position:absolute;top:50%;width:2.5px;border-radius:2px;background:var(--primary);transform:translateY(-50%);animation:wave 1.6s infinite ease-in-out}
+  .glyph i:nth-child(1){left:2.5px}
+  .glyph i:nth-child(2){left:7.75px;animation-delay:.27s}
+  .glyph i:nth-child(3){left:13px;animation-delay:.54s}
+  @keyframes wave{0%,100%{height:4.5px;opacity:.42}50%{height:11px;opacity:1}}
+  .cols{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:1 1 460px;min-width:380px}
+  .ico.done{color:var(--ok)}
+  .ico.active{color:var(--primary)}
+  .ico.failed{color:var(--err)}
+  .ico.pending{color:var(--text-muted)}
+  .legend{margin-top:30px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;max-width:900px}
+  .legend h3{font-size:13px;margin:0 0 10px}
+  table{border-collapse:collapse;font-size:12px;width:100%}
+  th,td{border-bottom:1px solid var(--border-light);padding:6px 8px;text-align:left;vertical-align:top}
+  th{color:var(--text-muted);font-weight:600}
+  .keep{color:#15803D}
+  .del{color:#B91C1C}
+  .muted{color:var(--text-muted)}
+</style>
+</head>
+<body>
+  <h1>恢复 / 停止流程：融进「气泡下方轻提示」的同一行文案</h1>
+  <p class="sub">
+    同一时刻的渲染对比：手机已请求完任务状态、服务端已接收、等待 Agent 状态。<br>
+    轻提示就一行字：<b>流程标题 · 当前阶段</b>。没有额外的阶段条目、没有第二块面板。顶部连接条未改动。
+  </p>
+
+  <div class="cols">
+    <!-- 改动前 -->
+    <div class="col">
+      <p class="caption">改动前<span class="badge old">顶部独立进度条 + 气泡轻提示</span></p>
+      <div class="phone">
+        <div class="topbar"><span class="dot"></span> zm · 北洛国模/glm-5.3-flash</div>
+        <div class="conn"><span>● 连接正常</span><span class="right">已连接 · 128ms</span></div>
+        <div class="strip">
+          <div class="title"><span class="ico active">⛗</span> 正在恢复回复</div>
+          <div class="steps">
+            <span class="st"><span class="ico done">✓</span> 手机 状态请求完成</span><span class="chev">›</span>
+            <span class="st"><span class="ico active">⟳</span> 服务端 已接收</span><span class="chev">›</span>
+            <span class="st pending"><span class="ico pending">○</span> OpenCode 等待 Agent 状态</span><span class="chev">›</span>
+            <span class="st pending"><span class="ico pending">○</span> 回复 等待恢复</span>
+          </div>
+        </div>
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div>
+              <div class="bubble">上一轮的完整回复正文……</div>
+              <div class="hint">
+                <div class="line"><span class="glyph"><i></i><i></i><i></i></span><span class="label">正在同步最新回复</span></div>
+                <div class="small">稍等片刻，接上刚才的进度</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 改动后 -->
+    <div class="col">
+      <p class="caption">改动后<span class="badge new">只有气泡轻提示一行</span></p>
+      <div class="phone">
+        <div class="topbar"><span class="dot"></span> zm · 北洛国模/glm-5.3-flash</div>
+        <div class="conn"><span>● 连接正常</span><span class="right">已连接 · 128ms</span></div>
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div>
+              <div class="bubble">上一轮的完整回复正文……</div>
+              <div class="hint">
+                <div class="line"><span class="glyph"><i></i><i></i><i></i></span><span class="label">正在恢复回复 · 服务端 已接收</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>停止任务：同一套渲染</h2>
+  <div class="cols">
+    <div class="col">
+      <p class="caption">进行中</p>
+      <div class="phone">
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div>
+              <div class="bubble">正在输出中的正文……</div>
+              <div class="hint">
+                <div class="line"><span class="glyph"><i></i><i></i><i></i></span><span class="label">正在停止任务 · 手机 发送停止指令</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <p class="caption">阶段推进 / 失败</p>
+      <div class="phone">
+        <div class="msgs">
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div>
+              <div class="bubble">正在输出中的正文……</div>
+              <div class="hint">
+                <div class="line"><span class="glyph"><i></i><i></i><i></i></span><span class="label">正在停止任务 · OpenCode 停止中</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="avatar">AI</div>
+            <div>
+              <div class="bubble">下一条消息……</div>
+              <div class="hint">
+                <div class="line"><span class="glyph"><i></i><i></i><i></i></span><span class="label err">正在停止任务 · 服务端 发送失败，连接已断开</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <h3>这一版怎么处理「流程」的</h3>
+    <table>
+      <tr><th>信息</th><th>呈现方式</th></tr>
+      <tr><td>流程标题（正在恢复回复 / 正在停止任务）</td><td class="keep">轻提示文案前半段</td></tr>
+      <tr><td>当前阶段 + 该阶段说明（如「服务端 已接收」「OpenCode 停止中」）</td><td class="keep">接在标题后面，同一行显示</td></tr>
+      <tr><td>失败原因</td><td class="keep">替换当前阶段并整行变红</td></tr>
+      <tr><td>还没走到的阶段</td><td class="muted">不显示（之前是灰色条目，属于冗余部分）</td></tr>
+      <tr><td>阶段之间的箭头 ›</td><td class="del">去掉</td></tr>
+      <tr><td>顶部独立进度条</td><td class="del">删除</td></tr>
+      <tr><td>固定在页面顶部常驻可见</td><td class="del">现在跟随气泡；滚离该气泡看不到</td></tr>
+    </table>
+  </div>
+</body>
+</html>

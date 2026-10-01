@@ -2239,6 +2239,46 @@ func TestNormalizeCompactionThresholdPercent(t *testing.T) {
 	}
 }
 
+func TestInstallRuntimesAcceptsLauncherDeviceIDWithoutProjectAgent(t *testing.T) {
+	runtimeDir := t.TempDir()
+	// 单独安装运行时（例如切换视频模型时安装 FFmpeg）下发的是 launcher
+	// 设备标识，不是 agents.json 里的项目 Agent。这里没有任何项目 Agent，
+	// 但安装必须照常进行，不能被判成「agent not found」。
+	svc := &service{
+		cfg:    config.Config{RuntimeDir: runtimeDir, Agent: config.AgentConfig{Env: map[string]string{}}},
+		agents: []model.Agent{},
+	}
+
+	reports := make(chan model.RuntimePreflightStatusPayload, 8)
+	err := svc.InstallRuntimes(
+		model.RuntimePreflightStartPayload{
+			JobID:           "runtime_install_launcher_id",
+			MachineID:       "m_windows",
+			LauncherAgentID: "launcher:m_windows",
+			RuntimeOnly:     true,
+			Runtimes: []model.RuntimeCatalogItem{
+				{ID: "ffmpeg", Name: "FFmpeg"},
+			},
+		},
+		func(payload model.RuntimePreflightStatusPayload) error {
+			reports <- payload
+			return nil
+		},
+	)
+	if err != nil && strings.Contains(err.Error(), "agent not found") {
+		t.Fatalf("runtime-only install must not require a project agent: %v", err)
+	}
+
+	select {
+	case payload := <-reports:
+		if payload.Status == preflightStatusFailed && strings.Contains(payload.Error, "agent not found") {
+			t.Fatalf("unexpected agent not found report: %+v", payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected at least one install status report")
+	}
+}
+
 func TestEnvConfigRevisionRejectsStaleWrites(t *testing.T) {
 	runtimeDir := t.TempDir()
 	agentID := "agent_env_revision"

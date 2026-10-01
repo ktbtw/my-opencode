@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>连续回复 · 插入消息（按真实界面）</title>
+<style>
+  :root {
+    --bg: #f2f6fc; --surface: #fff; --border: #d0ddef; --border-light: #e8eff8;
+    --primary: #2563eb; --primary-light: #eff6ff; --primary-muted: #bfd7ff;
+    --text: #0f1729; --secondary: #4a5d7a; --muted: #8fa3bf;
+    --ok: #16a34a; --ok-bg: #dcfce7; --warn: #d97706; --warn-bg: #fef3c7;
+    --input: #f8fafd;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: linear-gradient(135deg, #eff4fb, #f7faff);
+    color: var(--text); font-family: -apple-system, "PingFang SC", "Segoe UI", sans-serif; }
+  header { max-width: 1080px; margin: 0 auto; padding: 22px 20px 4px; }
+  header h1 { font-size: 17px; margin: 0 0 6px; }
+  header p { margin: 0; font-size: 13px; line-height: 1.65; color: var(--secondary); }
+  .bar { max-width: 1080px; margin: 0 auto; padding: 14px 20px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .bar button { border: 1px solid var(--border); background: #fff; color: var(--secondary);
+    border-radius: 8px; height: 32px; padding: 0 14px; font-size: 13px; cursor: pointer; }
+  .bar button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .stage { max-width: 1080px; margin: 0 auto; padding: 0 20px 48px;
+    display: grid; gap: 16px; grid-template-columns: 1fr; }
+  .stage.both { }
+  @media (min-width: 900px) { .stage.both { grid-template-columns: 1fr 1fr; } }
+  .phone { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 16px 14px 8px; }
+  .phone h2 { margin: 0 0 14px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+  .cap { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 4px 2px 12px; }
+
+  .msg { display: flex; gap: 10px; margin-bottom: 16px; align-items: flex-start; }
+  .msg.me { flex-direction: row-reverse; }
+  .ava { width: 32px; height: 32px; border-radius: 8px; flex: none; display: flex;
+    align-items: center; justify-content: center; }
+  .ava.ai { background: var(--primary-light); color: var(--primary); }
+  .ava.me { background: var(--primary); color: #fff; }
+  .bubble { max-width: 72%; background: #fff; border: 1px solid var(--border); border-radius: 12px;
+    border-bottom-left-radius: 3px; padding: 10px 14px; font-size: 13.5px; line-height: 1.7;
+    box-shadow: 0 2px 8px rgba(26,58,106,.024); }
+  .bubble.me { background: var(--primary); color: #fff; border: none; border-radius: 12px;
+    border-bottom-right-radius: 3px; box-shadow: none; }
+  .tool { margin-top: 8px; background: var(--ok-bg); color: var(--ok); border-radius: 8px;
+    padding: 7px 10px; font-size: 12px; display: flex; gap: 6px; align-items: center; }
+  .think { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+
+  /* 现状的插入节点：照 _InsertedContextNode */
+  .insert-now { display: flex; gap: 9px; margin: 0 0 16px; position: relative; }
+  .insert-now .rail { position: absolute; left: 11px; top: -14px; bottom: -14px; width: 1px; background: var(--primary-muted); }
+  .insert-now .dot { width: 24px; height: 24px; border-radius: 50%; background: var(--primary-light);
+    border: 1px solid var(--primary-muted); color: var(--primary); display: flex; align-items: center;
+    justify-content: center; flex: none; position: relative; }
+  .insert-now .card { flex: 1; background: var(--primary-light); border-radius: 8px; padding: 8px 11px;
+    border: 1px solid rgba(191,215,255,.9); border-left: 2px solid var(--primary); }
+  .insert-now .t { font-size: 11px; font-weight: 700; color: var(--primary); }
+  .insert-now .sub { font-size: 10px; color: var(--muted); margin-left: 7px; font-weight: 400; }
+  .insert-now .body { font-size: 12px; line-height: 1.5; color: #17356d; margin-top: 4px; }
+  .insert-now .foot { font-size: 10px; color: var(--secondary); margin-top: 5px; }
+
+  /* 方案：同一个气泡，中间嵌一条引用 */
+  .one { max-width: 72%; background: #fff; border: 1px solid var(--border); border-radius: 12px;
+    border-bottom-left-radius: 3px; box-shadow: 0 2px 8px rgba(26,58,106,.024); overflow: hidden; }
+  .one .seg { padding: 10px 14px; font-size: 13.5px; line-height: 1.7; }
+  .one .seg + .seg { border-top: 1px solid var(--border-light); }
+  .quote { margin: 4px 14px; background: var(--input); border-radius: 8px; padding: 8px 10px;
+    display: flex; gap: 8px; align-items: flex-start; }
+  .quote .mark { width: 3px; align-self: stretch; background: var(--primary); border-radius: 2px; flex: none; }
+  .quote .who { font-size: 11px; color: var(--primary); font-weight: 600; }
+  .quote .txt { font-size: 13px; line-height: 1.6; color: var(--text); margin-top: 2px; }
+  .quote.long .txt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .quote.open .txt { -webkit-line-clamp: unset; display: block; }
+  .quote .toggle { margin-top: 3px; font-size: 11px; color: var(--muted); cursor: pointer; background: none; border: 0; padding: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>连续回复里插入一条消息</h1>
+  <p>左侧按现在的真实样式画：AI 是白底圆角气泡配浅蓝方头像，你的消息是蓝色实心气泡，插入的内容是单独一条「已追加到当前任务」节点，它把上下两段正文拆成了两个气泡。<br>
+     右侧是调整后的：上下正文仍是同一个气泡，你插入的那句以一条引用嵌在它实际发生的位置，不再另起气泡。</p>
+</header>
+<div class="bar">
+  <button id="b-now" class="on">现在的样子</button>
+  <button id="b-new">调整后</button>
+  <button id="b-both">并排</button>
+</div>
+<div class="stage" id="stage">
+  <section class="phone" id="p-now">
+    <h2>现在</h2>
+    <div class="msg">
+      <div class="ava ai"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01"/></svg></div>
+      <div class="bubble">我先看一下目录结构，确认入口文件在哪。
+        <div class="tool"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 .01 20.01A10 10 0 0 0 12 2zm-1.2 14.2-3.5-3.5 1.4-1.4 2.1 2.1 4.6-4.6 1.4 1.4-6 6z"/></svg>已调用 列出目录</div>
+      </div>
+    </div>
+    <div class="insert-now">
+      <div class="rail"></div>
+      <div class="dot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8h9M14 8l3 3-3 3M5 14h12"/></svg></div>
+      <div class="card">
+        <div><span class="t">已追加到当前任务</span><span class="sub">任务上下文</span></div>
+        <div class="body">你先别改代码，把当前的报错日志贴给我看看。</div>
+        <div class="foot">来自发送队列 · 已进入下一轮上下文</div>
+      </div>
+    </div>
+    <div class="msg">
+      <div class="ava ai"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01"/></svg></div>
+      <div class="bubble">好的，日志在这里：连接在 30 秒后超时，重试两次都失败了。</div>
+    </div>
+    <p class="cap">插入的一句把本应连续的正文切成两个独立气泡，各带自己的头像和圆角。</p>
+  </section>
+
+  <section class="phone" id="p-new" hidden>
+    <h2>调整后</h2>
+    <div class="msg">
+      <div class="ava ai"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V5M9 13h.01M15 13h.01"/></svg></div>
+      <div class="one">
+        <div class="seg">我先看一下目录结构，确认入口文件在哪。
+          <div class="tool"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 .01 20.01A10 10 0 0 0 12 2zm-1.2 14.2-3.5-3.5 1.4-1.4 2.1 2.1 4.6-4.6 1.4 1.4-6 6z"/></svg>已调用 列出目录</div>
+        </div>
+        <div class="quote long" id="q">
+          <div class="mark"></div>
+          <div>
+            <div class="who">你 · 已追加到当前任务</div>
+            <div class="txt">你先别改代码，把当前的报错日志贴给我看看。另外顺便确认一下超时是发生在建立连接阶段还是已经连上之后，我好判断要不要先加日志。</div>
+            <button class="toggle" onclick="document.getElementById('q').classList.toggle('open');this.textContent=this.textContent==='展开'?'收起':'展开'">展开</button>
+          </div>
+        </div>
+        <div class="seg">好的，日志在这里：连接在 30 秒后超时，重试两次都失败了。</div>
+      </div>
+    </div>
+    <p class="cap">上下正文是同一个气泡，只有一个头像。你插入的内容是气泡里的一条引用，出现在它真实插入的位置；短句完整显示，超过两行才折叠。</p>
+  </section>
+</div>
+<script>
+  const now = document.getElementById('p-now'), neu = document.getElementById('p-new');
+  const stage = document.getElementById('stage');
+  function set(mode) {
+    now.hidden = mode === 'new';
+    neu.hidden = mode === 'now';
+    stage.classList.toggle('both', mode === 'both');
+    document.querySelectorAll('.bar button').forEach(b => b.classList.remove('on'));
+    document.getElementById('b-' + mode).classList.add('on');
+  }
+  document.getElementById('b-now').onclick = () => set('now');
+  document.getElementById('b-new').onclick = () => set('new');
+  document.getElementById('b-both').onclick = () => set('both');
+</script>
+</body>
+</html>

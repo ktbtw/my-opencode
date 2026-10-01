@@ -1253,7 +1253,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     return raw
         .whereType<Map<String, dynamic>>()
         .map(AiOutputFile.fromJson)
-        .where((file) => file.isImage && file.url.isNotEmpty)
+        // 视频与图片一样是生成结果：只留图片会把生视频的结果丢掉，
+        // 气泡里就什么都不显示。
+        .where((file) => (file.isImage || file.isVideo) && file.url.isNotEmpty)
         .toList();
   }
 
@@ -1343,6 +1345,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
           : isCancelled
           ? MessageState.done
           : (isActive ? MessageState.streaming : MessageState.done);
+      // 生图轮次在重建时必须还原生图状态：否则既没有生图进度卡片，
+      // 气泡又停在流式态，看起来就是「一直等待新的回复」。
+      final taskModelRef = task.modelRef;
+      final imageGeneration =
+          isActive &&
+              taskModelRef.isNotEmpty &&
+              looksLikeImageGenerationModel(
+                taskModelRef.split('/').first,
+                taskModelRef.split('/').last,
+                taskModelRef,
+              )
+          ? ImageGenerationInfo.fromModelRef(taskModelRef, taskCreatedAt)
+          : null;
       msgs.add(
         ChatMessage(
           id: 'agent_${task.taskId}',
@@ -1364,6 +1379,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           taskId: task.taskId,
           taskCreatedAt: taskCreatedAt,
           taskMessageIndex: 1,
+          imageGeneration: imageGeneration,
           artifacts: task.artifacts,
           plan: task.plan,
           hasPlanBinding: task.plan != null && !task.plan!.isEmpty,
@@ -1719,6 +1735,39 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
+  /// 继续执行目标：目标被用户停止或达到最大轮数而暂停后，
+  /// 从上次已完成的轮次接着跑，不从头开始。
+  /// 实现上是一次普通的 task.run，metadata 里带 goal_resume=true +
+  /// 原 goal_id + 下一轮 iteration，relay 侧据此从断点继续。
+  Future<bool> resumeGoal({
+    required GoalSettings settings,
+    ModelInfo? model,
+    String permissionMode = 'ask',
+    String? variant,
+  }) async {
+    if (state.taskActive) return false;
+    final objective = settings.content.trim();
+    if (objective.isEmpty) return false;
+    final latest = _latestGoalProgressEntry();
+    if (latest == null || latest.type != 'goal_paused') return false;
+    if (latest.isTransientRetry) return false;
+    final nextIteration = latest.iteration + 1;
+    return sendMessage(
+      '继续执行目标：$objective',
+      model: model,
+      permissionMode: permissionMode,
+      variant: variant,
+      goalOverride: objective,
+      goalMaxIterations: settings.maxIterations,
+      forceGoal: true,
+      extraMetadata: {
+        'goal_resume': 'true',
+        'goal_id': latest.goalId,
+        'goal_iteration': nextIteration.toString(),
+      },
+    );
+  }
+
   Future<bool> sendMessage(
     String text, {
     ModelInfo? model,
@@ -1727,6 +1776,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
     List<AttachedFile>? attachedFilesOverride,
     String? goalOverride,
     int? goalMaxIterations,
+    ImageGenerationOptions? imageOptions,
+    bool forceGoal = false,
+    Map<String, String>? extraMetadata,
   }) async {
     debugPrint(
       '[Chat] sendMessage called: "$text", sending=${state.sending}, taskActive=${state.taskActive}',
@@ -1736,7 +1788,10 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final commandGoal = _parseGoalCommand(text);
     final configuredGoal = goalOverride?.trim();
     final latestGoal = _latestGoalProgressEntry();
-    final allowConfiguredGoal = latestGoal?.isTerminal != true;
+    // 继续目标（forceGoal）要越过 terminal 检查：上次目标停在 paused
+    // 正是继续的前提，不能被「目标已终止就不自动带 goal」挡掉。
+    final allowConfiguredGoal =
+        forceGoal || latestGoal?.isTerminal != true;
     final goal =
         commandGoal ??
         (allowConfiguredGoal &&
@@ -1745,13 +1800,19 @@ class ChatNotifier extends StateNotifier<ChatState> {
             ? configuredGoal
             : null);
     final sendText = commandGoal ?? text;
+    // 生图/生视频参数走任务 metadata 的独立字段（见 ImageGenerationOptions
+    // .toMetadata），不再拼进提示词：提示词保持用户输入原样，历史重建、
+    // 复制和日志都不会带出 --n=2 这类开关。
+    final promptText = sendText;
     final filesToSend = List<AttachedFile>.from(
       attachedFilesOverride ?? state.attachedFiles,
     );
     final modelToSend = model;
     // 加入 agent 流式气泡（占位），记录发送时刻用于首字计时
     final sentAt = DateTime.now();
-    final imageGeneration = modelToSend?.supportsImageOutput == true
+    final imageGeneration =
+        modelToSend?.supportsImageOutput == true ||
+            modelToSend?.supportsVideoOutput == true
         ? ImageGenerationInfo.fromModel(modelToSend!, sentAt)
         : null;
 
@@ -1771,7 +1832,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (shouldQueue) {
       state = state.copyWith(attachedFiles: const [], clearQueueError: true);
       final queued = await _enqueueMessage(
-        text: sendText,
+        text: promptText,
         attachedFiles: filesToSend,
         model: modelToSend,
         permissionMode: permissionMode,
@@ -1779,6 +1840,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         goal: goal,
         goalMaxIterations:
             goalMaxIterations ?? GoalSettings.defaultMaxIterations,
+        imageOptions: imageOptions,
+        extraMetadata: extraMetadata,
       );
       if (!queued) {
         final current = List<AttachedFile>.from(state.attachedFiles);
@@ -1871,7 +1934,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final task = await _repo.createTask(
         agentId: agentId,
         projectId: projectId,
-        text: sendText,
+        text: promptText,
         sessionId: state.currentSessionId,
         attachedFiles: filesToSend.isNotEmpty ? filesToSend : null,
         model: modelToSend,
@@ -1880,6 +1943,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         goal: goal,
         goalMaxIterations:
             goalMaxIterations ?? GoalSettings.defaultMaxIterations,
+        imageOptions: imageOptions,
+        extraMetadata: extraMetadata,
       );
       _logChatLatency(
         'create_task_completed',
@@ -1997,6 +2062,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
     required String? variant,
     required String? goal,
     required int goalMaxIterations,
+    ImageGenerationOptions? imageOptions,
+    Map<String, String>? extraMetadata,
   }) async {
     try {
       var sessionId = state.currentSessionId?.trim() ?? '';
@@ -2021,6 +2088,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
         variant: variant,
         goal: goal,
         goalMaxIterations: goalMaxIterations,
+        imageOptions: imageOptions,
+        extraMetadata: extraMetadata,
       );
       _mergeQueueItem(item);
       unawaited(_startQueueSync(sessionId));

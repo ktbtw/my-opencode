@@ -836,6 +836,14 @@ func (relayTestService) StartAgentSemanticPreflight(model.RuntimePreflightStartP
 	return nil
 }
 
+func (relayTestService) RuntimeStatus(runtimeID string) (model.DeviceRuntimeStatus, error) {
+	return model.DeviceRuntimeStatus{RuntimeID: runtimeID}, nil
+}
+
+func (relayTestService) InstallRuntimes(model.RuntimePreflightStartPayload, func(model.RuntimePreflightStatusPayload) error) error {
+	return nil
+}
+
 func (relayTestService) SaveMCPConfig(model.DeviceMCPConfigInfo) (*model.DeviceMCPConfigInfo, error) {
 	return nil, nil
 }

@@ -2,7 +2,7 @@ name: chat_codex_app
 description: "Chat Codex - 远程设备与 Agent 管理控制台"
 publish_to: 'none'
 
-version: 1.6.106+253
+version: 1.6.118+265
 
 environment:
   sdk: ^3.8.0
@@ -31,6 +31,9 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.29
   sqlite3: ^2.9.4
 
+  # 视频播放（生成的视频在应用内直接播放）
+  video_player: ^2.9.2
+
   # 文件选择
   file_picker: ^8.0.7
   desktop_drop: ^0.5.0
@@ -51,6 +54,9 @@ dependencies:
   url_launcher: ^6.3.1
   photo_view: ^0.15.0
   webview_windows: ^0.4.0
+  screen_brightness: ^2.1.11
+  share_plus: ^12.0.2
+  volume_controller: ^3.4.4
 
 dev_dependencies:
   flutter_test:

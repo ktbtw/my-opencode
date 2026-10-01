@@ -336,6 +336,24 @@ const messageBase = {
   sessionID: SessionID,
 }
 
+/**
+ * 生图 / 生视频的请求参数，随用户消息一起持久化。
+ * 走独立字段而不是拼进提示词文本：提示词保持用户输入原样，历史重建、
+ * 日志和复制都不会带出 --n=2 这类开关。
+ */
+export const MessageMedia = Schema.Struct({
+  count: Schema.optional(Schema.Number),
+  size: Schema.optional(Schema.String),
+  quality: Schema.optional(Schema.String),
+  format: Schema.optional(Schema.String),
+  background: Schema.optional(Schema.String),
+  fidelity: Schema.optional(Schema.String),
+  aspectRatio: Schema.optional(Schema.String),
+  resolution: Schema.optional(Schema.String),
+  duration: Schema.optional(Schema.Number),
+}).annotate({ identifier: "MessageMedia" })
+export type MessageMedia = Types.DeepMutable<Schema.Schema.Type<typeof MessageMedia>>
+
 export const User = Schema.Struct({
   ...messageBase,
   role: Schema.Literal("user"),
@@ -343,6 +361,7 @@ export const User = Schema.Struct({
     created: NonNegativeInt,
   }),
   format: Schema.optional(Format),
+  media: Schema.optional(MessageMedia),
   summary: Schema.optional(
     Schema.Struct({
       title: Schema.optional(Schema.String),

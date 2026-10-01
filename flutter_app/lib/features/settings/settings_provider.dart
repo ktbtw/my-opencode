@@ -11,6 +11,9 @@ import '../../core/config/api_client.dart';
 
 class AppSettings {
   static const String downloadDirectoryKey = 'downloadDirectory';
+
+  /// SAF 授权目录（content:// URI）的可读名称，仅用于展示。
+  static const String downloadDirectoryLabelKey = 'downloadDirectoryLabel';
   static const String emailNotificationEnabledKey = 'emailNotificationEnabled';
   static const String userSettingsAgentId = '__user__';
   static const String emailNotificationSettingKey =
@@ -55,6 +58,15 @@ class AppSettings {
   final int subagentOrchestrationMaxConcurrent;
   final Map<String, dynamic> subagentOrchestrationRoleModels;
   final String? downloadDirectory;
+
+  /// SAF 授权目录的可读名称；缺失时回退到路径本身。
+  String get downloadDirectoryLabel {
+    final label = downloadDirectoryLabelValue?.trim() ?? '';
+    if (label.isNotEmpty) return label;
+    return downloadDirectory ?? '';
+  }
+
+  final String? downloadDirectoryLabelValue;
   static const int pasteAsFileThreshold = 500;
 
   // 通知类
@@ -83,6 +95,7 @@ class AppSettings {
     this.subagentOrchestrationMaxConcurrent = 5,
     this.subagentOrchestrationRoleModels = const {},
     this.downloadDirectory,
+    this.downloadDirectoryLabelValue,
     this.emailNotificationEnabled = false,
     this.backgroundNotificationEnabled = true,
     this.globalPrompt = '',
@@ -143,6 +156,8 @@ class AppSettings {
       downloadDirectory: identical(downloadDirectory, _unset)
           ? this.downloadDirectory
           : downloadDirectory as String?,
+      downloadDirectoryLabelValue:
+          downloadDirectoryLabelValue ?? this.downloadDirectoryLabelValue,
     );
   }
 }
@@ -275,6 +290,9 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       backgroundNotificationEnabled:
           prefs.getBool(AppSettings.backgroundNotificationEnabledKey) ?? true,
       downloadDirectory: prefs.getString(AppSettings.downloadDirectoryKey),
+      downloadDirectoryLabelValue: prefs.getString(
+        AppSettings.downloadDirectoryLabelKey,
+      ),
     );
 
     _localReady.complete();
@@ -409,15 +427,25 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     if (remoteKey != null && _active) await _flushStatistics();
   }
 
-  Future<void> setDownloadDirectory(String? path) async {
+  Future<void> setDownloadDirectory(String? path, {String? label}) async {
     final prefs = await SharedPreferences.getInstance();
     final normalized = path?.trim();
     if (normalized == null || normalized.isEmpty) {
       await prefs.remove(AppSettings.downloadDirectoryKey);
+      await prefs.remove(AppSettings.downloadDirectoryLabelKey);
       state = state.copyWith(downloadDirectory: null);
       return;
     }
     await prefs.setString(AppSettings.downloadDirectoryKey, normalized);
+    final normalizedLabel = label?.trim() ?? '';
+    if (normalizedLabel.isEmpty) {
+      await prefs.remove(AppSettings.downloadDirectoryLabelKey);
+    } else {
+      await prefs.setString(
+        AppSettings.downloadDirectoryLabelKey,
+        normalizedLabel,
+      );
+    }
     state = state.copyWith(downloadDirectory: normalized);
   }
 

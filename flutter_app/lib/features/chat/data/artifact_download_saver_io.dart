@@ -28,6 +28,15 @@ Future<String?> saveArtifactBytes(
       'bytes': Uint8List.fromList(bytes),
     });
   }
+  if (Platform.isAndroid && customPath != null && customPath.isNotEmpty) {
+    // 分区存储下只有 SAF 授权目录（content://）可写。普通路径是历史遗留设置，
+    // 直接写会抛系统权限错误，这里换成可执行的提示。
+    if (!customPath.startsWith('content://')) {
+      throw StateError(
+        '当前下载目录没有写入权限。请在「设置 → 下载目录」或「项目设置」里重新选择一个目录后重试。',
+      );
+    }
+  }
   final directory = customPath != null && customPath.isNotEmpty
       ? Directory(customPath)
       : await getDownloadsDirectory() ??

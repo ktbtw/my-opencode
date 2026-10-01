@@ -2526,9 +2526,10 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 					} `json:"limit"`
 					Modalities   *model.DeviceAIModalities `json:"modalities"`
 					Capabilities struct {
-						Reasoning bool            `json:"reasoning"`
-						Input     map[string]bool `json:"input"`
-						Output    map[string]bool `json:"output"`
+						Reasoning bool                            `json:"reasoning"`
+						Input     map[string]bool                 `json:"input"`
+						Output    map[string]bool                 `json:"output"`
+						Image     *aiconfig.RuntimeImageCapability `json:"image,omitempty"`
 					} `json:"capabilities"`
 					Variants map[string]any `json:"variants"`
 				} `json:"models"`
@@ -2576,6 +2577,7 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 						Reasoning: item.Capabilities.Reasoning,
 						Input:     item.Capabilities.Input,
 						Output:    item.Capabilities.Output,
+						Image:     item.Capabilities.Image,
 					},
 					Variants: cloneAnyMap(item.Variants),
 				}
