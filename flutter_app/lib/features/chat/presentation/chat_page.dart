@@ -37,6 +37,7 @@ import 'attachment_drop_target.dart';
 import 'chat_provider.dart';
 import 'ffmpeg_install_dialog.dart';
 import 'artifact_image_viewer_page.dart';
+import 'inline_image_viewer_page.dart';
 import 'video_player/artifact_video_player_page.dart';
 import 'attachment_viewer_page.dart';
 import 'artifact_download_notification.dart';
@@ -3658,19 +3659,26 @@ class _ArtifactPreview extends StatelessWidget {
             crossAxisSpacing: 8,
             mainAxisSpacing: 8,
             children: [
-              for (final artifact in images)
+              for (var i = 0; i < images.length; i++)
                 _ArtifactImageCard(
                   taskId: taskId,
-                  artifact: artifact,
+                  artifact: images[i],
                   compact: true,
+                  gallery: images,
+                  galleryIndex: i,
                 ),
             ],
           )
         else
-          for (final artifact in images)
+          for (var i = 0; i < images.length; i++)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: _ArtifactImageCard(taskId: taskId, artifact: artifact),
+              child: _ArtifactImageCard(
+                taskId: taskId,
+                artifact: images[i],
+                gallery: images,
+                galleryIndex: i,
+              ),
             ),
         for (final artifact in others)
           Padding(
@@ -3842,7 +3850,10 @@ class _InlineFilePreview extends StatelessWidget {
             ),
           ),
         if (_pictureCount == 1)
-          _InlineImageCard(file: _pictures.first)
+          _InlineImageCard(
+            file: _pictures.first,
+            gallery: _pictures,
+          )
         else if (_pictureCount > 1)
           GridView.count(
             crossAxisCount: _columns,
@@ -3851,8 +3862,13 @@ class _InlineFilePreview extends StatelessWidget {
             crossAxisSpacing: 8,
             mainAxisSpacing: 8,
             children: [
-              for (final file in _pictures)
-                _InlineImageCard(file: file, compact: true),
+              for (var i = 0; i < _pictures.length; i++)
+                _InlineImageCard(
+                  file: _pictures[i],
+                  compact: true,
+                  gallery: _pictures,
+                  galleryIndex: i,
+                ),
             ],
           ),
       ],
@@ -4158,7 +4174,18 @@ class _InlineImageCard extends StatelessWidget {
   /// 网格里的紧凑样式：方形格子 + 底部浮层操作。
   final bool compact;
 
-  const _InlineImageCard({required this.file, this.compact = false});
+  /// 同一轮生成的全部图片，点击后可左右滑动切换上一张 / 下一张。
+  final List<AiOutputFile> gallery;
+
+  /// 当前图片在 [gallery] 中的下标。
+  final int galleryIndex;
+
+  const _InlineImageCard({
+    required this.file,
+    this.compact = false,
+    this.gallery = const [],
+    this.galleryIndex = 0,
+  });
 
   Widget _image({double? width, double? height, BoxFit fit = BoxFit.cover}) {
     final fallbackHeight = compact ? null : 220.0;
@@ -4185,37 +4212,22 @@ class _InlineImageCard extends StatelessWidget {
     );
   }
 
+  /// 优先用父级传入的整轮图片；未提供时退化为只看当前这张。
+  List<AiOutputFile> get _gallery =>
+      gallery.isNotEmpty ? gallery : [file];
+
+  int get _galleryIndex {
+    if (gallery.isEmpty) return 0;
+    final found = gallery.indexWhere((item) => item.id == file.id);
+    return found >= 0 ? found : galleryIndex;
+  }
+
   Future<void> _open(BuildContext context) async {
-    await showDialog<void>(
-      context: context,
-      barrierColor: Colors.black87,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.black,
-        insetPadding: const EdgeInsets.all(16),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.92,
-            maxHeight: MediaQuery.of(context).size.height * 0.82,
-          ),
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: InteractiveViewer(
-                  minScale: 0.5,
-                  maxScale: 4,
-                  child: Center(child: _image(fit: BoxFit.contain)),
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white),
-                ),
-              ),
-            ],
-          ),
+    await Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (_) => InlineImageViewerPage(
+          images: _gallery,
+          initialIndex: _galleryIndex,
         ),
       ),
     );
@@ -4437,10 +4449,18 @@ class _ArtifactImageCard extends StatefulWidget {
   final AiArtifact artifact;
   final bool compact;
 
+  /// 同一轮交付里的全部图片，点击后可左右滑动切换上一张 / 下一张。
+  final List<AiArtifact> gallery;
+
+  /// 当前图片在 [gallery] 中的下标。
+  final int galleryIndex;
+
   const _ArtifactImageCard({
     required this.taskId,
     required this.artifact,
     this.compact = false,
+    this.gallery = const [],
+    this.galleryIndex = 0,
   });
 
   @override
@@ -4476,7 +4496,22 @@ class _ArtifactImageCardState extends State<_ArtifactImageCard> {
     );
   }
 
-  String _heroTag() => 'artifact-image-${widget.taskId}-${widget.artifact.id}';
+  String _heroTag() => ArtifactImageViewerPage.heroTagFor(
+    widget.taskId ?? '',
+    widget.artifact.id,
+  );
+
+  /// 优先用父级传入的整轮图片；未提供时退化为只看当前这张。
+  List<AiArtifact> get _gallery =>
+      widget.gallery.isNotEmpty ? widget.gallery : [widget.artifact];
+
+  int get _galleryIndex {
+    if (widget.gallery.isEmpty) return 0;
+    final found = widget.gallery.indexWhere(
+      (item) => item.id == widget.artifact.id,
+    );
+    return found >= 0 ? found : widget.galleryIndex;
+  }
 
   String _formatSize(int sizeBytes) {
     if (sizeBytes <= 0) return '-';
@@ -4495,9 +4530,9 @@ class _ArtifactImageCardState extends State<_ArtifactImageCard> {
       MaterialPageRoute<void>(
         builder: (_) => ArtifactImageViewerPage(
           taskId: taskId,
-          artifact: widget.artifact,
-          imageBytes: bytes,
-          heroTag: _heroTag(),
+          images: _gallery,
+          initialIndex: _galleryIndex,
+          initialBytes: bytes,
           project: project,
         ),
       ),
