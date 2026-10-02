@@ -6435,6 +6435,8 @@ class _QuestionBannerState extends State<QuestionBanner>
   late Animation<Offset> _slide;
   late List<List<String>> _answers;
   late List<TextEditingController> _customAnswerControllers;
+  late final PageController _pageController;
+  int _activeIndex = 0;
 
   @override
   void initState() {
@@ -6452,6 +6454,7 @@ class _QuestionBannerState extends State<QuestionBanner>
       (_) => <String>[],
     );
     _customAnswerControllers = _createCustomAnswerControllers();
+    _pageController = PageController();
   }
 
   @override
@@ -6468,6 +6471,10 @@ class _QuestionBannerState extends State<QuestionBanner>
         (_) => <String>[],
       );
       _customAnswerControllers = _createCustomAnswerControllers();
+      _activeIndex = 0;
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(0);
+      }
       _ctrl.forward(from: 0);
     }
   }
@@ -6477,8 +6484,31 @@ class _QuestionBannerState extends State<QuestionBanner>
     for (final controller in _customAnswerControllers) {
       controller.dispose();
     }
+    _pageController.dispose();
     _ctrl.dispose();
     super.dispose();
+  }
+
+  void _goToPage(int index) {
+    if (index < 0 || index >= widget.question.questions.length) return;
+    if (!_pageController.hasClients) {
+      setState(() => _activeIndex = index);
+      return;
+    }
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  bool _isAnswered(int index) {
+    if (index < 0 || index >= widget.question.questions.length) return false;
+    final item = widget.question.questions[index];
+    if (item.custom && _customAnswerControllers[index].text.trim().isNotEmpty) {
+      return true;
+    }
+    return _answers[index].isNotEmpty;
   }
 
   List<TextEditingController> _createCustomAnswerControllers() {
@@ -6551,6 +6581,7 @@ class _QuestionBannerState extends State<QuestionBanner>
             border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
@@ -6590,100 +6621,67 @@ class _QuestionBannerState extends State<QuestionBanner>
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-              ...List.generate(question.questions.length, (index) {
-                final item = question.questions[index];
-                return Padding(
-                  padding: EdgeInsets.only(
-                    bottom: index == question.questions.length - 1 ? 0 : 14,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.header.isNotEmpty
-                            ? item.header
-                            : '问题 ${index + 1}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        item.question,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (item.multiple)
-                        ...item.options.map((option) {
-                          final selected = _answers[index].contains(
-                            option.label,
-                          );
-                          return CheckboxListTile(
-                            value: selected,
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            controlAffinity: ListTileControlAffinity.leading,
-                            title: Text(option.label),
-                            subtitle: option.description.isNotEmpty
-                                ? Text(option.description)
-                                : null,
-                            onChanged: (value) => _toggleMultiple(
-                              index,
-                              option.label,
-                              value ?? false,
-                            ),
-                          );
-                        })
-                      else
-                        ...item.options.map((option) {
-                          return RadioListTile<String>(
-                            value: option.label,
-                            groupValue: _answers[index].isEmpty
-                                ? null
-                                : _answers[index].first,
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(option.label),
-                            subtitle: option.description.isNotEmpty
-                                ? Text(option.description)
-                                : null,
-                            onChanged: (value) {
-                              if (value != null) {
-                                _selectSingle(index, value);
-                              }
-                            },
-                          );
-                        }),
-                      if (item.custom) ...[
-                        const SizedBox(height: 6),
-                        TextField(
-                          key: ValueKey('question-custom-$index'),
-                          controller: _customAnswerControllers[index],
-                          minLines: 1,
-                          maxLines: 3,
-                          textInputAction: TextInputAction.newline,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textPrimary,
-                          ),
-                          decoration: const InputDecoration(
-                            hintText: '输入其他回复',
-                            prefixIcon: Icon(Icons.edit_outlined, size: 17),
-                            isDense: true,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                );
-              }),
+              if (question.questions.length > 1) ...[
+                const SizedBox(height: 10),
+                _QuestionStepper(
+                  questions: question.questions,
+                  activeIndex: _activeIndex,
+                  isAnswered: _isAnswered,
+                  onSelect: _goToPage,
+                ),
+              ],
               const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 320),
+                child: PageView.builder(
+                  controller: _pageController,
+                  itemCount: question.questions.length,
+                  onPageChanged: (index) => setState(() => _activeIndex = index),
+                  itemBuilder: (context, index) => _buildQuestionPage(
+                    index,
+                    question.questions[index],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    _canSubmit
+                        ? Icons.check_circle_outline_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    size: 13,
+                    color: _canSubmit
+                        ? AppColors.statusSuccess
+                        : AppColors.textMuted,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      _canSubmit
+                          ? '全部作答完成，可以提交'
+                          : '还有 ${_remainingCount(question)} 题未作答',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: _canSubmit
+                            ? AppColors.statusSuccess
+                            : AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                  if (question.questions.length > 1)
+                    Text(
+                      '左右滑动切换题目',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 9),
               Row(
                 children: [
                   Expanded(
@@ -6708,6 +6706,323 @@ class _QuestionBannerState extends State<QuestionBanner>
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  int _remainingCount(QuestionRequestInfo question) {
+    var remaining = 0;
+    for (var index = 0; index < question.questions.length; index++) {
+      if (!_isAnswered(index)) remaining++;
+    }
+    return remaining;
+  }
+
+  Widget _buildQuestionPage(int index, QuestionItemInfo item) {
+    return SingleChildScrollView(
+      key: PageStorageKey<String>('question-page-$index'),
+      padding: const EdgeInsets.only(right: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (widget.question.questions.length > 1) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '问题 ${index + 1} / ${widget.question.questions.length}',
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            item.question,
+            style: const TextStyle(
+              fontSize: 13.5,
+              height: 1.6,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...item.options.map((option) {
+            if (item.multiple) {
+              final selected = _answers[index].contains(option.label);
+              return _QuestionOptionTile(
+                label: option.label,
+                description: option.description,
+                selected: selected,
+                multiple: true,
+                onTap: () => _toggleMultiple(index, option.label, !selected),
+              );
+            }
+            final selected = _answers[index].contains(option.label);
+            return _QuestionOptionTile(
+              label: option.label,
+              description: option.description,
+              selected: selected,
+              multiple: false,
+              onTap: () => _selectSingle(index, option.label),
+            );
+          }),
+          if (item.custom) ...[
+            const SizedBox(height: 9),
+            TextField(
+              key: ValueKey('question-custom-$index'),
+              controller: _customAnswerControllers[index],
+              minLines: 1,
+              maxLines: 3,
+              textInputAction: TextInputAction.newline,
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppColors.textPrimary,
+              ),
+              decoration: const InputDecoration(
+                hintText: '输入其他回复',
+                prefixIcon: Icon(Icons.edit_outlined, size: 17),
+                isDense: true,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+        ],
+      ),
+    );
+  }
+}
+
+/// 顶部的题目定位点：进度条 + 题目标签，已答打勾，当前题高亮。
+class _QuestionStepper extends StatelessWidget {
+  final List<QuestionItemInfo> questions;
+  final int activeIndex;
+  final bool Function(int index) isAnswered;
+  final ValueChanged<int> onSelect;
+
+  const _QuestionStepper({
+    required this.questions,
+    required this.activeIndex,
+    required this.isAnswered,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < questions.length; index++)
+          Expanded(
+            child: _QuestionStepItem(
+              label: questions[index].header.isNotEmpty
+                  ? questions[index].header
+                  : '问题 ${index + 1}',
+              index: index,
+              done: isAnswered(index),
+              active: index == activeIndex,
+              onTap: () => onSelect(index),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _QuestionStepItem extends StatelessWidget {
+  final String label;
+  final int index;
+  final bool done;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _QuestionStepItem({
+    required this.label,
+    required this.index,
+    required this.done,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = done
+        ? AppColors.statusSuccess
+        : (active ? AppColors.primary : AppColors.textMuted);
+    final barColor = done
+        ? AppColors.statusSuccess
+        : (active ? AppColors.primary : AppColors.borderLight);
+    return Semantics(
+      button: true,
+      selected: active,
+      label: '第 ${index + 1} 题：$label',
+      child: InkWell(
+        key: ValueKey('question-step-$index'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
+          child: Column(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                height: 3,
+                decoration: BoxDecoration(
+                  color: barColor,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: done ? AppColors.statusSuccess : Colors.transparent,
+                      border: Border.all(
+                        color: done ? AppColors.statusSuccess : color,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: done
+                        ? const Icon(
+                            Icons.check_rounded,
+                            size: 9,
+                            color: Colors.white,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: color,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 单个选项：整块可点，选中时高亮边框。
+class _QuestionOptionTile extends StatelessWidget {
+  final String label;
+  final String description;
+  final bool selected;
+  final bool multiple;
+  final VoidCallback onTap;
+
+  const _QuestionOptionTile({
+    required this.label,
+    required this.description,
+    required this.selected,
+    required this.multiple,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Semantics(
+        checked: selected,
+        inMutuallyExclusiveGroup: !multiple,
+        child: Material(
+          color: selected ? AppColors.primaryLight : AppColors.surfaceElevated,
+          borderRadius: AppRadius.smRadius,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: AppRadius.smRadius,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              decoration: BoxDecoration(
+                borderRadius: AppRadius.smRadius,
+                border: Border.all(
+                  color: selected ? AppColors.primary : AppColors.borderLight,
+                  width: selected ? 1.4 : 1,
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 16,
+                    height: 16,
+                    margin: const EdgeInsets.only(top: 1),
+                    decoration: BoxDecoration(
+                      shape: multiple ? BoxShape.rectangle : BoxShape.circle,
+                      borderRadius: multiple ? BorderRadius.circular(4) : null,
+                      color: selected ? AppColors.primary : AppColors.surface,
+                      border: Border.all(
+                        color: selected
+                            ? AppColors.primary
+                            : AppColors.border,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: selected
+                        ? Icon(
+                            multiple
+                                ? Icons.check_rounded
+                                : Icons.circle,
+                            size: multiple ? 11 : 6,
+                            color: Colors.white,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1.5,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        if (description.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            description,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              height: 1.55,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
