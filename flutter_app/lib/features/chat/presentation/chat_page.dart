@@ -6983,12 +6983,21 @@ class _QuestionOptionTile extends StatelessWidget {
                       ),
                     ),
                     child: selected
-                        ? Icon(
-                            multiple
-                                ? Icons.check_rounded
-                                : Icons.circle,
-                            size: multiple ? 11 : 6,
-                            color: Colors.white,
+                        ? Center(
+                            child: multiple
+                                ? const Icon(
+                                    Icons.check_rounded,
+                                    size: 11,
+                                    color: Colors.white,
+                                  )
+                                : Container(
+                                    width: 7,
+                                    height: 7,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                           )
                         : null,
                   ),
