@@ -135,6 +135,12 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
   // Hiding an active notification must not dismiss the remote operation. Keep
   // this suppression across app restarts until the remote operation is done.
   final Set<String> _hiddenOperationIds = {};
+  // The user explicitly minimized the toast. Every Agent switch mints a new
+  // operation id, and a new operation used to force the card back open. Once
+  // the user has minimized it, later operations must respect that choice until
+  // the user expands the island again. Automatic collapse must not set this,
+  // so the flag stays false unless the user actually tapped the chevron.
+  bool _userCollapsed = false;
   final Map<String, int> _remoteVersions = {};
   final Set<String> _pendingReadIds = {};
   Future<void> _writeTail = Future.value();
@@ -159,6 +165,9 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     // Disk hydration can finish after a tap. Merge suppression and preserve
     // the user's presentation choice instead of restoring an older surface.
     _hiddenOperationIds.addAll(snapshot.hiddenOperationIds);
+    // Restore the user's explicit minimize choice before any merge, so a late
+    // disk read cannot reopen an island the user already minimized.
+    if (snapshot.userCollapsed) _userCollapsed = true;
     final hadLocalChanges =
         state.active.isNotEmpty ||
         state.recent.isNotEmpty ||
@@ -192,12 +201,14 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
         : item;
     final active = activeByOperation.values.map(applyPendingRead).toList();
     final recent = recentByOperation.values.map(applyPendingRead).toList();
+    final restoredCollapsed = hadLocalChanges
+        ? state.collapsed
+        : snapshot.collapsed || active.isNotEmpty;
     state = state.copyWith(
       active: _sortActive(active),
       recent: _trimRecent(recent),
-      collapsed: hadLocalChanges
-          ? state.collapsed
-          : snapshot.collapsed || active.isNotEmpty,
+      // An explicit user minimize always wins over a stale collapsed flag.
+      collapsed: _userCollapsed || restoredCollapsed,
       hydrated: true,
     );
     _schedulePersist();
@@ -214,6 +225,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     }
     _archiveTimers.clear();
     _hiddenOperationIds.clear();
+    _userCollapsed = false;
     _remoteVersions.clear();
     _pendingReadIds.clear();
     state = const AppNotificationState();
@@ -422,7 +434,13 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     if (isRestartedOperation && existing?.id != record.id) {
       _pendingReadIds.remove(record.operationId);
     }
-    final shouldExpand = expand && (isNewOperation || isRestartedOperation);
+    // Once the user has minimized the island, a brand new operation must not
+    // pop it back open — otherwise every Agent switch undoes the user's choice.
+    // Only an explicit expand() or a terminal failure may reopen it.
+    final shouldExpand =
+        expand &&
+        (isNewOperation || isRestartedOperation) &&
+        !_userCollapsed;
 
     _maybeSignalAttention(existing, record);
     if (isRestartedOperation) {
@@ -439,10 +457,15 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
             item.id == record.id || item.operationId == record.operationId,
       );
     active.add(record);
+    // A minimized island stays minimized while new operations arrive; only an
+    // explicit expand() clears the preference.
+    final nextCollapsed = shouldExpand
+        ? false
+        : (_userCollapsed ? true : state.collapsed);
     state = state.copyWith(
       active: _sortActive(active),
       recent: _trimRecent(recent),
-      collapsed: shouldExpand ? false : state.collapsed,
+      collapsed: nextCollapsed,
     );
     if (shouldExpand) _scheduleCollapse();
     if (record.isTerminal) _scheduleArchive(record.operationId);
@@ -521,16 +544,28 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     }
   }
 
+  /// User-initiated minimize. Remembers the choice so later operations cannot
+  /// silently pop the island back open.
   void collapse() {
     _collapseTimer?.cancel();
+    _userCollapsed = true;
     state = state.copyWith(collapsed: true);
     _schedulePersist();
   }
 
   void expand() {
     if (state.active.isEmpty) return;
+    _userCollapsed = false;
     state = state.copyWith(collapsed: false);
     _scheduleCollapse();
+    _schedulePersist();
+  }
+
+  /// Automatic collapse after [collapseDelay]. Does not change the user's
+  /// explicit minimize preference.
+  void _autoCollapse() {
+    _collapseTimer?.cancel();
+    state = state.copyWith(collapsed: true);
     _schedulePersist();
   }
 
@@ -751,7 +786,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     _collapseTimer?.cancel();
     _collapseTimer = Timer(collapseDelay, () {
       if (!_disposed && state.active.isNotEmpty && !state.centerOpen) {
-        collapse();
+        _autoCollapse();
       }
     });
   }
@@ -778,6 +813,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
       recent: state.recent,
       hiddenOperationIds: _hiddenOperationIds.toList(growable: false),
       collapsed: state.collapsed,
+      userCollapsed: _userCollapsed,
     );
     _writeTail = _writeTail
         .catchError((_) {})

@@ -350,11 +350,17 @@ class AppNotificationSnapshot {
   final List<String> hiddenOperationIds;
   final bool collapsed;
 
+  /// True when the user explicitly minimized the island. Persisted so a new
+  /// operation (for example the next Agent switch) cannot reopen it after a
+  /// restart either.
+  final bool userCollapsed;
+
   const AppNotificationSnapshot({
     this.active = const [],
     this.recent = const [],
     this.hiddenOperationIds = const [],
     this.collapsed = false,
+    this.userCollapsed = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -363,6 +369,7 @@ class AppNotificationSnapshot {
     'recent': recent.map((item) => item.toJson()).toList(),
     'hidden_operation_ids': hiddenOperationIds,
     'collapsed': collapsed,
+    'user_collapsed': userCollapsed,
   };
 
   factory AppNotificationSnapshot.fromJson(Map<String, dynamic> json) {
@@ -389,6 +396,7 @@ class AppNotificationSnapshot {
       recent: parseList(json['recent']),
       hiddenOperationIds: hiddenOperationIds,
       collapsed: json['collapsed'] as bool? ?? false,
+      userCollapsed: json['user_collapsed'] as bool? ?? false,
     );
   }
 }

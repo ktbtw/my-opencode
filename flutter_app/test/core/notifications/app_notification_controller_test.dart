@@ -225,7 +225,62 @@ void main() {
     controller.dispose();
   });
 
-  test('a new operation expands a collapsed notification island', () async {
+  test(
+    'a user-minimized island stays minimized for later operations',
+    () async {
+      final repository = _MemoryRepository();
+      final controller = _controller(repository);
+      await controller.hydrate();
+
+      controller.start(
+        operationId: 'artifact:download:1',
+        title: '正在下载 delivery.zip',
+        message: '准备中',
+      );
+      // The user explicitly minimizes the toast.
+      controller.collapse();
+      controller.start(
+        operationId: 'agent:start:2',
+        title: '正在启动 Agent',
+        message: '检查环境',
+      );
+
+      expect(controller.state.collapsed, isTrue);
+      expect(controller.state.active, hasLength(2));
+      controller.dispose();
+    },
+  );
+
+  test('automatic collapse still expands for a new operation', () async {
+    final repository = _MemoryRepository();
+    final controller = AppNotificationController(
+      repository: repository,
+      collapseDelay: const Duration(milliseconds: 10),
+      archiveDelay: const Duration(milliseconds: 20),
+      persistenceDelay: const Duration(milliseconds: 5),
+    );
+    await controller.hydrate();
+
+    controller.start(
+      operationId: 'artifact:download:1',
+      title: '正在下载 delivery.zip',
+      message: '准备中',
+    );
+    // Automatic collapse is not a user choice, so a later operation may reopen.
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(controller.state.collapsed, isTrue, reason: '自动收起已触发');
+
+    controller.start(
+      operationId: 'agent:start:2',
+      title: '正在启动 Agent',
+      message: '检查环境',
+    );
+
+    expect(controller.state.collapsed, isFalse);
+    controller.dispose();
+  });
+
+  test('expanding the island clears the user minimize preference', () async {
     final repository = _MemoryRepository();
     final controller = _controller(repository);
     await controller.hydrate();
@@ -236,6 +291,7 @@ void main() {
       message: '准备中',
     );
     controller.collapse();
+    controller.expand();
     controller.start(
       operationId: 'agent:start:2',
       title: '正在启动 Agent',
@@ -243,7 +299,6 @@ void main() {
     );
 
     expect(controller.state.collapsed, isFalse);
-    expect(controller.state.active, hasLength(2));
     controller.dispose();
   });
 
@@ -411,7 +466,9 @@ void main() {
       );
       expect(controller.state.active.single.message, '正在重新验证');
       expect(controller.state.active.single.id, isNot(failedId));
-      expect(controller.state.collapsed, isFalse);
+      // The user minimized the toast before re-verification started, so the
+      // restarted run must not force it back open.
+      expect(controller.state.collapsed, isTrue);
       controller.dispose();
     },
   );
