@@ -33,10 +33,20 @@
 
 ## 发布范围说明
 
-- 已发布：Android APK、Flutter Web（`/` 与 `/codex/`）。
-- Windows EXE 未重新构建：内网构建机 `windows-lan-yuzhihao`（192.168.10.114）当前不可达，
-  线上 windows-x64 条目按 `--android-only` 的预期行为保留为上一版（1.6.118 / v=265）。
-- macOS DMG 未重新构建，同样保留上一版条目。
+- 已发布：Android APK、Windows EXE、macOS DMG、Flutter Web（`/` 与 `/codex/`）。
+- Windows EXE 在 Windows 构建机（`windows-lan-yuzhihao`，内网 IP 已变更为 192.168.10.110）上构建，
+  构建目录用完即删。
+- macOS DMG 在 macOS 本机构建（`flutter build macos --release`，产物含 arm64），
+  经 `hdiutil` 打包为 UDZO，挂载校验 `CFBundleShortVersionString = 1.6.119`。
+- 最终以 `--mobile-app-only` 一次性上传三端，脚本校验版本与 SHA256 后发布。
+
+三端 SHA256：
+
+| 平台 | 文件 | SHA256 |
+| --- | --- | --- |
+| android | `chat-codex-1.6.119.apk` | `255a93aa074b571cfaa2fb39a4456fda4c05b34bfe9dec2d496ac4a3850a36f7` |
+| windows-x64 | `chat-codex-windows-x64-setup.exe` | `4610e7df7e713fa7356d1145b48fdc8b27693ddc1f933fdad2c7900f745517f3` |
+| darwin-arm64 | `chat-codex-darwin-arm64.dmg` | `037b1ced853ae7d0b38a2e69d117a78a290de292ac66dba05cc0c29a0a240e03` |
 
 ## Rollback
 
