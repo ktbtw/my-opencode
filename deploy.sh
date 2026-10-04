@@ -871,6 +871,8 @@ payload = {
     "channel": "latest",
     # 用 chr(10) 拼换行，避免在多层引号里写转义序列出错。
     "changelog": chr(10).join([
+        "- 新增「应用 MCP 配置」内置 Skill：Launcher 启动时自动为所有用户预装并默认启用，可直接让 Agent 通过本地接口新增、修改、删除、查看本应用的全局 MCP，无需手动导入 Skill",
+        "- 内置默认 Skill 的正文随 Launcher 一起更新，升级后自动刷新为最新内容；不覆盖用户手动关闭的开关，也不影响用户自己导入的 Skill",
         "- 修复单独安装运行时（例如 FFmpeg）时报「agent not found」的问题：运行时安装是设备级操作，此前却按项目 Agent 校验 launcher 设备标识，导致安装直接被拒；现在不再要求存在项目 Agent",
     ]),
     "downloads": [

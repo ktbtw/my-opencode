@@ -113,6 +113,11 @@ func NewService(cfg config.Config) (*service, error) {
 	if err := macapp.RepairInstalledMetadata(launcherVersion.Value); err != nil {
 		log.Printf("[launcher.macapp] 修复码控应用元数据失败: %v", err)
 	}
+	// 内置默认 Skill：随 Launcher 一起发布，启动时自动落盘并默认启用，
+	// 让所有用户开箱即用，无需手动导入。
+	if err := ensureDefaultGlobalSkills(cfg.RuntimeDir); err != nil {
+		log.Printf("[launcher][skills] 安装内置默认 Skill 失败: %v", err)
+	}
 	localVersion, err := release.EnsureLocal(cfg.RuntimeDir, cfg.Agent.BinaryName)
 	if err != nil {
 		return nil, err
