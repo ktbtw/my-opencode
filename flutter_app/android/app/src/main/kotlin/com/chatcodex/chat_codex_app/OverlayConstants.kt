@@ -10,6 +10,12 @@ package com.chatcodex.chat_codex_app
 /** 日志标签。 */
 internal const val TAG = "GlobalOverlayService"
 
+/** 用户显式开启悬浮面板时发送的服务动作。 */
+internal const val ACTION_START = "com.chatcodex.chat_codex_app.overlay.START"
+
+/** 仅启动后台任务通知（不显示悬浮面板）时发送的服务动作。 */
+internal const val ACTION_START_NOTIFICATIONS = "com.chatcodex.chat_codex_app.overlay.START_NOTIFICATIONS"
+
 /** Flutter 侧写入的 SharedPreferences 文件名（两端共享同一份存储）。 */
 internal const val FLUTTER_PREFS = "FlutterSharedPreferences"
 
