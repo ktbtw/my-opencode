@@ -1262,6 +1262,32 @@ class ChatRepository {
           }
           if (type == 'completed') {
             final metadata = _asMap(event['metadata']);
+            var completedBody = metadata['round_result'] as String? ?? '';
+            final hasRoundResult = completedBody.trim().isNotEmpty;
+            if (completedBody.trim().isEmpty) {
+              completedBody = event['content'] as String? ?? '';
+              final preceding = rounds
+                  .take(rounds.isEmpty ? 0 : rounds.length - 1)
+                  .map((round) => round.text.toString())
+                  .join();
+              if (preceding.isNotEmpty && completedBody.startsWith(preceding)) {
+                completedBody = completedBody.substring(preceding.length);
+              }
+            }
+            if (completedBody.trim().isNotEmpty) {
+              // The terminal payload may contain text that never arrived as
+              // deltas (or was omitted by reconstructed history). Recover it
+              // in the last round, preserving earlier rounds and tool order.
+              currentRound(
+                event,
+              ).recoverBody(completedBody, authoritative: hasRoundResult);
+              text
+                ..clear()
+                ..writeAll(rounds.map((round) => round.text.toString()));
+              blocks
+                ..clear()
+                ..addAll(rounds.expand((round) => round.blocks));
+            }
             final usage = ContextUsageInfo.fromUsageMetadata(
               _asMap(event['usage']).isNotEmpty
                   ? _asMap(event['usage'])
@@ -1735,6 +1761,38 @@ class _TaskEventRoundBuilder {
     blocks.add(
       ChatMessageBlock.text(id: 'text_${blocks.length + 1}', text: content),
     );
+  }
+
+  void recoverBody(String content, {required bool authoritative}) {
+    final existing = text.toString();
+    if (existing == content) return;
+    if (content.startsWith(existing)) {
+      appendTextBlock(content.substring(existing.length));
+      text
+        ..clear()
+        ..write(content);
+    } else if (authoritative || content.contains(existing)) {
+      final recovered = <ChatMessageBlock>[];
+      var inserted = false;
+      for (final block in blocks) {
+        if (!block.isText) {
+          recovered.add(block);
+        } else if (!inserted) {
+          recovered.add(block.copyWith(text: content));
+          inserted = true;
+        }
+      }
+      blocks
+        ..clear()
+        ..addAll(recovered);
+      if (!inserted) appendTextBlock(content);
+      text
+        ..clear()
+        ..write(content);
+    } else if (!existing.contains(content)) {
+      appendTextBlock('\n\n$content');
+      text.write('\n\n$content');
+    }
   }
 
   void upsertToolCall(ToolCallInfo tool) {

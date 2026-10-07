@@ -1,59 +1,89 @@
-import { describe, expect, test } from "bun:test"
-import path from "path"
-import { Agent } from "../../src/agent/agent"
-import { Instance } from "../../src/project/instance"
-import { SystemPrompt } from "../../src/session/system"
-import { tmpdir } from "../fixture/fixture"
+import { describe, expect } from "bun:test"
+import { Effect, Layer } from "effect"
+import type { Agent } from "../../src/agent/agent"
+import { NamedError } from "@opencode-ai/core/util/error"
+import { Skill } from "../../src/skill"
+import { Permission } from "../../src/permission"
+import { provider, SystemPrompt } from "../../src/session/system"
+import { testEffect } from "../lib/effect"
+
+const skills: Skill.Info[] = [
+  {
+    name: "zeta-skill",
+    description: "Zeta skill.",
+    location: "/tmp/zeta-skill/SKILL.md",
+    content: "# zeta-skill",
+  },
+  {
+    name: "alpha-skill",
+    description: "Alpha skill.",
+    location: "/tmp/alpha-skill/SKILL.md",
+    content: "# alpha-skill",
+  },
+  {
+    name: "middle-skill",
+    description: "Middle skill.",
+    location: "/tmp/middle-skill/SKILL.md",
+    content: "# middle-skill",
+  },
+  {
+    name: "manual-skill",
+    location: "/tmp/manual-skill/SKILL.md",
+    content: "# manual-skill",
+  },
+]
+
+const build: Agent.Info = {
+  name: "build",
+  mode: "primary",
+  permission: Permission.fromConfig({ "*": "allow" }),
+  options: {},
+}
+
+const it = testEffect(
+  SystemPrompt.layer.pipe(
+    Layer.provide(
+      Layer.succeed(
+        Skill.Service,
+        Skill.Service.of({
+          get: (name) => Effect.succeed(skills.find((skill) => skill.name === name)),
+          all: () => Effect.succeed(skills),
+          dirs: () => Effect.succeed([]),
+          available: () => Effect.succeed(skills),
+        }),
+      ),
+    ),
+  ),
+)
 
 describe("session.system", () => {
-  test("skills output is sorted by name and stable across calls", async () => {
-    await using tmp = await tmpdir({
-      git: true,
-      init: async (dir) => {
-        for (const [name, description] of [
-          ["zeta-skill", "Zeta skill."],
-          ["alpha-skill", "Alpha skill."],
-          ["middle-skill", "Middle skill."],
-        ]) {
-          const skillDir = path.join(dir, ".opencode", "skill", name)
-          await Bun.write(
-            path.join(skillDir, "SKILL.md"),
-            `---
-name: ${name}
-description: ${description}
----
+  it.effect("uses the same shared prompt for every model", () =>
+    Effect.sync(() => {
+      const models = ["gpt-5-codex", "claude-sonnet", "gemini-2.5-pro", "kimi-k2", "custom-model"]
+      const prompts = models.map((id) => provider({ api: { id } } as Parameters<typeof provider>[0]))
 
-# ${name}
-`,
-          )
-        }
-      },
-    })
+      expect(new Set(prompts.map((items) => items[0])).size).toBe(1)
+      expect(prompts[0][0]).toContain("主工作 Agent")
+    }),
+  )
 
-    const home = process.env.OPENCODE_TEST_HOME
-    process.env.OPENCODE_TEST_HOME = tmp.path
+  it.effect("skills output is sorted by name and stable across calls", () =>
+    Effect.gen(function* () {
+      const prompt = yield* SystemPrompt.Service
+      const first = yield* prompt.skills(build)
+      const second = yield* prompt.skills(build)
+      const output = first ?? (yield* Effect.fail(new NamedError.Unknown({ message: "missing skills output" })))
 
-    try {
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const build = await Agent.get("build")
-          const first = await SystemPrompt.skills(build!)
-          const second = await SystemPrompt.skills(build!)
+      expect(first).toBe(second)
 
-          expect(first).toBe(second)
+      const alpha = output.indexOf("<name>alpha-skill</name>")
+      const middle = output.indexOf("<name>middle-skill</name>")
+      const zeta = output.indexOf("<name>zeta-skill</name>")
 
-          const alpha = first!.indexOf("<name>alpha-skill</name>")
-          const middle = first!.indexOf("<name>middle-skill</name>")
-          const zeta = first!.indexOf("<name>zeta-skill</name>")
-
-          expect(alpha).toBeGreaterThan(-1)
-          expect(middle).toBeGreaterThan(alpha)
-          expect(zeta).toBeGreaterThan(middle)
-        },
-      })
-    } finally {
-      process.env.OPENCODE_TEST_HOME = home
-    }
-  })
+      expect(alpha).toBeGreaterThan(-1)
+      expect(middle).toBeGreaterThan(alpha)
+      expect(zeta).toBeGreaterThan(middle)
+      expect(output).not.toContain("manual-skill")
+    }),
+  )
 })

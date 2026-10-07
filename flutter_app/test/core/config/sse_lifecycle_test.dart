@@ -40,11 +40,13 @@ void main() {
       });
       final request = ApiClient.get(
         '/suspended',
-        timeout: const Duration(milliseconds: 40),
+        // Allow a cold socket handshake before testing the suspended body.
+        // Under parallel builds, 40 ms can expire before the server sees it.
+        timeout: const Duration(seconds: 1),
       );
       final assertion = expectLater(request, throwsA(isA<TimeoutException>()));
-      await requested.future;
-      await assertion.timeout(const Duration(milliseconds: 400));
+      await requested.future.timeout(const Duration(seconds: 3));
+      await assertion.timeout(const Duration(seconds: 3));
       final recovered = await ApiClient.get(
         '/healthy',
         timeout: const Duration(seconds: 1),
@@ -121,7 +123,12 @@ void main() {
         .where((event) => event['type'] != 'connection_ready')
         .listen(signals.add);
     final response = await connected.future;
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    // A server flush is not confirmation that the shared client processed
+    // its first frame. Establish that boundary instead of guessing 20 ms.
+    for (var i = 0; signals.isEmpty && i < 100; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(signals.map((event) => event['sequence']), [1]);
     final output = <Map<String, dynamic>>[];
     final conversation = repo.watchTaskEvents('task-1').listen(output.add);
     await snapshotRequested.future;

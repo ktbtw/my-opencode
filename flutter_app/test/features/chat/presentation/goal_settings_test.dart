@@ -380,6 +380,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     await notifier.sendMessage('/goal 自动完成目标');
 
@@ -420,6 +421,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     await notifier.sendMessage('生成交付文件');
     repo.emit({
@@ -453,6 +455,7 @@ void main() {
         agentId: 'agent_test',
         projectId: 'project_test',
       );
+      addTearDown(notifier.dispose);
 
       await notifier.sendMessage('开始', goalOverride: '完成目标');
       repo.emit({'type': 'goal_created', 'iteration': 1, 'max': 2});
@@ -510,6 +513,7 @@ void main() {
         agentId: 'agent_test',
         projectId: 'project_test',
       );
+      addTearDown(notifier.dispose);
 
       await notifier.sendMessage('开始', goalOverride: '完成目标');
       repo.emit({'type': 'goal_created', 'iteration': 1, 'max': 2});
@@ -550,6 +554,7 @@ void main() {
         agentId: 'agent_test',
         projectId: 'project_test',
       );
+      addTearDown(notifier.dispose);
 
       await notifier.sendMessage('开始');
       repo.emit({'type': 'delta', 'field': 'reasoning', 'content': '前半段思考'});
@@ -596,6 +601,7 @@ void main() {
         agentId: 'agent_test',
         projectId: 'project_test',
       );
+      addTearDown(notifier.dispose);
 
       await notifier.sendMessage('开始');
       repo.taskStatus = TaskStatus.completed;
@@ -663,6 +669,7 @@ void main() {
         agentId: 'agent_test',
         projectId: 'project_test',
       );
+      addTearDown(notifier.dispose);
       const model = ModelInfo(
         providerID: 'cheap',
         modelID: 'gpt-image-2',
@@ -705,6 +712,7 @@ void main() {
         agentId: 'agent_test',
         projectId: 'project_test',
       );
+      addTearDown(notifier.dispose);
 
       await notifier.sendMessage('开始');
       repo.emit({'type': 'compaction_started'});
@@ -739,6 +747,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     await notifier.sendMessage('开始');
     repo.emit({
@@ -773,6 +782,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     final events = [
       {
@@ -838,6 +848,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     await notifier.sendMessage('开始', goalOverride: '完成目标');
     repo.emit({'type': 'goal_created', 'iteration': 1, 'max': 2});
@@ -873,6 +884,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     await notifier.loadSession('session_goal');
     await pumpEventQueue(times: 20);
@@ -904,6 +916,7 @@ void main() {
         agentId: 'agent_test',
         projectId: 'project_test',
       );
+      addTearDown(notifier.dispose);
 
       await notifier.loadSession('session_page');
 
@@ -984,6 +997,7 @@ void main() {
         projectId: 'project_test',
         localStore: localStore,
       );
+      addTearDown(notifier.dispose);
 
       await notifier.loadSession('session_delta');
 
@@ -1008,6 +1022,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     final sessionLoad = notifier.loadSession('session_page');
     await Future<void>.delayed(Duration.zero);
@@ -1032,6 +1047,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
     var completed = false;
 
     final loading = notifier.loadSession('session_page').then((_) {
@@ -1053,6 +1069,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     // 先正常启动目标，建立任务与 watch；然后模拟用户停止：
     // goal 变 paused（user_cancelled）+ 任务收口。
@@ -1099,6 +1116,7 @@ void main() {
       agentId: 'agent_test',
       projectId: 'project_test',
     );
+    addTearDown(notifier.dispose);
 
     await notifier.sendMessage('/goal 完成目标');
     repo.emit({
@@ -1235,7 +1253,7 @@ class _FakeGoalHistoryRepo extends ChatRepository {
         projectId: 'project_test',
         sessionId: sessionId,
         status: TaskStatus.completed,
-        result: '聚合结果',
+        result: '历史第一轮历史第二轮',
         userText: '开始',
         createdAt: DateTime.utc(2026, 5, 23, 10),
       ),

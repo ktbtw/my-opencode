@@ -579,18 +579,17 @@ void main() {
 
       await _loadRawHistory(notifier, repository, [taskJson]);
 
-      final message = notifier.state.messages.firstWhere(
-        (item) => item.role == MessageRole.user,
-      );
-      expect(message.attachedFiles, hasLength(1));
-      expect(message.attachedFiles.single.filename, '新建文本文档.txt');
-      expect(message.attachedFiles.single.mimeType, 'text/plain');
-      expect(
-        utf8.decode(base64Decode(message.attachedFiles.single.base64Data)),
-        'hello world',
-      );
-    },
-  );
+    final message = notifier.state.messages.firstWhere(
+      (item) => item.role == MessageRole.user,
+    );
+    expect(message.attachedFiles, hasLength(1));
+    expect(message.attachedFiles.single.filename, '新建文本文档.txt');
+    expect(message.attachedFiles.single.mimeType, 'text/plain');
+    expect(
+      utf8.decode(base64Decode(message.attachedFiles.single.base64Data)),
+      'hello world',
+    );
+  });
 
   test('attachment-only history messages are not dropped', () async {
     final repository = _FakeChatRepository();
@@ -845,9 +844,8 @@ void main() {
       await notifier.reconcileAfterResume();
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(_agentMessage(notifier, 'stop-resume').content, '停止前的正文');
-    },
-  );
+    expect(_agentMessage(notifier, 'stop-resume').content, '停止前的正文');
+  });
 
   test('a failed event keeps a body that only lived in content', () async {
     // 历史恢复得到的正文只写在 content（blocks 为空）。失败事件曾经无条件
@@ -879,9 +877,9 @@ void main() {
 
     final blocks = _agentMessage(notifier, 'fail-body').blocks;
     expect(
-      blocks.where((block) => block.type == ChatMessageBlockType.text).map(
-        (block) => block.text,
-      ),
+      blocks
+          .where((block) => block.type == ChatMessageBlockType.text)
+          .map((block) => block.text),
       contains('此前已恢复的正文'),
     );
   });
@@ -930,13 +928,14 @@ void main() {
     events.add({'type': 'failed', 'error': '请求已被中止', 'sequence': 9});
     await _eventually(() => !notifier.state.taskActive);
 
-    final message = _agentMessage(notifier, 'stop-failed');
-    expect(message.state, MessageState.done);
-    expect(message.statusHint, '任务已停止');
-    expect(message.content, '停止前的正文');
-    expect(message.thinkingContent, '停止前的思考');
-    expect(message.toolCalls, isNotEmpty);
-  });
+      final message = _agentMessage(notifier, 'stop-failed');
+      expect(message.state, MessageState.done);
+      expect(message.statusHint, '任务已停止');
+      expect(message.content, '停止前的正文');
+      expect(message.thinkingContent, '停止前的思考');
+      expect(message.toolCalls, isNotEmpty);
+    },
+  );
 
   test('a genuine failure keeps thinking and tool history', () async {
     final repository = _FakeChatRepository()
@@ -1034,11 +1033,12 @@ void main() {
     // 进入会话 / 切回会话会重建消息列表，任务仍在运行时重建不能清空已产出的内容。
     await notifier.loadSession('session-1');
 
-    final message = _agentMessage(notifier, 'live-keep');
-    expect(message.content, '直播间正文');
-    expect(message.thinkingContent, '直播间思考');
-    expect(message.toolCalls, isNotEmpty);
-  });
+      final message = _agentMessage(notifier, 'live-keep');
+      expect(message.content, '直播间正文');
+      expect(message.thinkingContent, '直播间思考');
+      expect(message.toolCalls, isNotEmpty);
+    },
+  );
 
   test('a stale-history guard still merges thinking and tools', () async {
     // 重连补发先到会让 owner 守卫不再整份丢弃快照：思考/工具照常合并，
@@ -1056,9 +1056,7 @@ void main() {
       await repository.dispose();
     });
     final loading = notifier.loadSession('session-1');
-    await _eventually(
-      () => repository.snapshotReads.contains('merge-snap'),
-    );
+    await _eventually(() => repository.snapshotReads.contains('merge-snap'));
     repository.taskEvents('merge-snap').add({
       'type': 'delta',
       'field': 'text',
@@ -1085,9 +1083,7 @@ void main() {
     final repository = _FakeChatRepository()
       ..history = [_task('retry-snap', status: TaskStatus.running)]
       ..snapshotCompleter = Completer<TaskEventSnapshot>()
-      ..snapshots['retry-snap'] = const TaskEventSnapshot(
-        reasoning: '重试后的思考',
-      );
+      ..snapshots['retry-snap'] = const TaskEventSnapshot(reasoning: '重试后的思考');
     final notifier = ChatNotifier(
       repo: repository,
       agentId: 'agent-1',
@@ -1098,9 +1094,7 @@ void main() {
       await repository.dispose();
     });
     final loading = notifier.loadSession('session-1');
-    await _eventually(
-      () => repository.snapshotReads.contains('retry-snap'),
-    );
+    await _eventually(() => repository.snapshotReads.contains('retry-snap'));
     repository.taskEvents('retry-snap').add({
       'type': 'delta',
       'field': 'text',
@@ -1713,6 +1707,147 @@ void main() {
   );
 
   test(
+    'dispatch replay preserves historical messages and terminal state',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [
+          _task('known', status: TaskStatus.completed, result: '完成正文'),
+        ];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final watched = repository.taskWatchCount;
+      repository.queueEvents.add(
+        ChatQueueSnapshot(
+          sessionId: 'session-1',
+          version: 2,
+          items: [
+            _queueItem(
+              'queue-1',
+              status: ChatQueueItemStatus.dispatched,
+              taskId: 'known',
+            ),
+          ],
+        ),
+      );
+      await _eventually(() => notifier.state.queue.version == 2);
+      expect(notifier.state.messages.map((m) => m.id), [
+        'user_known',
+        'agent_known',
+      ]);
+      expect(notifier.state.taskActive, isFalse);
+      expect(repository.taskWatchCount, watched);
+    },
+  );
+
+  test(
+    'dispatch uses dispatch time and remains idempotent after completion',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [
+          _task('z-old', status: TaskStatus.completed, result: '先前正文'),
+        ];
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final item = ChatQueueItem(
+        id: 'queue-1',
+        sessionId: 'session-1',
+        agentId: 'agent-1',
+        projectId: 'project-1',
+        taskId: 'a-new',
+        status: ChatQueueItemStatus.dispatched,
+        parts: const [
+          {'type': 'text', 'text': '新问题'},
+        ],
+        createdAt: DateTime.parse('2026-07-28T07:00:00Z'),
+        updatedAt: DateTime.parse('2026-07-28T09:00:00Z'),
+      );
+      repository.queueEvents.add(
+        ChatQueueSnapshot(sessionId: 'session-1', version: 2, items: [item]),
+      );
+      await _eventually(() => notifier.state.queue.version == 2);
+      expect(notifier.state.messages.map((m) => m.id), [
+        'user_z-old',
+        'agent_z-old',
+        'user_a-new',
+        'agent_a-new',
+      ]);
+      repository.taskEvents('a-new').add({
+        'type': 'completed',
+        'content': '新回复',
+      });
+      await _eventually(() => !notifier.state.taskActive);
+      final watched = repository.taskWatchCount;
+      repository.queueEvents.add(
+        ChatQueueSnapshot(sessionId: 'session-1', version: 3, items: [item]),
+      );
+      await _eventually(() => notifier.state.queue.version == 3);
+      expect(notifier.state.messages, hasLength(4));
+      expect(notifier.state.taskActive, isFalse);
+      expect(repository.taskWatchCount, watched);
+    },
+  );
+
+  test(
+    'leading insertion survives repeated hydration without duplication or clock reordering',
+    () async {
+      final repository = _FakeChatRepository()
+        ..history = [_task('skew', status: TaskStatus.completed, result: '回复')]
+        ..snapshots['skew'] = TaskEventSnapshot(
+          text: '回复',
+          rounds: const [TaskEventRoundSnapshot(text: '回复')],
+          appliedInputs: [
+            TaskInputAppliedInfo(
+              queueItemId: 'q-skew',
+              content: '追加',
+              injectionVersion: 1,
+              afterRoundIndex: -1,
+              appliedAt: DateTime.parse('2026-07-28T07:59:59Z'),
+            ),
+          ],
+        );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'agent-1',
+        projectId: 'project-1',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      for (var i = 0; i < 3; i++) {
+        expect(notifier.state.messages.map((m) => m.content), [
+          '原始问题',
+          '追加',
+          '回复',
+        ]);
+        expect(notifier.state.messages.map((m) => m.taskMessageIndex), [
+          0,
+          1,
+          2,
+        ]);
+        await notifier.retryHistoryDetails('skew');
+      }
+    },
+  );
+
+  test(
     'dispatched queue snapshot attaches task bubbles and task event stream',
     () async {
       final repository = _FakeChatRepository();
@@ -1997,6 +2132,247 @@ void main() {
     },
   );
 
+  for (final finalRoundText in ['', '总结开头']) {
+    test(
+      'round hydration retains indexed final body after tools ($finalRoundText)',
+      () async {
+        const tool = ToolCallInfo(
+          id: 'final-read',
+          callId: 'final-read',
+          tool: 'read',
+          status: 'completed',
+        );
+        const finalBody = '总结开头：完整的最终正文';
+        final repository = _FakeChatRepository()
+          ..history = [
+            _task(
+              'final-body',
+              status: TaskStatus.completed,
+              result: '第一轮$finalBody',
+            ),
+          ]
+          ..snapshotCompleter = Completer<TaskEventSnapshot>();
+        final notifier = ChatNotifier(
+          repo: repository,
+          agentId: 'agent-1',
+          projectId: 'project-1',
+        );
+        addTearDown(() async {
+          notifier.dispose();
+          await repository.dispose();
+        });
+        final loading = notifier.loadSession('session-1');
+        await _eventually(() => repository.snapshotReads.isNotEmpty);
+        expect(notifier.state.messages.last.content, '第一轮$finalBody');
+        repository.snapshotCompleter!.complete(
+          TaskEventSnapshot(
+            text: '第一轮$finalRoundText',
+            rounds: [
+              const TaskEventRoundSnapshot(text: '第一轮'),
+              TaskEventRoundSnapshot(
+                text: finalRoundText,
+                toolCalls: const [tool],
+                blocks: [
+                  const ChatMessageBlock.tool(id: 'final-read', tool: tool),
+                  if (finalRoundText.isNotEmpty)
+                    ChatMessageBlock.text(
+                      id: 'final-text',
+                      text: finalRoundText,
+                    ),
+                ],
+              ),
+            ],
+            appliedInputs: const [
+              TaskInputAppliedInfo(
+                queueItemId: 'final-input',
+                content: '补充问题',
+                afterRoundIndex: 0,
+              ),
+            ],
+          ),
+        );
+        await loading;
+
+        void verifyBody() {
+          expect(notifier.state.messages.map((message) => message.content), [
+            '原始问题',
+            '第一轮',
+            '补充问题',
+            finalBody,
+          ]);
+          final reply = notifier.state.messages.last;
+          expect(reply.blocks.first.tool?.tool, 'read');
+          expect(
+            reply.blocks.where((b) => b.isText).map((b) => b.text).join(),
+            finalBody,
+          );
+          expect(reply.state, MessageState.done);
+        }
+
+        verifyBody();
+        // Same notifier, page re-entry and a second hydration must not
+        // substitute the first reconstructed round for the final one.
+        await notifier.loadSession('session-1');
+        verifyBody();
+        await notifier.retryHistoryDetails('final-body');
+        verifyBody();
+      },
+    );
+  }
+
+  test('completed index fills an empty round after an applied input', () async {
+    final repository = _FakeChatRepository()
+      ..history = [
+        _task('empty-final', status: TaskStatus.completed, result: '第一轮最后总结'),
+      ]
+      ..snapshots['empty-final'] = const TaskEventSnapshot(
+        text: '第一轮',
+        rounds: [
+          TaskEventRoundSnapshot(text: '第一轮'),
+          TaskEventRoundSnapshot(),
+        ],
+        appliedInputs: [
+          TaskInputAppliedInfo(
+            queueItemId: 'empty-final-input',
+            content: '继续',
+            afterRoundIndex: 0,
+          ),
+        ],
+      );
+    final notifier = ChatNotifier(
+      repo: repository,
+      agentId: 'a',
+      projectId: 'p',
+    );
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    expect(notifier.state.messages.map((m) => m.content), [
+      '原始问题',
+      '第一轮',
+      '继续',
+      '最后总结',
+    ]);
+    expect(notifier.state.messages.last.blocks.single.text, '最后总结');
+  });
+
+  test(
+    'goal hydration keeps commentary and a short separate final summary',
+    () async {
+      const tool = ToolCallInfo(
+        id: 'goal-read',
+        callId: 'goal-read',
+        tool: 'read',
+        status: 'completed',
+      );
+      final repository = _FakeChatRepository()
+        ..history = [
+          _task('goal-final', status: TaskStatus.completed, result: '完成'),
+        ]
+        ..snapshots['goal-final'] = const TaskEventSnapshot(
+          rounds: [
+            TaskEventRoundSnapshot(
+              text: '第一轮',
+              goalProgress: [GoalProgressEntry(type: 'goal_created')],
+            ),
+            TaskEventRoundSnapshot(
+              text: '准备输出完整的最终报告',
+              toolCalls: [tool],
+              blocks: [
+                ChatMessageBlock.text(id: 'commentary', text: '准备输出完整的最终报告'),
+                ChatMessageBlock.tool(id: 'goal-read', tool: tool),
+              ],
+            ),
+          ],
+        );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'a',
+        projectId: 'p',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      final reply = notifier.state.messages.last;
+      expect(reply.blocks.map((b) => b.type), [
+        ChatMessageBlockType.text,
+        ChatMessageBlockType.tool,
+        ChatMessageBlockType.text,
+      ]);
+      expect(reply.blocks.last.text, '\n\n完成');
+      expect(reply.content, '准备输出完整的最终报告\n\n完成');
+      await notifier.retryHistoryDetails('goal-final');
+      expect(notifier.state.messages.last.content, reply.content);
+    },
+  );
+
+  test(
+    're-entering rounds keeps the latest live body while restoring tools',
+    () async {
+      const tool = ToolCallInfo(
+        id: 'live-read',
+        callId: 'live-read',
+        tool: 'read',
+        status: 'completed',
+      );
+      final repository = _FakeChatRepository()
+        ..history = [_task('live-final', status: TaskStatus.running)]
+        ..snapshots['live-final'] = const TaskEventSnapshot(
+          rounds: [
+            TaskEventRoundSnapshot(text: '第一轮'),
+            TaskEventRoundSnapshot(
+              text: '最新直播正文的开头',
+              toolCalls: [tool],
+              blocks: [
+                ChatMessageBlock.tool(id: 'live-read', tool: tool),
+                ChatMessageBlock.text(id: 'live-text', text: '最新直播正文的开头'),
+              ],
+            ),
+          ],
+          appliedInputs: [
+            TaskInputAppliedInfo(
+              queueItemId: 'live-input',
+              content: '继续',
+              afterRoundIndex: 0,
+            ),
+          ],
+        );
+      final notifier = ChatNotifier(
+        repo: repository,
+        agentId: 'a',
+        projectId: 'p',
+      );
+      addTearDown(() async {
+        notifier.dispose();
+        await repository.dispose();
+      });
+      await notifier.loadSession('session-1');
+      repository.taskEvents('live-final').add({
+        'type': 'delta',
+        'sequence': 99,
+        'content': '以及新到的尾部',
+      });
+      await _eventually(
+        () => notifier.state.messages.last.content.endsWith('新到的尾部'),
+      );
+      final liveBody = notifier.state.messages.last.content;
+      await notifier.loadSession('session-1');
+      final reply = notifier.state.messages.last;
+      expect(reply.content, liveBody);
+      expect(reply.blocks.first.tool?.tool, 'read');
+      expect(
+        reply.blocks.where((b) => b.isText).map((b) => b.text).join(),
+        liveBody,
+      );
+      expect(reply.state, MessageState.streaming);
+      expect(notifier.state.messages[1].content, '第一轮');
+    },
+  );
+
   test(
     'historical snapshot keeps multiple insertions in their own rounds',
     () async {
@@ -2054,6 +2430,42 @@ void main() {
       ]);
     },
   );
+
+  test('a shorter current live round is newer than the task index and stale archive', () async {
+    const tool = ToolCallInfo(id: 'short-live', callId: 'short-live', tool: 'read', status: 'completed');
+    final repository = _FakeChatRepository()
+      ..history = [_task('short-live', status: TaskStatus.running,
+          result: '第一轮完整的较长旧正文')]
+      ..snapshots['short-live'] = const TaskEventSnapshot(
+        rounds: [
+          TaskEventRoundSnapshot(text: '第一轮完整的较长旧正文'),
+          TaskEventRoundSnapshot(text: '新的短回复', toolCalls: [tool]),
+        ],
+        appliedInputs: [TaskInputAppliedInfo(queueItemId: 'short-live-input',
+            content: '继续', afterRoundIndex: 0)],
+      );
+    final notifier = ChatNotifier(repo: repository, agentId: 'a', projectId: 'p');
+    addTearDown(() async {
+      notifier.dispose();
+      await repository.dispose();
+    });
+    await notifier.loadSession('session-1');
+    expect(notifier.state.messages.last.content, '新的短回复');
+    repository.snapshots['short-live'] = const TaskEventSnapshot(
+      rounds: [
+        TaskEventRoundSnapshot(text: '第一轮完整的较长旧正文'),
+        TaskEventRoundSnapshot(text: '过时快照里更长但更旧的正文', toolCalls: [tool]),
+      ],
+      appliedInputs: [TaskInputAppliedInfo(queueItemId: 'short-live-input',
+          content: '继续', afterRoundIndex: 0)],
+    );
+    await notifier.loadSession('session-1');
+    final reply = notifier.state.messages.last;
+    expect(reply.content, '新的短回复');
+    expect(reply.blocks.where((b) => b.isText).map((b) => b.text).join(), reply.content);
+    expect(reply.toolCalls, hasLength(1));
+    expect(notifier.state.messages[1].content, '第一轮完整的较长旧正文');
+  });
 
   test(
     'historical snapshot keeps an insertion that precedes every round',

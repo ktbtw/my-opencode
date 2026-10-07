@@ -13,7 +13,7 @@ repositories {
 
 android {
     namespace = "com.chatcodex.chat_codex_app"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     sourceSets {
@@ -26,6 +26,13 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+        }
     }
 
     kotlinOptions {
@@ -67,6 +74,11 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // Notification delivery uses legacy Android shadows, not native graphics.
+    testImplementation("org.robolectric:robolectric:4.12.2") {
+        exclude(group = "org.robolectric", module = "nativeruntime-dist-compat")
+    }
     implementation(files("../../../jiguang_sdk/jiguang/libs/jpush-android-6.0.1.jar"))
     implementation(files("../../../jiguang_sdk/jiguang/libs/jcore-android-5.3.1.aar"))
     implementation(files("../../../jiguang_sdk/jiguang/libs/push-internal-5.0.5.aar"))

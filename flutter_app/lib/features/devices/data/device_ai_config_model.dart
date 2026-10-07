@@ -32,10 +32,16 @@ class DeviceAIModelInfo {
   /// 设备端上报的当前生效输出上限。
   final int? reportedOutputLimit;
 
+  final int? presetContextLimit;
+  final int? presetOutputLimit;
+  final String presetSource;
+  final String presetModel;
+
   final Map<String, dynamic> variants;
   final DeviceAIThinkingInfo? thinking;
   final List<String> inputModalities;
   final List<String> outputModalities;
+  final String modalitiesSource;
 
   const DeviceAIModelInfo({
     required this.id,
@@ -48,16 +54,22 @@ class DeviceAIModelInfo {
     this.inferredContextLimit,
     this.reportedContextLimit,
     this.reportedOutputLimit,
+    this.presetContextLimit,
+    this.presetOutputLimit,
+    this.presetSource = '',
+    this.presetModel = '',
     this.variants = const {},
     this.thinking,
     this.inputModalities = const [],
     this.outputModalities = const [],
+    this.modalitiesSource = '',
   });
 
   /// 生效的窗口值：供应商返回 > 手填 > 预设推断 > 设备上报的生效值。
   int? get contextLimit => _firstPositive([
     upstreamContextLimit,
     manualContextLimit,
+    presetContextLimit,
     inferredContextLimit,
     reportedContextLimit,
   ]);
@@ -67,6 +79,7 @@ class DeviceAIModelInfo {
   int? get outputLimit => _firstPositive([
     upstreamOutputLimit,
     manualOutputLimit,
+    presetOutputLimit,
     reportedOutputLimit,
   ]);
 
@@ -99,6 +112,10 @@ class DeviceAIModelInfo {
       upstreamOutputLimit: upstreamOutput,
       manualContextLimit: manualContext,
       manualOutputLimit: manualOutput,
+      presetContextLimit: _positiveInt(json['preset_context_limit']),
+      presetOutputLimit: _positiveInt(json['preset_output_limit']),
+      presetSource: json['preset_source']?.toString() ?? '',
+      presetModel: json['preset_model']?.toString() ?? '',
       inferredContextLimit: inferGrokContextLimit(
         provider: ownedBy,
         modelID: id,
@@ -124,11 +141,20 @@ class DeviceAIModelInfo {
             ),
       inputModalities: _stringList(modalities['input']),
       outputModalities: _stringList(modalities['output']),
+      modalitiesSource: json['modalities_source']?.toString() ?? '',
     );
   }
 
   Map<String, dynamic> toJson() {
     final data = <String, dynamic>{'id': id, 'name': name.isEmpty ? id : name};
+    if (presetContextLimit != null) {
+      data['preset_context_limit'] = presetContextLimit;
+    }
+    if (presetOutputLimit != null) {
+      data['preset_output_limit'] = presetOutputLimit;
+    }
+    if (presetSource.isNotEmpty) data['preset_source'] = presetSource;
+    if (presetModel.isNotEmpty) data['preset_model'] = presetModel;
     if (ownedBy.isNotEmpty) {
       data['owned_by'] = ownedBy;
     }
@@ -170,6 +196,9 @@ class DeviceAIModelInfo {
       data['thinking'] = thinking!.toJson();
     }
     if (inputModalities.isNotEmpty || outputModalities.isNotEmpty) {
+      if (modalitiesSource.isNotEmpty) {
+        data['modalities_source'] = modalitiesSource;
+      }
       data['modalities'] = <String, dynamic>{
         if (inputModalities.isNotEmpty) 'input': inputModalities,
         if (outputModalities.isNotEmpty) 'output': outputModalities,
@@ -189,12 +218,17 @@ class DeviceAIModelInfo {
     int? inferredContextLimit,
     int? reportedContextLimit,
     int? reportedOutputLimit,
+    int? presetContextLimit,
+    int? presetOutputLimit,
+    String? presetSource,
+    String? presetModel,
     bool clearManualContextLimit = false,
     bool clearManualOutputLimit = false,
     Map<String, dynamic>? variants,
     DeviceAIThinkingInfo? thinking,
     List<String>? inputModalities,
     List<String>? outputModalities,
+    String? modalitiesSource,
   }) {
     return DeviceAIModelInfo(
       id: id ?? this.id,
@@ -211,10 +245,15 @@ class DeviceAIModelInfo {
       inferredContextLimit: inferredContextLimit ?? this.inferredContextLimit,
       reportedContextLimit: reportedContextLimit ?? this.reportedContextLimit,
       reportedOutputLimit: reportedOutputLimit ?? this.reportedOutputLimit,
+      presetContextLimit: presetContextLimit ?? this.presetContextLimit,
+      presetOutputLimit: presetOutputLimit ?? this.presetOutputLimit,
+      presetSource: presetSource ?? this.presetSource,
+      presetModel: presetModel ?? this.presetModel,
       variants: variants ?? this.variants,
       thinking: thinking ?? this.thinking,
       inputModalities: inputModalities ?? this.inputModalities,
       outputModalities: outputModalities ?? this.outputModalities,
+      modalitiesSource: modalitiesSource ?? this.modalitiesSource,
     );
   }
 }

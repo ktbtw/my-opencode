@@ -47,11 +47,11 @@
             </intent-filter>
         </activity>
         <activity
-            android:name=".OverlayFilePickerActivity"
+            android:name=".overlay.OverlayFilePickerActivity"
             android:exported="false"
             android:theme="@style/OverlayFilePickerTheme" />
         <service
-            android:name=".GlobalOverlayService"
+            android:name=".overlay.GlobalOverlayService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse">
@@ -155,7 +155,7 @@
             </intent-filter>
         </activity>
         <receiver
-            android:name=".JPushMessageReceiver"
+            android:name=".push.JPushMessageReceiver"
             android:enabled="true"
             android:exported="false">
             <intent-filter>

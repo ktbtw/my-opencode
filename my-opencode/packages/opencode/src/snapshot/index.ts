@@ -1,74 +1,97 @@
-import { NodeFileSystem, NodePath } from "@effect/platform-node"
-import { Cause, Duration, Effect, Layer, Schedule, Semaphore, ServiceMap, Stream } from "effect"
+import { Cause, Duration, Effect, Layer, Schedule, Schema, Semaphore, Context } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { formatPatch, structuredPatch } from "diff"
 import path from "path"
-import z from "zod"
-import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
+import { Glob } from "@opencode-ai/core/util/glob"
+import { readdir, rm, stat, statfs } from "node:fs/promises"
+import { AppProcess } from "@opencode-ai/core/process"
 import { InstanceState } from "@/effect/instance-state"
-import { makeRuntime } from "@/effect/run-service"
-import { AppFileSystem } from "@/filesystem"
-import { Hash } from "@/util/hash"
-import { Config } from "../config/config"
-import { Global } from "../global"
-import { Log } from "../util/log"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
+import { Hash } from "@opencode-ai/core/util/hash"
+import { Config } from "@/config/config"
+import { Global } from "@opencode-ai/core/global"
+import * as Log from "@opencode-ai/core/util/log"
 
-export namespace Snapshot {
-  export const Patch = z.object({
-    hash: z.string(),
-    files: z.string().array(),
-  })
-  export type Patch = z.infer<typeof Patch>
+export const Patch = Schema.Struct({
+  hash: Schema.String,
+  files: Schema.mutable(Schema.Array(Schema.String)),
+})
+export type Patch = typeof Patch.Type
 
-  export const FileDiff = z
-    .object({
-      file: z.string(),
-      before: z.string(),
-      after: z.string(),
-      additions: z.number(),
-      deletions: z.number(),
-      status: z.enum(["added", "deleted", "modified"]).optional(),
-    })
-    .meta({
-      ref: "FileDiff",
-    })
-  export type FileDiff = z.infer<typeof FileDiff>
+export const FileDiff = Schema.Struct({
+  // Optional because legacy/imported `summary_diffs` on disk may omit
+  // file details and patch text. Required Schema rejected the whole
+  // session response and broke session loading on Desktop.
+  file: Schema.optional(Schema.String),
+  patch: Schema.optional(Schema.String),
+  additions: Schema.Finite,
+  deletions: Schema.Finite,
+  status: Schema.optional(Schema.Literals(["added", "deleted", "modified"])),
+}).annotate({ identifier: "SnapshotFileDiff" })
+export type FileDiff = typeof FileDiff.Type
 
-  const log = Log.create({ service: "snapshot" })
-  const prune = "7.days"
-  const limit = 2 * 1024 * 1024
-  const core = ["-c", "core.longpaths=true", "-c", "core.symlinks=true"]
-  const cfg = ["-c", "core.autocrlf=false", ...core]
-  const quote = [...cfg, "-c", "core.quotepath=false"]
-  interface GitResult {
-    readonly code: ChildProcessSpawner.ExitCode
-    readonly text: string
-    readonly stderr: string
-  }
+const log = Log.create({ service: "snapshot" })
+const prune = "7.days"
+const limit = 2 * 1024 * 1024
+// Shared by discovery, migration, diffs and restore. Runtime databases are not
+// user deliverables: recording their own writes makes snapshot size recursive.
+export const runtimeExclusions = [
+  "**/.chatcodex-artifacts/display-log.sqlite",
+  "**/.chatcodex-artifacts/display-log.sqlite-*",
+  "**/.chatcodex-artifacts/display-log/**",
+]
+// Build and dependency caches are reproducible and can grow into gigabytes.
+// They are never useful as conversation undo history.
+const generatedExclusions = [
+  "**/.dart_tool/**",
+  "**/.gradle/**",
+  "**/node_modules/**",
+  "**/__pycache__/**",
+  "**/build/**",
+]
+const snapshotExclusions = [...runtimeExclusions, ...generatedExclusions]
+export const isRuntimeFile = (file: string) =>
+  runtimeExclusions.some((pattern) => Glob.match(pattern, file.replaceAll("\\", "/")))
+export const isSnapshotExcluded = (file: string) =>
+  snapshotExclusions.some((pattern) => Glob.match(pattern, file.replaceAll("\\", "/")))
+const runtimePathspecs = snapshotExclusions.map((pattern) => `:(exclude,glob)${pattern}`)
+const gcReserveBytes = 2 * 1024 ** 3
 
-  type State = Omit<Interface, "init">
+export function hasRepackSpace(freeBytes: number, packBytes: number) {
+  // Repack writes its replacement before removing old packs. Keep room for
+  // a full copy plus a reserve for the model/session database and the OS.
+  return freeBytes >= packBytes + gcReserveBytes
+}
+const core = ["-c", "core.longpaths=true", "-c", "core.symlinks=true"]
+const cfg = ["-c", "core.autocrlf=false", ...core]
+const quote = [...cfg, "-c", "core.quotepath=false"]
+interface GitResult {
+  readonly code: ChildProcessSpawner.ExitCode
+  readonly text: string
+  readonly stderr: string
+}
 
-  export interface Interface {
-    readonly init: () => Effect.Effect<void>
-    readonly cleanup: () => Effect.Effect<void>
-    readonly track: () => Effect.Effect<string | undefined>
-    readonly patch: (hash: string) => Effect.Effect<Snapshot.Patch>
-    readonly restore: (snapshot: string) => Effect.Effect<void>
-    readonly revert: (patches: Snapshot.Patch[]) => Effect.Effect<void>
-    readonly diff: (hash: string) => Effect.Effect<string>
-    readonly diffFull: (from: string, to: string) => Effect.Effect<Snapshot.FileDiff[]>
-  }
+type State = Omit<Interface, "init">
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Snapshot") {}
+export interface Interface {
+  readonly init: () => Effect.Effect<void>
+  readonly cleanup: () => Effect.Effect<void>
+  readonly track: () => Effect.Effect<string | undefined>
+  readonly patch: (hash: string) => Effect.Effect<Patch>
+  readonly restore: (snapshot: string) => Effect.Effect<void>
+  readonly revert: (patches: Patch[]) => Effect.Effect<void>
+  readonly diff: (hash: string) => Effect.Effect<string>
+  readonly diffFull: (from: string, to: string) => Effect.Effect<FileDiff[]>
+}
 
-  export const layer: Layer.Layer<
-    Service,
-    never,
-    AppFileSystem.Service | ChildProcessSpawner.ChildProcessSpawner | Config.Service
-  > = Layer.effect(
+export class Service extends Context.Service<Service, Interface>()("@opencode/Snapshot") {}
+
+export const layer: Layer.Layer<Service, never, AppFileSystem.Service | AppProcess.Service | Config.Service> =
+  Layer.effect(
     Service,
     Effect.gen(function* () {
       const fs = yield* AppFileSystem.Service
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+      const appProcess = yield* AppProcess.Service
       const config = yield* Config.Service
       const locks = new Map<string, Semaphore.Semaphore>()
 
@@ -92,30 +115,126 @@ export namespace Snapshot {
 
           const args = (cmd: string[]) => ["--git-dir", state.gitdir, "--work-tree", state.worktree, ...cmd]
 
+          const feed = (list: string[]) => list.join("\0") + "\0"
+
           const git = Effect.fnUntraced(
-            function* (cmd: string[], opts?: { cwd?: string; env?: Record<string, string> }) {
-              const proc = ChildProcess.make("git", cmd, {
-                cwd: opts?.cwd,
-                env: opts?.env,
-                extendEnv: true,
-              })
-              const handle = yield* spawner.spawn(proc)
-              const [text, stderr] = yield* Effect.all(
-                [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr))],
-                { concurrency: 2 },
+            function* (cmd: string[], opts?: { cwd?: string; env?: Record<string, string>; stdin?: string }) {
+              const result = yield* appProcess.run(
+                ChildProcess.make("git", cmd, { cwd: opts?.cwd, env: opts?.env, extendEnv: true }),
+                { stdin: opts?.stdin },
               )
-              const code = yield* handle.exitCode
-              return { code, text, stderr } satisfies GitResult
+              return {
+                code: ChildProcessSpawner.ExitCode(result.exitCode),
+                text: result.stdout.toString("utf8"),
+                stderr: result.stderr.toString("utf8"),
+              } satisfies GitResult
             },
-            Effect.scoped,
             Effect.catch((err) =>
               Effect.succeed({
                 code: ChildProcessSpawner.ExitCode(1),
                 text: "",
-                stderr: String(err),
+                stderr: err instanceof Error ? err.message : String(err),
               }),
             ),
           )
+
+          // git never removes an index.lock left behind by a killed process, and
+          // one stale lock used to fail every later snapshot write (including
+          // messages that only read). Retry index-lock contention and drop the
+          // lock file once it is old enough that no live git can still own it.
+          const indexLockPath = path.join(state.gitdir, "index.lock")
+          const staleIndexLockMs = 10_000
+          const isIndexLockError = (stderr: string) =>
+            stderr.includes("index.lock") &&
+            /(File exists|Unable to create|Another git process)/i.test(stderr)
+
+          const clearStaleIndexLock = Effect.fnUntraced(function* () {
+            const info = yield* Effect.promise(() => stat(indexLockPath).catch(() => undefined))
+            if (!info) return false
+            if (Date.now() - info.mtimeMs < staleIndexLockMs) return false
+            const removed = yield* Effect.promise(() =>
+              rm(indexLockPath, { force: true }).then(
+                () => true,
+                () => false,
+              ),
+            )
+            if (removed) log.warn("removed stale snapshot index lock", { path: indexLockPath })
+            return removed
+          })
+
+          const gitIndex = Effect.fnUntraced(function* (
+            cmd: string[],
+            opts?: { cwd?: string; env?: Record<string, string>; stdin?: string },
+          ) {
+            let result = yield* git(cmd, opts)
+            for (let attempt = 0; attempt < 4 && result.code !== 0 && isIndexLockError(result.stderr); attempt++) {
+              if (!(yield* clearStaleIndexLock())) {
+                yield* Effect.sleep(`${150 * (attempt + 1)} millis`)
+              }
+              log.warn("retrying snapshot index write after lock contention", {
+                attempt: attempt + 1,
+              })
+              result = yield* git(cmd, opts)
+            }
+            return result
+          })
+
+          const ignore = Effect.fnUntraced(function* (files: string[]) {
+            if (!files.length) return new Set<string>()
+            const check = yield* git(
+              [
+                ...quote,
+                "--git-dir",
+                path.join(state.worktree, ".git"),
+                "--work-tree",
+                state.worktree,
+                "check-ignore",
+                "--no-index",
+                "--stdin",
+                "-z",
+              ],
+              {
+                cwd: state.worktree,
+                stdin: feed(files),
+              },
+            )
+            const internal = files.filter(isSnapshotExcluded)
+            if (check.code !== 0 && check.code !== 1) return new Set(internal)
+            return new Set([...internal, ...check.text.split("\0").filter(Boolean)])
+          })
+
+          const drop = Effect.fnUntraced(function* (files: string[]) {
+            if (!files.length) return
+            const result = yield* gitIndex(
+              [
+                ...cfg,
+                ...args(["rm", "--cached", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"]),
+              ],
+              {
+                cwd: state.worktree,
+                stdin: feed(files),
+              },
+            )
+            if (result.code !== 0) {
+              return yield* Effect.die(new Error(`Snapshot index removal failed: ${result.stderr}`))
+            }
+          })
+
+          const stage = Effect.fnUntraced(function* (files: string[]) {
+            if (!files.length) return
+            const result = yield* gitIndex(
+              [...cfg, ...args(["add", "--all", "--sparse", "--pathspec-from-file=-", "--pathspec-file-nul"])],
+              {
+                cwd: state.worktree,
+                stdin: feed(files),
+              },
+            )
+            if (result.code === 0) return
+            log.warn("failed to add snapshot files", {
+              exitCode: result.code,
+              stderr: result.stderr,
+            })
+          })
 
           const exists = (file: string) => fs.exists(file).pipe(Effect.orDie)
           const read = (file: string) => fs.readFileString(file).pipe(Effect.catch(() => Effect.succeed("")))
@@ -142,6 +261,7 @@ export namespace Snapshot {
             const target = path.join(state.gitdir, "info", "exclude")
             const text = [
               file ? (yield* read(file)).trimEnd() : "",
+              ...snapshotExclusions,
               ...list.map((item) => `/${item.replaceAll("\\", "/")}`),
             ]
               .filter(Boolean)
@@ -150,14 +270,28 @@ export namespace Snapshot {
             yield* fs.writeFileString(target, text ? `${text}\n` : "").pipe(Effect.orDie)
           })
 
+          const dropSnapshotExcludedFiles = Effect.fnUntraced(function* () {
+            // Ignore rules alone do not remove already tracked databases. Run
+            // this before writes AND old-snapshot restores, even if unchanged.
+            const cached = yield* git([...quote, ...args(["ls-files", "--cached", "--full-name", "-z"])], {
+              cwd: state.worktree,
+            })
+            if (cached.code !== 0) {
+              return yield* Effect.die(new Error(`Snapshot index listing failed: ${cached.stderr}`))
+            }
+            const files = cached.text.split("\0").filter(isSnapshotExcluded)
+            if (files.length) yield* drop(files)
+          })
+
           const add = Effect.fnUntraced(function* () {
             yield* sync()
+            yield* dropSnapshotExcludedFiles()
             const [diff, other] = yield* Effect.all(
               [
                 git([...quote, ...args(["diff-files", "--name-only", "-z", "--", "."])], {
                   cwd: state.directory,
                 }),
-                git([...quote, ...args(["ls-files", "--others", "--exclude-standard", "-z", "--", "."])], {
+                git([...quote, ...args(["ls-files", "--full-name", "--others", "--exclude-standard", "-z", "--", "."])], {
                   cwd: state.directory,
                 }),
               ],
@@ -178,29 +312,48 @@ export namespace Snapshot {
             const all = Array.from(new Set([...tracked, ...untracked]))
             if (!all.length) return
 
-            const large = (yield* Effect.all(
-              all.map((item) =>
-                fs
-                  .stat(path.join(state.directory, item))
-                  .pipe(Effect.catch(() => Effect.void))
-                  .pipe(
-                    Effect.map((stat) => {
-                      if (!stat || stat.type !== "File") return
-                      const size = typeof stat.size === "bigint" ? Number(stat.size) : stat.size
-                      return size > limit ? item : undefined
-                    }),
-                  ),
-              ),
-              { concurrency: 8 },
-            )).filter((item): item is string => Boolean(item))
-            yield* sync(large)
-            const result = yield* git([...cfg, ...args(["add", "--sparse", "."])], { cwd: state.directory })
-            if (result.code !== 0) {
-              log.warn("failed to add snapshot files", {
-                exitCode: result.code,
-                stderr: result.stderr,
-              })
+            // Resolve source-repo ignore rules against the exact candidate set.
+            // --no-index keeps this pattern-based even when a path is already tracked.
+            const ignored = yield* ignore(all)
+
+            // Remove newly-ignored files from snapshot index to prevent re-adding
+            if (ignored.size > 0) {
+              const ignoredFiles = Array.from(ignored)
+              log.info("removing gitignored files from snapshot", { count: ignoredFiles.length })
+              yield* drop(ignoredFiles)
             }
+
+            const allow = all.filter((item) => !ignored.has(item))
+            if (!allow.length) return
+
+            const large = new Set(
+              (yield* Effect.all(
+                allow.map((item) =>
+                  fs
+                    .stat(path.join(state.worktree, item))
+                    .pipe(Effect.catch(() => Effect.void))
+                    .pipe(
+                      Effect.map((stat) => {
+                        if (!stat || stat.type !== "File") return
+                        const size = typeof stat.size === "bigint" ? Number(stat.size) : stat.size
+                        return size > limit ? item : undefined
+                      }),
+                    ),
+                ),
+                { concurrency: 8 },
+              )).filter((item): item is string => Boolean(item)),
+            )
+            // Apply the cap to tracked files as well. Otherwise a generated
+            // binary that was tracked once keeps every future version alive in
+            // the snapshot object database forever. The worktree file remains
+            // untouched; only snapshot tracking is dropped.
+            const block = new Set(allow.filter((item) => large.has(item)))
+            if (block.size) {
+              yield* sync(Array.from(block))
+              yield* drop(Array.from(block))
+            }
+            // Stage only the allowed candidate paths so snapshot updates stay scoped.
+            yield* stage(allow.filter((item) => !block.has(item)))
           })
 
           const cleanup = Effect.fnUntraced(function* () {
@@ -208,7 +361,28 @@ export namespace Snapshot {
               Effect.gen(function* () {
                 if (!(yield* enabled())) return
                 if (!(yield* exists(state.gitdir))) return
-                const result = yield* git(args(["gc", `--prune=${prune}`]), { cwd: state.directory })
+                const space = yield* Effect.promise(async () => {
+                  const packDir = path.join(state.gitdir, "objects", "pack")
+                  const disk = await statfs(state.gitdir).catch(() => undefined)
+                  const names = await readdir(packDir).catch(() => undefined)
+                  if (!disk || !names) return undefined
+                  const sizes = await Promise.all(names.filter((name) => name.endsWith(".pack")).map(async (name) =>
+                    (await stat(path.join(packDir, name)).catch(() => undefined))?.size,
+                  ))
+                  if (sizes.some((size) => size === undefined)) return undefined
+                  const loose = await Promise.all(
+                    (await readdir(path.join(state.gitdir, "objects")).catch(() => [])).filter((name) => /^[0-9a-f]{2}$/.test(name)).map(async (name) => {
+                      const entries = await readdir(path.join(state.gitdir, "objects", name)).catch(() => [])
+                      return (await Promise.all(entries.map(async (entry) => (await stat(path.join(state.gitdir, "objects", name, entry)).catch(() => undefined))?.size))).reduce<number>((sum, size) => sum + (size ?? 0), 0)
+                    }),
+                  )
+                  return { free: disk.bavail * disk.bsize, packs: sizes.reduce<number>((sum, size) => sum + (size ?? 0), 0) + loose.reduce((sum, size) => sum + size, 0) }
+                })
+                if (!space || !hasRepackSpace(space.free, space.packs)) {
+                  log.warn("skipping snapshot repack: insufficient disk headroom", space ?? {})
+                  return
+                }
+                const result = yield* git(args(["gc", `--prune=${prune}`, "--no-cruft"]), { cwd: state.directory })
                 if (result.code !== 0) {
                   log.warn("cleanup failed", {
                     exitCode: result.code,
@@ -260,13 +434,19 @@ export namespace Snapshot {
                   log.warn("failed to get diff", { hash, exitCode: result.code })
                   return { hash, files: [] }
                 }
+                const files = result.text
+                  .trim()
+                  .split("\n")
+                  .map((x) => x.trim())
+                  .filter(Boolean)
+
+                // Hide ignored-file removals from the user-facing patch output.
+                const ignored = yield* ignore(files)
+
                 return {
                   hash,
-                  files: result.text
-                    .trim()
-                    .split("\n")
-                    .map((x) => x.trim())
-                    .filter(Boolean)
+                  files: files
+                    .filter((item) => !ignored.has(item))
                     .map((x) => path.join(state.worktree, x).replaceAll("\\", "/")),
                 }
               }),
@@ -277,9 +457,10 @@ export namespace Snapshot {
             return yield* locked(
               Effect.gen(function* () {
                 log.info("restore", { commit: snapshot })
-                const result = yield* git([...core, ...args(["read-tree", snapshot])], { cwd: state.worktree })
+                const result = yield* gitIndex([...core, ...args(["read-tree", snapshot])], { cwd: state.worktree })
                 if (result.code === 0) {
-                  const checkout = yield* git([...core, ...args(["checkout-index", "-a", "-f"])], {
+                  yield* dropSnapshotExcludedFiles()
+                  const checkout = yield* gitIndex([...core, ...args(["checkout-index", "-a", "-f"])], {
                     cwd: state.worktree,
                   })
                   if (checkout.code === 0) return
@@ -299,14 +480,14 @@ export namespace Snapshot {
             )
           })
 
-          const revert = Effect.fnUntraced(function* (patches: Snapshot.Patch[]) {
+          const revert = Effect.fnUntraced(function* (patches: Patch[]) {
             return yield* locked(
               Effect.gen(function* () {
                 const ops: { hash: string; file: string; rel: string }[] = []
                 const seen = new Set<string>()
                 for (const item of patches) {
                   for (const file of item.files) {
-                    if (seen.has(file)) continue
+                    if (seen.has(file) || isSnapshotExcluded(path.relative(state.worktree, file))) continue
                     seen.add(file)
                     ops.push({
                       hash: item.hash,
@@ -318,7 +499,7 @@ export namespace Snapshot {
 
                 const single = Effect.fnUntraced(function* (op: (typeof ops)[number]) {
                   log.info("reverting", { file: op.file, hash: op.hash })
-                  const result = yield* git([...core, ...args(["checkout", op.hash, "--", op.file])], {
+                  const result = yield* gitIndex([...core, ...args(["checkout", op.hash, "--", op.file])], {
                     cwd: state.worktree,
                   })
                   if (result.code === 0) return
@@ -418,7 +599,7 @@ export namespace Snapshot {
             return yield* locked(
               Effect.gen(function* () {
                 yield* add()
-                const result = yield* git([...quote, ...args(["diff", "--cached", "--no-ext-diff", hash, "--", "."])], {
+                const result = yield* git([...quote, ...args(["diff", "--cached", "--no-ext-diff", hash, "--", ".", ...runtimePathspecs])], {
                   cwd: state.worktree,
                 })
                 if (result.code !== 0) {
@@ -437,7 +618,142 @@ export namespace Snapshot {
           const diffFull = Effect.fnUntraced(function* (from: string, to: string) {
             return yield* locked(
               Effect.gen(function* () {
-                const result: Snapshot.FileDiff[] = []
+                type Row = {
+                  file: string
+                  status: "added" | "deleted" | "modified"
+                  binary: boolean
+                  additions: number
+                  deletions: number
+                }
+
+                type Ref = {
+                  file: string
+                  side: "before" | "after"
+                  ref: string
+                }
+
+                const show = Effect.fnUntraced(function* (row: Row) {
+                  if (row.binary) return ["", ""]
+                  if (row.status === "added") {
+                    return [
+                      "",
+                      yield* git([...cfg, ...args(["show", `${to}:${row.file}`])]).pipe(
+                        Effect.map((item) => item.text),
+                      ),
+                    ]
+                  }
+                  if (row.status === "deleted") {
+                    return [
+                      yield* git([...cfg, ...args(["show", `${from}:${row.file}`])]).pipe(
+                        Effect.map((item) => item.text),
+                      ),
+                      "",
+                    ]
+                  }
+                  return yield* Effect.all(
+                    [
+                      git([...cfg, ...args(["show", `${from}:${row.file}`])]).pipe(Effect.map((item) => item.text)),
+                      git([...cfg, ...args(["show", `${to}:${row.file}`])]).pipe(Effect.map((item) => item.text)),
+                    ],
+                    { concurrency: 2 },
+                  )
+                })
+
+                const load = Effect.fnUntraced(
+                  function* (rows: Row[]) {
+                    const refs = rows.flatMap((row) => {
+                      if (row.binary) return []
+                      if (row.status === "added")
+                        return [{ file: row.file, side: "after", ref: `${to}:${row.file}` } satisfies Ref]
+                      if (row.status === "deleted") {
+                        return [{ file: row.file, side: "before", ref: `${from}:${row.file}` } satisfies Ref]
+                      }
+                      return [
+                        { file: row.file, side: "before", ref: `${from}:${row.file}` } satisfies Ref,
+                        { file: row.file, side: "after", ref: `${to}:${row.file}` } satisfies Ref,
+                      ]
+                    })
+                    if (!refs.length) return new Map<string, { before: string; after: string }>()
+
+                    const batch = yield* appProcess.run(
+                      ChildProcess.make("git", [...cfg, ...args(["cat-file", "--batch"])], {
+                        cwd: state.directory,
+                        extendEnv: true,
+                      }),
+                      { stdin: refs.map((item) => item.ref).join("\n") + "\n" },
+                    )
+                    if (batch.exitCode !== 0) {
+                      log.info("git cat-file --batch failed during snapshot diff, falling back to per-file git show", {
+                        stderr: batch.stderr.toString("utf8"),
+                        refs: refs.length,
+                      })
+                      return
+                    }
+                    const out = batch.stdout
+
+                    const fail = (msg: string, extra?: Record<string, string>) => {
+                      log.info(msg, { ...extra, refs: refs.length })
+                      return undefined
+                    }
+
+                    const map = new Map<string, { before: string; after: string }>()
+                    const dec = new TextDecoder()
+                    let i = 0
+                    for (const ref of refs) {
+                      let end = i
+                      while (end < out.length && out[end] !== 10) end += 1
+                      if (end >= out.length) {
+                        return fail(
+                          "git cat-file --batch returned a truncated header during snapshot diff, falling back to per-file git show",
+                        )
+                      }
+
+                      const head = dec.decode(out.slice(i, end))
+                      i = end + 1
+                      const hit = map.get(ref.file) ?? { before: "", after: "" }
+                      if (head.endsWith(" missing")) {
+                        map.set(ref.file, hit)
+                        continue
+                      }
+
+                      const match = head.match(/^[0-9a-f]+ blob (\d+)$/)
+                      if (!match) {
+                        return fail(
+                          "git cat-file --batch returned an unexpected header during snapshot diff, falling back to per-file git show",
+                          { head },
+                        )
+                      }
+
+                      const size = Number(match[1])
+                      if (!Number.isInteger(size) || size < 0 || i + size >= out.length || out[i + size] !== 10) {
+                        return fail(
+                          "git cat-file --batch returned truncated content during snapshot diff, falling back to per-file git show",
+                          { head },
+                        )
+                      }
+
+                      const text = dec.decode(out.slice(i, i + size))
+                      if (ref.side === "before") hit.before = text
+                      if (ref.side === "after") hit.after = text
+                      map.set(ref.file, hit)
+                      i += size + 1
+                    }
+
+                    if (i !== out.length) {
+                      return fail(
+                        "git cat-file --batch returned trailing data during snapshot diff, falling back to per-file git show",
+                      )
+                    }
+
+                    return map
+                  },
+                  Effect.scoped,
+                  Effect.catch(() =>
+                    Effect.succeed<Map<string, { before: string; after: string }> | undefined>(undefined),
+                  ),
+                )
+
+                const result: FileDiff[] = []
                 const status = new Map<string, "added" | "deleted" | "modified">()
 
                 const statuses = yield* git(
@@ -459,30 +775,54 @@ export namespace Snapshot {
                   },
                 )
 
-                for (const line of numstat.text.trim().split("\n")) {
-                  if (!line) continue
-                  const [adds, dels, file] = line.split("\t")
-                  if (!file) continue
-                  const binary = adds === "-" && dels === "-"
-                  const [before, after] = binary
-                    ? ["", ""]
-                    : yield* Effect.all(
-                        [
-                          git([...cfg, ...args(["show", `${from}:${file}`])]).pipe(Effect.map((item) => item.text)),
-                          git([...cfg, ...args(["show", `${to}:${file}`])]).pipe(Effect.map((item) => item.text)),
-                        ],
-                        { concurrency: 2 },
-                      )
-                  const additions = binary ? 0 : parseInt(adds)
-                  const deletions = binary ? 0 : parseInt(dels)
-                  result.push({
-                    file,
-                    before,
-                    after,
-                    additions: Number.isFinite(additions) ? additions : 0,
-                    deletions: Number.isFinite(deletions) ? deletions : 0,
-                    status: status.get(file) ?? "modified",
+                const rows = numstat.text
+                  .trim()
+                  .split("\n")
+                  .filter(Boolean)
+                  .flatMap((line) => {
+                    const [adds, dels, file] = line.split("\t")
+                    if (!file) return []
+                    const binary = adds === "-" && dels === "-"
+                    const additions = binary ? 0 : parseInt(adds)
+                    const deletions = binary ? 0 : parseInt(dels)
+                    return [
+                      {
+                        file,
+                        status: status.get(file) ?? "modified",
+                        binary,
+                        additions: Number.isFinite(additions) ? additions : 0,
+                        deletions: Number.isFinite(deletions) ? deletions : 0,
+                      } satisfies Row,
+                    ]
                   })
+
+                // Hide ignored-file removals from the user-facing diff output.
+                const ignored = yield* ignore(rows.map((r) => r.file))
+                if (ignored.size > 0) {
+                  const filtered = rows.filter((r) => !ignored.has(r.file))
+                  rows.length = 0
+                  rows.push(...filtered)
+                }
+
+                const step = 100
+                const patch = (file: string, before: string, after: string) =>
+                  formatPatch(structuredPatch(file, file, before, after, "", "", { context: Number.MAX_SAFE_INTEGER }))
+
+                for (let i = 0; i < rows.length; i += step) {
+                  const run = rows.slice(i, i + step)
+                  const text = yield* load(run)
+
+                  for (const row of run) {
+                    const hit = text?.get(row.file) ?? { before: "", after: "" }
+                    const [before, after] = row.binary ? ["", ""] : text ? [hit.before, hit.after] : yield* show(row)
+                    result.push({
+                      file: row.file,
+                      patch: row.binary ? "" : patch(row.file, before, after),
+                      additions: row.additions,
+                      deletions: row.deletions,
+                      status: row.status,
+                    })
+                  }
                 }
 
                 return result
@@ -520,7 +860,7 @@ export namespace Snapshot {
         restore: Effect.fn("Snapshot.restore")(function* (snapshot: string) {
           return yield* InstanceState.useEffect(state, (s) => s.restore(snapshot))
         }),
-        revert: Effect.fn("Snapshot.revert")(function* (patches: Snapshot.Patch[]) {
+        revert: Effect.fn("Snapshot.revert")(function* (patches: Patch[]) {
           return yield* InstanceState.useEffect(state, (s) => s.revert(patches))
         }),
         diff: Effect.fn("Snapshot.diff")(function* (hash: string) {
@@ -533,39 +873,10 @@ export namespace Snapshot {
     }),
   )
 
-  export const defaultLayer = layer.pipe(
-    Layer.provide(CrossSpawnSpawner.defaultLayer),
-    Layer.provide(AppFileSystem.defaultLayer),
-    Layer.provide(Config.defaultLayer),
-  )
+export const defaultLayer = layer.pipe(
+  Layer.provide(AppProcess.defaultLayer),
+  Layer.provide(AppFileSystem.defaultLayer),
+  Layer.provide(Config.defaultLayer),
+)
 
-  const { runPromise } = makeRuntime(Service, defaultLayer)
-
-  export async function init() {
-    return runPromise((svc) => svc.init())
-  }
-
-  export async function track() {
-    return runPromise((svc) => svc.track())
-  }
-
-  export async function patch(hash: string) {
-    return runPromise((svc) => svc.patch(hash))
-  }
-
-  export async function restore(snapshot: string) {
-    return runPromise((svc) => svc.restore(snapshot))
-  }
-
-  export async function revert(patches: Patch[]) {
-    return runPromise((svc) => svc.revert(patches))
-  }
-
-  export async function diff(hash: string) {
-    return runPromise((svc) => svc.diff(hash))
-  }
-
-  export async function diffFull(from: string, to: string) {
-    return runPromise((svc) => svc.diffFull(from, to))
-  }
-}
+export * as Snapshot from "."

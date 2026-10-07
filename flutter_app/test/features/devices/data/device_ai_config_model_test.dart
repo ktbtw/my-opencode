@@ -2,6 +2,54 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chat_codex_app/features/devices/data/device_ai_config_model.dart';
 
 void main() {
+  test('automatic modalities source survives unrelated edits and saving', () {
+    final model = DeviceAIModelInfo.fromJson({
+      'id': 'gpt-5.4',
+      'modalities_source': 'opencode',
+      'modalities': {
+        'input': ['text', 'image'],
+        'output': ['text'],
+      },
+    });
+    expect(
+      model.copyWith(manualOutputLimit: 8192).toJson()['modalities_source'],
+      'opencode',
+    );
+    expect(
+      model.copyWith(modalitiesSource: 'manual').toJson()['modalities_source'],
+      'manual',
+    );
+  });
+
+  test('OpenCode presets remain separate from manual overrides when saved', () {
+    final model = DeviceAIModelInfo.fromJson({
+      'id': 'relay/gpt-5.4',
+      'name': 'GPT 5.4',
+      'preset_context_limit': 1000000,
+      'preset_output_limit': 128000,
+      'preset_source': 'opencode',
+      'preset_model': 'openai/gpt-5.4',
+    });
+    expect(model.contextLimit, 1000000);
+    expect(model.outputLimit, 128000);
+    final saved = model.copyWith(inputModalities: ['text', 'image']).toJson();
+    expect(saved['preset_model'], 'openai/gpt-5.4');
+    expect(saved['preset_context_limit'], 1000000);
+    expect(saved.containsKey('manual_context_limit'), isFalse);
+    expect(saved.containsKey('manual_output_limit'), isFalse);
+    final manual = model.copyWith(
+      manualContextLimit: 200000,
+      manualOutputLimit: 8192,
+    );
+    expect(manual.contextLimit, 200000);
+    expect(manual.outputLimit, 8192);
+    expect(manual.copyWith(upstreamContextLimit: 300000).contextLimit, 300000);
+    expect(
+      manual.copyWith(clearManualContextLimit: true).contextLimit,
+      1000000,
+    );
+  });
+
   group('DeviceAIModelInfo thinking capability', () {
     test('parses and serializes detected thinking metadata', () {
       final model = DeviceAIModelInfo.fromJson({

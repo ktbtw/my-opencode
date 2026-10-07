@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../storage/app_storage.dart';
 import '../services/global_overlay_service.dart';
 import '../services/app_live_events.dart';
+import '../services/app_log_service.dart';
 import 'app_notification_model.dart';
 import 'app_notification_redactor.dart';
 import 'app_notification_repository.dart';
@@ -94,13 +95,25 @@ final appNotificationControllerProvider =
       final nativeNotificationSubscription = GlobalOverlayService
           .notificationEvents
           .listen((event) {
-            if (event['type'] != 'notification.updated') return;
+            final type = event['type'];
+            if (type != 'notification.updated' &&
+                type != 'notification.diagnostic') {
+              return;
+            }
             try {
               final raw = event['data'];
               final decoded = raw is String
                   ? (jsonDecode(raw) as Map?)
                   : (raw as Map?);
               if (decoded == null) return;
+              if (type == 'notification.diagnostic') {
+                unawaited(
+                  _persistNativeNotificationDiagnostic(
+                    Map<String, dynamic>.from(decoded),
+                  ),
+                );
+                return;
+              }
               controller.applyRemoteChange(
                 AppNotificationRemoteChange.fromJson(
                   Map<String, dynamic>.from(decoded),
@@ -117,6 +130,17 @@ final appNotificationControllerProvider =
       ref.watch(appNotificationLifecycleManagerProvider);
       return controller;
     });
+
+Future<void> _persistNativeNotificationDiagnostic(
+  Map<String, dynamic> data,
+) async {
+  if (!AppStorage.initialized) return;
+  try {
+    await AppLogService.log('background_notification', data: data);
+  } catch (error) {
+    debugPrint('[NotificationBridge] diagnostic write failed: $error');
+  }
+}
 
 class AppNotificationController extends StateNotifier<AppNotificationState> {
   final AppNotificationRepository repository;
@@ -438,9 +462,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     // pop it back open — otherwise every Agent switch undoes the user's choice.
     // Only an explicit expand() or a terminal failure may reopen it.
     final shouldExpand =
-        expand &&
-        (isNewOperation || isRestartedOperation) &&
-        !_userCollapsed;
+        expand && (isNewOperation || isRestartedOperation) && !_userCollapsed;
 
     _maybeSignalAttention(existing, record);
     if (isRestartedOperation) {

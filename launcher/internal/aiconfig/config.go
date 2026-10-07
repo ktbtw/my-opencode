@@ -55,35 +55,41 @@ type RuntimeModelMetadata struct {
 
 type RuntimeModelLimit struct {
 	Context int64 `json:"context"`
+	Output  int64 `json:"output"`
 }
 
 type RuntimeModelCapabilities struct {
-	Reasoning bool                  `json:"reasoning"`
-	Input     map[string]bool       `json:"input"`
-	Output    map[string]bool       `json:"output"`
+	Reasoning bool                    `json:"reasoning"`
+	Input     map[string]bool         `json:"input"`
+	Output    map[string]bool         `json:"output"`
 	Image     *RuntimeImageCapability `json:"image,omitempty"`
 }
 
 // RuntimeImageCapability 是 opencode 按生图方言下发的参数能力，
 // 客户端参数条据此渲染（OpenAI 是 size/quality，xAI 是 aspect_ratio/resolution）。
 type RuntimeImageCapability struct {
-	Sizes        []string `json:"sizes,omitempty"`
-	AspectRatios []string `json:"aspectRatios,omitempty"`
-	Resolutions  []string `json:"resolutions,omitempty"`
-	Qualities    []string `json:"qualities,omitempty"`
-	Formats      []string `json:"formats,omitempty"`
-	MaxCount     int      `json:"maxCount,omitempty"`
-	MaxReferences int     `json:"maxReferences,omitempty"`
+	Sizes         []string `json:"sizes,omitempty"`
+	AspectRatios  []string `json:"aspectRatios,omitempty"`
+	Resolutions   []string `json:"resolutions,omitempty"`
+	Qualities     []string `json:"qualities,omitempty"`
+	Formats       []string `json:"formats,omitempty"`
+	MaxCount      int      `json:"maxCount,omitempty"`
+	MaxReferences int      `json:"maxReferences,omitempty"`
 }
 
 const (
 	thinkingMetadataKey   = "x-operit-thinking"
+	modalitiesSourceKey   = "x-operit-modalities-source"
 	consoleURLMetadataKey = "x-operit-console-url"
 	// 下列键记录窗口值的来源，保证「供应商返回 > 手填 > 预设推断」在多次刷新后仍成立。
 	upstreamContextKey = "x-operit-upstream-context"
 	upstreamOutputKey  = "x-operit-upstream-output"
 	manualContextKey   = "x-operit-manual-context"
 	manualOutputKey    = "x-operit-manual-output"
+	presetContextKey   = "x-operit-preset-context"
+	presetOutputKey    = "x-operit-preset-output"
+	presetModelKey     = "x-operit-preset-model"
+	presetSourceKey    = "x-operit-preset-source"
 )
 
 var exact = map[string]*model.DeviceAIModalities{
@@ -278,11 +284,13 @@ func enrichDeviceAIModels(items []model.DeviceAIModelInfo, providerID string, ru
 
 func enrichDeviceAIModel(item *model.DeviceAIModelInfo, providerID string, modelID string, meta RuntimeModelMetadata) {
 	manualOverride := item.Thinking != nil && item.Thinking.OverrideEnabled
+	providerThinking := item.Thinking != nil && item.Thinking.Source == "provider"
 	// Keep explicit model configuration authoritative. Runtime metadata only
 	// fills modalities for models that do not have a saved value yet.
 	if item.Modalities == nil {
 		if modalities := runtimeModelModalities(meta); modalities != nil {
 			item.Modalities = modalities
+			item.ModalitiesSource = "runtime"
 		}
 	}
 	// 生图参数能力只在用户没保存手动值时由 runtime 补入，
@@ -292,19 +300,22 @@ func enrichDeviceAIModel(item *model.DeviceAIModelInfo, providerID string, model
 	}
 	// 手填的窗口值必须优先，runtime 上报只用于补空值：否则会把用户设置覆盖成
 	// 上报值，再以 context_limit 回传给客户端，被当成「供应商返回值」压住手填值。
-	if item.ManualContext <= 0 && meta.Limit.Context > 0 {
+	if item.ManualContext <= 0 && item.UpstreamContext <= 0 && meta.Limit.Context > 0 {
 		item.Context = meta.Limit.Context
+	}
+	if item.ManualOutput <= 0 && item.UpstreamOutput <= 0 && meta.Limit.Output > 0 {
+		item.Output = meta.Limit.Output
 	}
 	if item.Context <= 0 {
 		item.Context = inferContextLimit(providerID, modelID, item.Name)
 	}
-	if len(meta.Variants) > 0 && !manualOverride {
+	if len(meta.Variants) > 0 && !manualOverride && !providerThinking {
 		item.Variants = cloneMap(meta.Variants)
 	}
 	if item.Thinking == nil && (meta.Capabilities.Reasoning || len(meta.Variants) > 0) {
 		item.Thinking = thinkingFromVariants("runtime", meta.Variants)
 	}
-	if item.Thinking != nil && !item.Thinking.OverrideEnabled {
+	if item.Thinking != nil && !item.Thinking.OverrideEnabled && !providerThinking {
 		item.Thinking.Source = "runtime"
 		item.Thinking.Supported = meta.Capabilities.Reasoning || len(meta.Variants) > 0
 		item.Thinking.Variants = cloneMap(meta.Variants)
@@ -451,9 +462,11 @@ func parseModels(items map[string]any, provider string) []model.DeviceAIModelInf
 		name := id
 		owned := provider
 		var modalities *model.DeviceAIModalities
+		var modalitiesSource string
 		var variants map[string]any
 		var thinking *model.DeviceAIThinkingInfo
-		var upstreamContext, upstreamOutput, manualContext, manualOutput int64
+		var upstreamContext, upstreamOutput, manualContext, manualOutput, presetContext, presetOutput int64
+		var presetSource, presetModel string
 		if info, ok := item.(map[string]any); ok {
 			if value, ok := info["name"].(string); ok && strings.TrimSpace(value) != "" {
 				name = value
@@ -462,36 +475,53 @@ func parseModels(items map[string]any, provider string) []model.DeviceAIModelInf
 				owned = value
 			}
 			modalities = parseModalities(info["modalities"])
+			modalitiesSource = asString(info[modalitiesSourceKey])
 			upstreamContext = parseUpstreamContextLimit(info)
 			upstreamOutput = parseUpstreamOutputLimit(info)
 			manualContext = parseManualContextLimit(info)
 			manualOutput = parseManualOutputLimit(info)
+			presetContext = positiveInt64(info[presetContextKey])
+			presetOutput = positiveInt64(info[presetOutputKey])
+			presetSource = asString(info[presetSourceKey])
+			presetModel = asString(info[presetModelKey])
 			// 兼容手写或旧版本配置：没有来源标记时，把 limit 里的值当作手填值，
 			// 这样显式窗口不会被预设推断覆盖。
-			if upstreamContext <= 0 && manualContext <= 0 {
+			if upstreamContext <= 0 && manualContext <= 0 && presetContext <= 0 {
 				manualContext = parseContextLimit(info)
 			}
-			if upstreamOutput <= 0 && manualOutput <= 0 {
+			if upstreamOutput <= 0 && manualOutput <= 0 && presetOutput <= 0 {
 				manualOutput = parseOutputLimit(info)
 			}
 			variants = parseVariants(info["variants"])
 			thinking = parseThinkingInfo(info, variants)
 		}
 		inferred := inferContextLimit(provider, id, name)
-		contextLimit, outputLimit := effectiveLimits(upstreamContext, manualContext, inferred, upstreamOutput, manualOutput)
+		if modalitiesSource == "" {
+			modalitiesSource = "inferred"
+			if modalities != nil {
+				modalitiesSource = "manual"
+			}
+		}
+		contextLimit, outputLimit := effectiveLimits(upstreamContext, manualContext, firstPositiveInt64(presetContext, inferred), upstreamOutput, manualOutput)
+		outputLimit = firstPositiveInt64(outputLimit, presetOutput)
 		out = append(out, model.DeviceAIModelInfo{
-			ID:              id,
-			Name:            name,
-			OwnedBy:         owned,
-			Modalities:      matchModalities(provider, id, name, modalities),
-			Context:         contextLimit,
-			Output:          outputLimit,
-			UpstreamContext: upstreamContext,
-			UpstreamOutput:  upstreamOutput,
-			ManualContext:   manualContext,
-			ManualOutput:    manualOutput,
-			Variants:        variants,
-			Thinking:        thinking,
+			ID:               id,
+			Name:             name,
+			OwnedBy:          owned,
+			Modalities:       matchModalities(provider, id, name, modalities),
+			ModalitiesSource: modalitiesSource,
+			Context:          contextLimit,
+			Output:           outputLimit,
+			UpstreamContext:  upstreamContext,
+			UpstreamOutput:   upstreamOutput,
+			ManualContext:    manualContext,
+			ManualOutput:     manualOutput,
+			PresetContext:    presetContext,
+			PresetOutput:     presetOutput,
+			PresetSource:     presetSource,
+			PresetModel:      presetModel,
+			Variants:         variants,
+			Thinking:         thinking,
 		})
 	}
 	return out
@@ -613,24 +643,29 @@ func ListModels(input model.DeviceAIConfigInput) ([]model.DeviceAIModelInfo, err
 			variants = cloneMap(thinking.Variants)
 		}
 		ownedBy := firstNonEmpty(item.OwnedBy, provider)
+		modalitiesSource := "inferred"
+		if normalizeModalities(item.Modalities) != nil {
+			modalitiesSource = "provider"
+		}
 		upstreamContext := firstPositiveInt64(item.Context, item.ContextMax, item.Limit.Context)
 		upstreamOutput := firstPositiveInt64(item.Output, item.Limit.Output)
 		limits := manuals[id]
 		manualContext, manualOutput := limits[0], limits[1]
 		contextLimit, outputLimit := effectiveLimits(upstreamContext, manualContext, inferContextLimit(provider, id, id), upstreamOutput, manualOutput)
 		out = append(out, model.DeviceAIModelInfo{
-			ID:              id,
-			Name:            id,
-			OwnedBy:         ownedBy,
-			Modalities:      matchModalities(provider, id, id, item.Modalities),
-			Context:         contextLimit,
-			Output:          outputLimit,
-			UpstreamContext: upstreamContext,
-			UpstreamOutput:  upstreamOutput,
-			ManualContext:   manualContext,
-			ManualOutput:    manualOutput,
-			Variants:        variants,
-			Thinking:        thinking,
+			ID:               id,
+			Name:             id,
+			OwnedBy:          ownedBy,
+			Modalities:       matchModalities(provider, id, id, item.Modalities),
+			ModalitiesSource: modalitiesSource,
+			Context:          contextLimit,
+			Output:           outputLimit,
+			UpstreamContext:  upstreamContext,
+			UpstreamOutput:   upstreamOutput,
+			ManualContext:    manualContext,
+			ManualOutput:     manualOutput,
+			Variants:         variants,
+			Thinking:         thinking,
 		})
 	}
 	return out, nil
@@ -966,6 +1001,11 @@ func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, ap
 				entry = map[string]any{}
 			}
 			if preserveOverrides {
+				savedSource := asString(entry[modalitiesSourceKey])
+				if savedModalities := parseModalities(entry["modalities"]); savedModalities != nil && (savedSource == "" || savedSource == "manual") {
+					item.Modalities = savedModalities
+					item.ModalitiesSource = firstNonEmpty(asString(entry[modalitiesSourceKey]), "manual")
+				}
 				existingThinking := parseThinkingInfo(entry, parseVariants(entry["variants"]))
 				if existingThinking != nil && existingThinking.OverrideEnabled {
 					item.Thinking = existingThinking
@@ -978,18 +1018,32 @@ func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, ap
 					"input":  append([]string(nil), item.Modalities.Input...),
 					"output": append([]string(nil), item.Modalities.Output...),
 				}
+				entry[modalitiesSourceKey] = firstNonEmpty(item.ModalitiesSource, "manual")
 			}
 			upstreamContext := item.UpstreamContext
 			upstreamOutput := item.UpstreamOutput
 			manualContext := item.ManualContext
 			manualOutput := item.ManualOutput
 			// 兼容只传最终值的调用方：没有来源标记时，把最终值当作手填值。
-			if upstreamContext <= 0 && upstreamOutput <= 0 && manualContext <= 0 && manualOutput <= 0 {
+			if upstreamContext <= 0 && upstreamOutput <= 0 && manualContext <= 0 && manualOutput <= 0 && item.PresetContext <= 0 && item.PresetOutput <= 0 {
 				manualContext = item.Context
 				manualOutput = item.Output
 			}
-			inferred := inferContextLimit(providerID, id, item.Name)
+			inferred := firstPositiveInt64(item.PresetContext, inferContextLimit(providerID, id, item.Name))
 			contextLimit, outputLimit := effectiveLimits(upstreamContext, manualContext, inferred, upstreamOutput, manualOutput)
+			outputLimit = firstPositiveInt64(outputLimit, item.PresetOutput)
+			writeMarker(entry, presetContextKey, item.PresetContext)
+			writeMarker(entry, presetOutputKey, item.PresetOutput)
+			if item.PresetSource != "" {
+				entry[presetSourceKey] = item.PresetSource
+			} else {
+				delete(entry, presetSourceKey)
+			}
+			if item.PresetModel != "" {
+				entry[presetModelKey] = item.PresetModel
+			} else {
+				delete(entry, presetModelKey)
+			}
 			writeLimitMarkers(entry, upstreamContext, upstreamOutput, manualContext, manualOutput)
 			if limit := mergeLimit(entry["limit"], contextLimit, outputLimit); limit != nil {
 				entry["limit"] = limit

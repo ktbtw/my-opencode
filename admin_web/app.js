@@ -1,14 +1,31 @@
+import { safeBrowserStorage, defaultAPIBase, normalizeAPIBase, initialAPIBase, readJSONResponse, fetchWithTimeout, assertAdmin } from "./session.mjs?v=20261007-admin1";
+
 const storageKeys = {
   baseUrl: "chat_codex_admin_base_url",
   token: "chat_codex_admin_token",
   username: "chat_codex_admin_username",
+  customServer: "chat_codex_admin_custom_server",
+  displayMode: "chat_codex_admin_display_mode",
 };
+
+const storage = safeBrowserStorage(window);
+const initialConnection = initialAPIBase(window.location, storage.get(storageKeys.baseUrl), storage.get(storageKeys.customServer) === "true");
+if (initialConnection.migrated) storage.remove(storageKeys.token);
 
 const state = {
   baseUrl: initialBaseUrl(),
-  token: localStorage.getItem(storageKeys.token) || "",
-  username: localStorage.getItem(storageKeys.username) || "admin",
+  token: storage.get(storageKeys.token) || "",
+  username: storage.get(storageKeys.username) || "admin",
   view: initialView(),
+  displayMode: storage.get(storageKeys.displayMode) === "list" ? "list" : "grid",
+  loading: false,
+  loadError: "",
+  loadSequence: 0,
+  loadedViews: new Set(),
+  editorDirty: false,
+  editorReturnFocus: null,
+  commandReturnFocus: null,
+  commandIndex: 0,
   items: [],
   semanticAgents: [],
   skills: [],
@@ -188,11 +205,14 @@ const el = {
   toast: document.querySelector("#toast"),
 };
 
+Object.assign(el, Object.fromEntries(["loginError", "loginNote", "capsWarning", "togglePassword", "resetConnectionButton", "connectionLabel", "breadcrumbTitle", "connectionStatus", "resultCount", "gridViewButton", "listViewButton", "clearFiltersButton", "emptyResetButton", "loadError", "loadErrorMessage", "retryLoadButton", "loadingState", "lastSynced", "listTitle", "statusFilterGroup", "editorStatus", "commandButton", "commandOverlay", "commandInput", "commandResults", "closeCommandButton", "menuButton", "closeMenuButton", "menuBackdrop", "sidebar"].map((id) => [id, document.getElementById(id)])));
+
 function bootstrap() {
   normalizeLegacyHash();
   el.loginBaseUrl.value = state.baseUrl;
   el.loginUsername.value = state.username;
 
+  initConsoleInteractions();
   initCustomSelects();
   el.navLinks.forEach((link) => {
     link.addEventListener("click", (event) => {
@@ -201,14 +221,14 @@ function bootstrap() {
     });
   });
   el.loginForm.addEventListener("submit", login);
-  el.logoutButton.addEventListener("click", logout);
+  el.logoutButton.addEventListener("click", () => logout());
   el.refreshButton.addEventListener("click", loadCurrentView);
   el.newButton.addEventListener("click", () => openEditor());
   el.searchInput.addEventListener("input", render);
   el.categoryFilter.addEventListener("change", render);
   el.statusFilter.addEventListener("change", render);
-  el.closeDrawerButton.addEventListener("click", closeEditor);
-  el.cancelButton.addEventListener("click", closeEditor);
+  el.closeDrawerButton.addEventListener("click", requestCloseEditor);
+  el.cancelButton.addEventListener("click", requestCloseEditor);
   el.deleteButton.addEventListener("click", deleteCurrent);
   el.editorForm.addEventListener("submit", saveEditor);
   el.parseImportButton.addEventListener("click", parseImport);
@@ -222,7 +242,7 @@ function bootstrap() {
   el.resetToolPermissionsButton.addEventListener("click", resetToolPermissionsFromCatalog);
   el.applyToolPermissionsJsonButton.addEventListener("click", applyToolPermissionsJson);
   el.drawerOverlay.addEventListener("click", (event) => {
-    if (event.target === el.drawerOverlay) closeEditor();
+    if (event.target === el.drawerOverlay) requestCloseEditor();
   });
   el.confirmCancel.addEventListener("click", () => resolveConfirm(false));
   el.confirmOk.addEventListener("click", () => resolveConfirm(true));
@@ -237,52 +257,83 @@ function bootstrap() {
     if (event.target === el.referencePickerOverlay) closeReferencePicker();
   });
 
-  if (state.token) {
+  showLogin();
+  if (initialConnection.migrated) el.loginNote.textContent = "已恢复当前站点的服务地址，请重新登录。";
+  if (state.token) restoreSession();
+}
+
+function showLoginError(message = "") {
+  el.loginError.textContent = message;
+  el.loginError.classList.toggle("hidden", !message);
+}
+
+async function restoreSession() {
+  setBusy(el.loginButton, true, "正在检查会话");
+  try {
+    const operator = assertAdmin(await apiGet("/api/auth/me", { timeoutMs: 15000 }));
+    state.username = operator.username;
     showApp();
-    loadCurrentView();
-  } else {
-    showLogin();
+    await loadCurrentView();
+  } catch (error) {
+    if (error.statusCode === 401 || error.statusCode === 403 || error.message.includes("管理员账号")) logout(error.message);
+    else showLoginError(error.message || "会话检查失败，请重新登录或稍后重试");
+  } finally {
+    setBusy(el.loginButton, false, "登录工作台");
   }
 }
 
 async function login(event) {
   event.preventDefault();
-  const baseUrl = normalizeBaseUrl(el.loginBaseUrl.value);
+  if (el.loginButton.disabled) return;
+  showLoginError();
   const username = el.loginUsername.value.trim();
   const password = el.loginPassword.value;
-  if (!baseUrl || !username || !password) {
-    showToast("请填写服务地址、账号和密码");
+  if (!username || !password) {
+    showLoginError("请填写管理员账号和密码");
+    (username ? el.loginPassword : el.loginUsername).focus();
     return;
   }
-  setBusy(el.loginButton, true, "登录中");
+  let baseUrl;
+  try { baseUrl = normalizeAPIBase(el.loginBaseUrl.value, window.location); }
+  catch (error) { showLoginError(error.message); return; }
+  setBusy(el.loginButton, true, "正在登录");
   try {
-    const response = await fetch(`${baseUrl}/api/auth/login`, {
+    const response = await requestWithTimeout(`${baseUrl}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
-    });
+    }, 15000);
     const data = await readResponse(response);
-    const token = data.access_token;
-    if (!token) throw new Error("登录响应缺少 access_token");
+    if (typeof data.access_token !== "string" || !data.access_token) throw new Error("登录响应缺少会话信息，请稍后重试");
+    const operator = assertAdmin(data.operator);
     state.baseUrl = baseUrl;
-    state.token = token;
-    state.username = username;
-    localStorage.setItem(storageKeys.baseUrl, baseUrl);
-    localStorage.setItem(storageKeys.token, token);
-    localStorage.setItem(storageKeys.username, username);
+    state.token = data.access_token;
+    state.username = operator.username;
+    storage.set(storageKeys.baseUrl, baseUrl);
+    storage.set(storageKeys.customServer, String(baseUrl !== defaultAPIBase(window.location)));
+    const persisted = storage.set(storageKeys.token, state.token);
+    storage.set(storageKeys.username, state.username);
+    el.loginPassword.value = "";
+    if (!persisted) showToast("当前浏览器限制了本地存储，本次登录仍然有效");
     showApp();
     await loadCurrentView();
   } catch (error) {
-    showToast(error.message || "登录失败");
+    showLoginError(error.message || "登录失败，请重试");
   } finally {
-    setBusy(el.loginButton, false, "登录管理端");
+    setBusy(el.loginButton, false, "登录工作台");
   }
 }
 
-function logout() {
+function logout(reason = "") {
   state.token = "";
-  localStorage.removeItem(storageKeys.token);
+  state.loadSequence += 1;
+  state.loading = false;
+  storage.remove(storageKeys.token);
+  closeEditor();
+  closeCommandMenu();
+  setMenuOpen(false);
   showLogin();
+  showLoginError(reason);
 }
 
 function showLogin() {
@@ -294,11 +345,14 @@ function showApp() {
   el.loginView.classList.add("hidden");
   el.appView.classList.remove("hidden");
   el.currentUser.textContent = state.username || "admin";
+  setDisplayMode(state.displayMode);
   syncViewChrome();
 }
 
 function switchView(view) {
   state.view = normalizeView(view);
+  clearFilters(false);
+  setMenuOpen(false);
   state.editing = null;
   window.location.hash = hashForView(state.view);
   syncViewChrome();
@@ -313,13 +367,37 @@ function syncViewChrome() {
   el.topbarEyebrow.textContent = chrome.eyebrow;
   el.topbarTitle.textContent = chrome.title;
   el.topbarDescription.textContent = chrome.description;
-  el.newButton.textContent = chrome.newText;
+  setButtonLabel(el.newButton, chrome.newText);
+  el.breadcrumbTitle.textContent = chrome.title;
+  el.listTitle.textContent = state.view === "operators" ? "用户目录" : "资源目录";
+  el.statusFilterGroup.classList.toggle("hidden", state.view === "operators");
   el.newButton.classList.toggle("hidden", !chrome.canCreate);
   el.emptyTitle.textContent = chrome.emptyTitle;
   el.emptyDescription.textContent = chrome.emptyDescription;
 }
 
-function loadCurrentView() {
+async function loadCurrentView() {
+  if (!state.token) return;
+  const sequence = ++state.loadSequence;
+  const view = state.view;
+  state.loading = true;
+  state.loadError = "";
+  render();
+  await dispatchViewLoad();
+  if (sequence !== state.loadSequence || view !== state.view) return;
+  state.loading = false;
+  if (!state.loadError) {
+    state.loadedViews.add(view);
+    el.lastSynced.textContent = `最近同步 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+  }
+  render();
+}
+
+function isLiveLoad(view, sequence) {
+  return state.view === view && sequence === state.loadSequence;
+}
+
+function dispatchViewLoad() {
   switch (state.view) {
     case "semantic":
       return loadSemanticAgents();
@@ -341,23 +419,31 @@ function loadCurrentView() {
 }
 
 async function loadOperators() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
     const data = await apiGet("/api/admin/operators");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
     state.operators = Array.isArray(data.items) ? data.items : [];
     state.membershipOptions = Array.isArray(data.options) ? data.options : [];
     render();
   } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
     if (error.statusCode === 401 || error.statusCode === 403) {
-      logout();
+      logout(error.message);
     }
     showToast(error.message || "加载会员列表失败");
   } finally {
-    setBusy(el.refreshButton, false, "刷新");
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
 }
 
 async function loadSemanticAgents() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
     const [agentsData, skillsData, mcpData, toolData, runtimeData] = await Promise.all([
@@ -367,6 +453,8 @@ async function loadSemanticAgents() {
       apiGet("/api/admin/tool-catalog"),
       apiGet("/api/admin/runtime-catalog"),
     ]);
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
     state.skills = Array.isArray(skillsData.items) ? skillsData.items : [];
     state.mcpCatalog = Array.isArray(mcpData.items) ? mcpData.items : [];
     state.toolCatalog = Array.isArray(toolData.items) ? toolData.items : [];
@@ -375,92 +463,124 @@ async function loadSemanticAgents() {
     state.semanticAgents = Array.isArray(data.items) ? data.items : [];
     render();
   } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
     if (error.statusCode === 401 || error.statusCode === 403) {
-      logout();
+      logout(error.message);
     }
     showToast(error.message || "加载语义 Agent 失败");
   } finally {
-    setBusy(el.refreshButton, false, "刷新");
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
 }
 
 async function loadSkills() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
     const data = await apiGet("/api/admin/skills");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
     state.skills = Array.isArray(data.items) ? data.items : [];
     render();
   } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
     if (error.statusCode === 401 || error.statusCode === 403) {
-      logout();
+      logout(error.message);
     }
     showToast(error.message || "加载 Skill 库失败");
   } finally {
-    setBusy(el.refreshButton, false, "刷新");
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
 }
 
 async function loadMCPCatalog() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
     const data = await apiGet("/api/admin/mcp-catalog");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
     state.mcpCatalog = Array.isArray(data.items) ? data.items : [];
     render();
   } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
     if (error.statusCode === 401 || error.statusCode === 403) {
-      logout();
+      logout(error.message);
     }
     showToast(error.message || "加载 MCP 库失败");
   } finally {
-    setBusy(el.refreshButton, false, "刷新");
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
 }
 
 async function loadEnvironmentPresets() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
     const data = await apiGet("/api/admin/environment-presets");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
     state.environmentPresets = Array.isArray(data.items) ? data.items : [];
     render();
   } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
     if (error.statusCode === 401 || error.statusCode === 403) {
-      logout();
+      logout(error.message);
     }
     showToast(error.message || "加载环境预设失败");
   } finally {
-    setBusy(el.refreshButton, false, "刷新");
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
 }
 
 async function loadRuntimeCatalog() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
     const data = await apiGet("/api/admin/runtime-catalog");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
     state.runtimeCatalog = Array.isArray(data.items) ? data.items : [];
     render();
   } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
     if (error.statusCode === 401 || error.statusCode === 403) {
-      logout();
+      logout(error.message);
     }
     showToast(error.message || "加载运行时环境失败");
   } finally {
-    setBusy(el.refreshButton, false, "刷新");
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
 }
 
 async function loadToolCatalog() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
     const data = await apiGet("/api/admin/tool-catalog");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
     state.toolCatalog = Array.isArray(data.items) ? data.items : [];
     render();
   } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
     if (error.statusCode === 401 || error.statusCode === 403) {
-      logout();
+      logout(error.message);
     }
     showToast(error.message || "加载工具库失败");
   } finally {
-    setBusy(el.refreshButton, false, "刷新");
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
 }
 
@@ -469,8 +589,21 @@ function render() {
   renderStats();
   renderCategoryFilter();
   const items = filteredItems();
+  const filtered = Boolean(el.searchInput.value.trim()) || el.categoryFilter.value !== "all" || el.statusFilter.value !== "all";
+  el.clearFiltersButton.classList.toggle("hidden", !filtered);
+  el.emptyResetButton.classList.toggle("hidden", !filtered);
+  el.resultCount.textContent = state.loading ? "正在加载" : `${items.length} 项${filtered ? ` / 共 ${currentItems().length} 项` : "资源"}`;
+  el.loadingState.classList.toggle("hidden", !state.loading);
+  el.grid.classList.toggle("hidden", state.loading || Boolean(state.loadError));
+  el.grid.setAttribute("aria-busy", String(state.loading));
+  el.loadError.classList.toggle("hidden", !state.loadError || state.loading);
+  el.loadErrorMessage.textContent = state.loadError;
+  el.connectionStatus.textContent = state.loading ? "正在同步" : state.loadError ? "连接待重试" : "API 已连接";
+  el.connectionStatus.classList.toggle("degraded", Boolean(state.loadError));
+  el.emptyState.classList.toggle("hidden", state.loading || Boolean(state.loadError) || items.length > 0);
+  if (state.loading) return;
+  updateNavCounts();
   el.grid.innerHTML = items.map(cardForCurrentView).join("");
-  el.emptyState.classList.toggle("hidden", items.length > 0);
   el.grid.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", handleCardAction);
   });
@@ -988,6 +1121,7 @@ async function setMembershipTier(item, button) {
 }
 
 function openEditor(item = null) {
+  state.editorReturnFocus = document.activeElement;
   if (state.view === "semantic") {
     openSemanticEditor(item);
     return;
@@ -1015,6 +1149,7 @@ function openEditor(item = null) {
   fillForm(item || defaultCatalogItem(), true);
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
   el.catalogFieldId.focus();
 }
 
@@ -1029,6 +1164,7 @@ async function openSemanticEditor(item) {
   fillSemanticForm(item);
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
   el.agentFieldName.focus();
 }
 
@@ -1041,6 +1177,7 @@ function openSkillEditor(item = null) {
   fillSkillForm(item || defaultSkill());
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
   el.skillFieldId.focus();
 }
 
@@ -1053,6 +1190,7 @@ function openEnvironmentEditor(item = null) {
   fillEnvironmentForm(item || defaultEnvironmentPreset());
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
   el.envFieldId.focus();
 }
 
@@ -1066,6 +1204,7 @@ function openRuntimeEditor(item = null) {
   fillRuntimeForm(item || defaultRuntimeCatalogItem());
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
   el.runtimeFieldId.focus();
 }
 
@@ -1078,10 +1217,14 @@ function openToolEditor(item = null) {
   fillToolForm(item || defaultToolCatalogItem());
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
   el.toolFieldId.focus();
 }
 
 function closeEditor() {
+  state.editorDirty = false;
+  el.appView.inert = false;
+  state.editorReturnFocus?.focus?.();
   el.drawerOverlay.classList.add("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "true");
   state.editing = null;
@@ -2139,40 +2282,11 @@ async function apiPost(path, body, options = {}) {
 }
 
 async function requestWithTimeout(url, options, timeoutMs = 30000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error("请求超时，请检查服务状态或网络连接");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchWithTimeout(url, options, timeoutMs);
 }
 
 async function readResponse(response) {
-  const text = await response.text();
-  const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) {
-    const error = new Error(response.ok ? "服务返回格式不正确" : `服务地址不正确或接口不可用 (${response.status})`);
-    error.statusCode = response.status;
-    throw error;
-  }
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    const error = new Error("服务返回格式不正确");
-    error.statusCode = response.status;
-    throw error;
-  }
-  if (response.ok) return data;
-  const error = new Error(data.error || data.message || `请求失败 (${response.status})`);
-  error.statusCode = response.status;
-  throw error;
+  return readJSONResponse(response);
 }
 
 function confirmAction(title, message) {
@@ -2180,6 +2294,7 @@ function confirmAction(title, message) {
   el.confirmMessage.textContent = message;
   el.confirmOverlay.classList.remove("hidden");
   el.confirmOverlay.setAttribute("aria-hidden", "false");
+  el.confirmCancel.focus();
   return new Promise((resolve) => {
     state.confirmResolver = resolve;
   });
@@ -2188,6 +2303,7 @@ function confirmAction(title, message) {
 function resolveConfirm(value) {
   el.confirmOverlay.classList.add("hidden");
   el.confirmOverlay.setAttribute("aria-hidden", "true");
+  if (!el.drawerOverlay.classList.contains("hidden")) el.closeDrawerButton.focus();
   if (state.confirmResolver) state.confirmResolver(value);
   state.confirmResolver = null;
 }
@@ -2237,7 +2353,7 @@ function showToast(message, options = {}) {
 
 function setBusy(button, busy, text) {
   button.disabled = busy;
-  button.textContent = text;
+  setButtonLabel(button, text);
 }
 
 function initialView() {
@@ -3054,22 +3170,15 @@ function focusSiblingOption(select, direction) {
 }
 
 function normalizeBaseUrl(value) {
-  return value.trim().replace(/\/+$/, "");
+  return normalizeAPIBase(value, window.location);
 }
 
 function defaultBaseUrl() {
-  const origin = window.location.origin;
-  if (window.location.pathname.startsWith("/codex-admin/")) return `${origin}/codex`;
-  return origin;
+  return defaultAPIBase(window.location);
 }
 
 function initialBaseUrl() {
-  const stored = normalizeBaseUrl(localStorage.getItem(storageKeys.baseUrl) || "");
-  const fallback = defaultBaseUrl();
-  if (window.location.pathname.startsWith("/codex-admin/") && stored === window.location.origin) {
-    return fallback;
-  }
-  return stored || fallback;
+  return initialConnection.baseUrl;
 }
 
 function searchableText(item) {
@@ -3404,6 +3513,181 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replaceAll("\n", " ");
+}
+
+function setButtonLabel(button, text) {
+  const label = button.querySelector("[data-button-label]");
+  if (label) label.textContent = text;
+  else button.textContent = text;
+}
+
+function initConsoleInteractions() {
+  el.connectionLabel.textContent = initialConnection.baseUrl === defaultBaseUrl() ? "当前站点" : "自定义地址";
+  el.togglePassword.addEventListener("click", () => {
+    const visible = el.loginPassword.type === "password";
+    el.loginPassword.type = visible ? "text" : "password";
+    el.togglePassword.setAttribute("aria-pressed", String(visible));
+    el.togglePassword.setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
+  });
+  el.loginPassword.addEventListener("keyup", (event) => el.capsWarning.classList.toggle("hidden", !event.getModifierState("CapsLock")));
+  el.loginPassword.addEventListener("blur", () => el.capsWarning.classList.add("hidden"));
+  el.resetConnectionButton.addEventListener("click", () => {
+    state.baseUrl = defaultBaseUrl();
+    el.loginBaseUrl.value = state.baseUrl;
+    storage.set(storageKeys.baseUrl, state.baseUrl);
+    storage.set(storageKeys.customServer, "false");
+    storage.remove(storageKeys.token);
+    state.token = "";
+    el.connectionLabel.textContent = "当前站点";
+    showLoginError();
+    el.loginNote.textContent = "已恢复当前站点地址，使用管理员账号重新登录。";
+  });
+  el.gridViewButton.addEventListener("click", () => setDisplayMode("grid"));
+  el.listViewButton.addEventListener("click", () => setDisplayMode("list"));
+  el.clearFiltersButton.addEventListener("click", () => clearFilters());
+  el.emptyResetButton.addEventListener("click", () => clearFilters());
+  el.retryLoadButton.addEventListener("click", loadCurrentView);
+  el.commandButton.addEventListener("click", openCommandMenu);
+  el.closeCommandButton.addEventListener("click", closeCommandMenu);
+  el.commandInput.addEventListener("input", () => { state.commandIndex = 0; renderCommands(); });
+  el.commandOverlay.addEventListener("click", (event) => { if (event.target === el.commandOverlay) closeCommandMenu(); });
+  el.menuButton.addEventListener("click", () => setMenuOpen(true));
+  el.closeMenuButton.addEventListener("click", () => setMenuOpen(false));
+  el.menuBackdrop.addEventListener("click", () => setMenuOpen(false));
+  el.editorForm.addEventListener("input", markEditorDirty);
+  el.editorForm.addEventListener("change", markEditorDirty);
+  el.editorForm.addEventListener("click", (event) => {
+    if (event.target.closest("#parseImportButton, #addRuntimeVersionButton, #addRuntimeMirrorButton, #addRuntimeArtifactButton, #resetToolPermissionsButton, #applyToolPermissionsJsonButton, [data-remove-runtime-nested]")) queueMicrotask(markEditorDirty);
+  });
+  el.referencePickerApply.addEventListener("click", markEditorDirty);
+  document.addEventListener("keydown", handleConsoleKey, true);
+  window.addEventListener("beforeunload", (event) => { if (state.editorDirty) { event.preventDefault(); event.returnValue = ""; } });
+  window.addEventListener("hashchange", () => { if (state.token && initialView() !== state.view) switchView(initialView()); });
+  setDisplayMode(state.displayMode);
+}
+
+function clearFilters(shouldRender = true) {
+  el.searchInput.value = "";
+  el.categoryFilter.value = "all";
+  el.statusFilter.value = "all";
+  syncCustomSelect(el.statusFilter);
+  if (shouldRender) render();
+}
+
+function setDisplayMode(mode) {
+  state.displayMode = mode === "list" ? "list" : "grid";
+  storage.set(storageKeys.displayMode, state.displayMode);
+  el.grid.classList.toggle("list-mode", state.displayMode === "list");
+  el.gridViewButton.setAttribute("aria-pressed", String(state.displayMode === "grid"));
+  el.listViewButton.setAttribute("aria-pressed", String(state.displayMode === "list"));
+}
+
+function updateNavCounts() {
+  const counts = { mcpCatalog: state.mcpCatalog.length, skills: state.skills.length, tools: state.toolCatalog.length, semantic: state.semanticAgents.length, runtime: state.runtimeCatalog.length, environment: state.environmentPresets.length, operators: state.operators.length };
+  document.querySelectorAll("[data-count]").forEach((count) => { count.textContent = state.loadedViews.has(count.dataset.count) ? counts[count.dataset.count] : ""; });
+  el.navLinks.forEach((link) => { if (link.dataset.view === state.view) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current"); });
+}
+
+function setMenuOpen(open) {
+  el.sidebar.classList.toggle("menu-open", open);
+  el.menuBackdrop.classList.toggle("hidden", !open);
+  el.menuButton.setAttribute("aria-expanded", String(open));
+  if (open) el.closeMenuButton.focus();
+}
+
+function editorDidOpen() {
+  state.editorDirty = false;
+  el.editorStatus.textContent = "修改仅在保存后生效";
+  el.editorStatus.classList.remove("unsaved");
+  el.appView.inert = true;
+}
+
+function markEditorDirty() {
+  if (el.drawerOverlay.classList.contains("hidden")) return;
+  state.editorDirty = true;
+  el.editorStatus.textContent = "有未保存的修改";
+  el.editorStatus.classList.add("unsaved");
+}
+
+async function requestCloseEditor() {
+  if (el.saveButton.disabled || !el.confirmOverlay.classList.contains("hidden")) return;
+  if (state.editorDirty && !(await confirmAction("放弃未保存的修改？", "本次修改还未保存。返回编辑可以继续填写，放弃后不会更改已有配置。"))) return;
+  closeEditor();
+}
+
+function consoleCommands() {
+  const views = ["mcpCatalog", "skills", "tools", "semantic", "runtime", "environment", "operators"];
+  const commands = views.map((view) => ({ title: viewChrome(view).title, detail: "跳转到管理模块", action: () => switchView(view) }));
+  commands.push({ title: "刷新当前模块", detail: "重新读取服务端数据", action: loadCurrentView });
+  if (viewChrome(state.view).canCreate) commands.push({ title: viewChrome(state.view).newText, detail: "打开配置编辑器", action: () => openEditor() });
+  const query = el.commandInput.value.trim().toLowerCase();
+  return commands.filter((command) => `${command.title} ${command.detail}`.toLowerCase().includes(query));
+}
+
+function openCommandMenu() {
+  if (!state.token || !el.drawerOverlay.classList.contains("hidden")) return;
+  state.commandReturnFocus = document.activeElement;
+  state.commandIndex = 0;
+  el.commandInput.value = "";
+  el.commandOverlay.classList.remove("hidden");
+  el.commandOverlay.setAttribute("aria-hidden", "false");
+  el.appView.inert = true;
+  renderCommands();
+  el.commandInput.focus();
+}
+
+function closeCommandMenu() {
+  el.commandOverlay.classList.add("hidden");
+  el.commandOverlay.setAttribute("aria-hidden", "true");
+  el.appView.inert = !el.drawerOverlay.classList.contains("hidden");
+  state.commandReturnFocus?.focus?.();
+}
+
+function renderCommands() {
+  const commands = consoleCommands();
+  state.commandIndex = Math.min(state.commandIndex, Math.max(0, commands.length - 1));
+  el.commandResults.innerHTML = commands.length ? commands.map((command, index) => `<button id="command-${index}" class="command-result ${index === state.commandIndex ? "selected" : ""}" type="button" role="option" aria-selected="${index === state.commandIndex}" data-command="${index}"><span><strong>${escapeHtml(command.title)}</strong><small>${escapeHtml(command.detail)}</small></span><span aria-hidden="true">↵</span></button>`).join("") : '<p class="command-empty">没有匹配的模块或操作</p>';
+  el.commandInput.setAttribute("aria-controls", "commandResults");
+  if (commands.length) el.commandInput.setAttribute("aria-activedescendant", `command-${state.commandIndex}`);
+  else el.commandInput.removeAttribute("aria-activedescendant");
+  el.commandResults.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => runCommand(Number(button.dataset.command))));
+}
+
+function runCommand(index) {
+  const command = consoleCommands()[index];
+  closeCommandMenu();
+  command?.action();
+}
+
+function handleConsoleKey(event) {
+  const editable = event.target.closest?.("input, textarea, select, [contenteditable=true]");
+  const overlays = [el.confirmOverlay, el.referencePickerOverlay, el.commandOverlay, el.drawerOverlay];
+  const overlay = overlays.find((item) => !item.classList.contains("hidden"));
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); openCommandMenu(); return; }
+  if (!overlay && !editable && event.key === "/" && state.token) { event.preventDefault(); el.searchInput.focus(); return; }
+  if (!overlay && event.key === "Escape") { setMenuOpen(false); return; }
+  if (event.key === "Escape" && document.querySelector(".custom-select.open")) { closeCustomSelects(); event.stopImmediatePropagation(); return; }
+  if (event.key === "Escape" && overlay) {
+    event.preventDefault();
+    if (overlay === el.confirmOverlay) resolveConfirm(false);
+    else if (overlay === el.referencePickerOverlay) closeReferencePicker();
+    else if (overlay === el.commandOverlay) closeCommandMenu();
+    else requestCloseEditor();
+    return;
+  }
+  if (overlay === el.commandOverlay && ["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+    event.preventDefault();
+    if (event.key === "Enter") runCommand(state.commandIndex);
+    else { const length = consoleCommands().length; state.commandIndex = Math.max(0, Math.min(length - 1, state.commandIndex + (event.key === "ArrowDown" ? 1 : -1))); renderCommands(); }
+    return;
+  }
+  if (overlay === el.drawerOverlay && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!el.saveButton.disabled) el.editorForm.requestSubmit(); return; }
+  if (overlay && event.key === "Tab") {
+    const focusable = Array.from(overlay.querySelectorAll('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')).filter((element) => element.getClientRects().length);
+    const first = focusable[0], last = focusable.at(-1);
+    if (event.shiftKey && (document.activeElement === first || !overlay.contains(document.activeElement))) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || !overlay.contains(document.activeElement))) { event.preventDefault(); first?.focus(); }
+  }
 }
 
 bootstrap();

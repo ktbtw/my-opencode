@@ -49,7 +49,7 @@ void main() {
                 'id': 202,
                 'sequence': 202,
                 'type': 'completed',
-                'content': 'done',
+                'content': '${List.filled(200, 'a').join()}b',
                 'sent_at': '2026-01-01T00:00:02Z',
               },
             ];
@@ -232,7 +232,7 @@ void main() {
             },
             {
               'type': 'completed',
-              'content': 'done',
+              'content': 'before',
               'sent_at': '2026-01-01T00:00:01Z',
             },
             {

@@ -6,7 +6,8 @@
 - When removing/replacing a feature, wants the old code actually deleted, and confirms the cleanup reached the source rather than just being filtered/hidden. Confidence: 0.8
 - Wants side effects and regressions reasoned about before applying a fix ("先推演一遍这样修会不会出现新的问题"). Confidence: 0.75
 - Avoids adding redundant code when fixing; dislikes over-engineering and wants minimal, clean changes. Confidence: 0.75
-- Prefers splitting code across files/modules rather than cramming too much into one file. Confidence: 0.6
+- Prefers splitting code across files/modules rather than cramming too much into one file; when a file becomes unreadable (e.g. a several-thousand-line class) they explicitly ask for it to be broken into multiple cohesive files ("可读性太差了，你帮我拆分成多个文件"). Confidence: 0.7
+- Wants explanatory code comments written in Chinese, describing what each extracted module/section actually implements ("写上对应实现功能的中文注释"). Confidence: 0.7
 - Wants explicit permission before making changes they did not authorise ("没有我的允许，你不要改"). Confidence: 0.7
 - Expects the agent to fully understand the real domain/spec at field level before implementing — reading the upstream official API docs and, when those are unreachable, an actual working reference implementation — and to fill the largest hole properly ("你需要完全了解这两类生图模型，做的好一点") instead of shipping a minimal shim. Confidence: 0.7
 - When new capability support is added (e.g. video generation), expects the full upstream parameter surface to be wired through client and server, not a bare-bones request body — asks "生成视频没有什么参数吗？" and wants the missing upstream options exposed in the UI and sent in the request. Confidence: 0.7

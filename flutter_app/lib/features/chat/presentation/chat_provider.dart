@@ -2367,11 +2367,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   void _attachDispatchedQueueTask(ChatQueueItem item) {
-    final userMessageId = 'user_queue_${item.id}';
+    // Queue snapshots retain dispatched items after completion. An already
+    // rendered task must not be appended or subscribed to again on replay.
+    if (state.messages.any(
+      (message) =>
+          message.taskId == item.taskId && message.role == MessageRole.agent,
+    )) {
+      return;
+    }
+    final userMessageId = 'user_${item.taskId}';
     final agentMessageId = 'agent_${item.taskId}';
-    final taskCreatedAt = item.createdAt ?? DateTime.now();
+    // createdAt is the enqueue time, potentially before intervening tasks.
+    final taskCreatedAt = item.updatedAt ?? DateTime.now();
     final messages = List<ChatMessage>.from(state.messages);
-    if (!messages.any((message) => message.id == userMessageId)) {
+    if (!messages.any(
+      (message) =>
+          message.taskId == item.taskId &&
+          message.role == MessageRole.user &&
+          !message.isInsertedContext,
+    )) {
       messages.add(
         ChatMessage(
           id: userMessageId,
@@ -3247,9 +3261,25 @@ class ChatNotifier extends StateNotifier<ChatState> {
                     : const <String, dynamic>{};
                 final roundContent =
                     completedMetadata['round_result'] as String? ?? '';
-                final visibleCompletedContent = roundContent.isNotEmpty
+                var visibleCompletedContent = roundContent.isNotEmpty
                     ? roundContent
                     : completedContent;
+                if (roundContent.isEmpty) {
+                  final preceding = state.messages
+                      .where(
+                        (m) =>
+                            m.role == MessageRole.agent && m.taskId == taskId,
+                      )
+                      .takeWhile((m) => m.id != activeAgentMessageId())
+                      .map((m) => m.content)
+                      .join();
+                  if (preceding.isNotEmpty &&
+                      visibleCompletedContent.startsWith(preceding)) {
+                    visibleCompletedContent = visibleCompletedContent.substring(
+                      preceding.length,
+                    );
+                  }
+                }
                 final artifacts = _parseArtifacts(event['artifacts']);
                 final files = _parseFiles(event['files']);
                 final usage = event['usage'] is Map
@@ -3299,9 +3329,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
                 _updateMessage(activeAgentMessageId(), (m) {
                   m.statusHint = '';
                   if (visibleCompletedContent.isNotEmpty) {
-                    m.content = visibleCompletedContent;
-                    if (!_blocksHaveVisibleText(m.blocks)) {
-                      _appendTextBlock(m, visibleCompletedContent);
+                    if (roundContent.isNotEmpty) {
+                      _setRecoveredBody(m, visibleCompletedContent);
+                    } else {
+                      _mergeRecoveredRoundBody(
+                        m,
+                        visibleCompletedContent,
+                        streaming: false,
+                      );
                     }
                   }
                   if (m.content.isEmpty) {
@@ -3983,7 +4018,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
   ChatMessage _mergeLiveMessage(ChatMessage rebuilt, ChatMessage? live) {
     if (live == null || rebuilt.role != MessageRole.agent) return rebuilt;
     final merged = rebuilt.copyForUpdate();
-    if (live.content.length > merged.content.length) {
+    if ((live.state == MessageState.streaming && live.content.isNotEmpty) ||
+        live.content.length > merged.content.length) {
       merged.content = live.content;
     }
     if (live.thinkingContent.length > merged.thinkingContent.length) {
@@ -4213,6 +4249,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
           (m) => m.role == MessageRole.agent && m.taskId == msg.taskId,
         );
         if (firstIndex >= 0) {
+          var startIndex = firstIndex;
+          while (startIndex > 0 &&
+              msgs[startIndex - 1].taskId == msg.taskId &&
+              msgs[startIndex - 1].isInsertedContext) {
+            startIndex--;
+          }
           var endIndex = firstIndex + 1;
           while (endIndex < msgs.length &&
               msgs[endIndex].taskId == msg.taskId) {
@@ -4224,9 +4266,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
               ..streamRecovery = msg.streamRecovery
               ..historyDetails = HistoryDetailsState.none,
             snapshot,
+            currentReply: owners[msg.taskId],
+            contentSpansRounds: owners[msg.taskId]?.id == msgs[firstIndex].id,
           );
           if (roundMessages.isNotEmpty) {
-            msgs.replaceRange(firstIndex, endIndex, roundMessages);
+            msgs.replaceRange(startIndex, endIndex, roundMessages);
             if (_currentTaskId == msg.taskId) {
               for (final roundMessage in roundMessages.reversed) {
                 if (roundMessage.role == MessageRole.agent) {
@@ -4236,7 +4280,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
               }
             }
             changed = true;
-            i = firstIndex + roundMessages.length - 1;
+            i = startIndex + roundMessages.length - 1;
             continue;
           }
         }
@@ -4333,14 +4377,21 @@ class ChatNotifier extends StateNotifier<ChatState> {
 
   List<ChatMessage> _messagesFromTaskRoundSnapshot(
     ChatMessage base,
-    TaskEventSnapshot snapshot,
-  ) {
+    TaskEventSnapshot snapshot, {
+    ChatMessage? currentReply,
+    bool contentSpansRounds = true,
+  }) {
     base = base.copyForUpdate()
       ..toolOrderKnown =
           snapshot.preservesToolPositions ||
           (base.toolOrderKnown && _blocksAreInterleaved(base.blocks));
     final taskId = base.taskId;
     if (taskId == null) return const [];
+    final bodySource = currentReply ?? base;
+    base.artifacts = bodySource.artifacts;
+    base.files = bodySource.files;
+    base.errorDetail = bodySource.errorDetail;
+    base.plan = bodySource.plan ?? base.plan;
     final rounds = snapshot.rounds;
     final visibleRoundIndexes = <int>[
       for (var index = 0; index < rounds.length; index++)
@@ -4353,12 +4404,17 @@ class ChatNotifier extends StateNotifier<ChatState> {
         ? -1
         : visibleRoundIndexes.last;
     int? activePlaceholderRound;
-    if (base.state == MessageState.streaming && rounds.isNotEmpty) {
+    if (rounds.isNotEmpty) {
       final candidate = rounds.length - 1;
       if (!rounds[candidate].hasOutput &&
           snapshot.appliedInputs.any(
             (input) => input.afterRoundIndex == candidate - 1,
-          )) {
+          ) &&
+          (base.state == MessageState.streaming ||
+              _bodyAfterSnapshotRounds(
+                bodySource.content,
+                contentSpansRounds ? rounds.take(candidate) : const [],
+              ).trim().isNotEmpty)) {
         activePlaceholderRound = candidate;
       }
     }
@@ -4401,7 +4457,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
                 base.createdAt.add(Duration(milliseconds: result.length + 1)),
             taskId: taskId,
             taskCreatedAt: base.taskCreatedAt ?? base.createdAt,
-            taskMessageIndex: result.length,
+            // Index zero belongs to the task's original user message.
+            taskMessageIndex: result.length + 1,
             isInsertedContext: true,
             insertedContextSource: input.contextSource,
             insertedContextType: input.contextType,
@@ -4433,7 +4490,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
             taskId: taskId,
             round: round,
             visibleIndex: visibleIndex,
-            timelineIndex: result.length,
+            timelineIndex: result.length + 1,
             isLast: isLastRenderedRound,
             messageId: precedingInput == null
                 ? null
@@ -4449,7 +4506,87 @@ class ChatNotifier extends StateNotifier<ChatState> {
       appendInputsAfter(roundIndex);
     }
     if (visibleRoundIndexes.isEmpty && result.isEmpty) result.add(base);
+    // The task index and live reply can be ahead of the detailed archive.
+    // Rebuilding rounds restores boundaries/tools, not permission to discard
+    // the final body. A task-level result may include the preceding rounds;
+    // strip only their exact known prefix, never a guessed length/boundary.
+    var lastAgentIndex = result.lastIndexWhere(
+      (message) => message.role == MessageRole.agent,
+    );
+    if (lastAgentIndex < 0 && bodySource.content.trim().isNotEmpty) {
+      result.add(
+        _messageFromTaskRoundSnapshot(
+          base: base,
+          taskId: taskId,
+          round: TaskEventRoundSnapshot(
+            text: bodySource.content,
+            reasoning: bodySource.thinkingContent,
+            toolCalls: bodySource.toolCalls,
+            blocks: bodySource.blocks,
+            goalProgress: bodySource.goalProgress,
+            planHistory: bodySource.planHistory,
+            statistics: bodySource.statistics,
+          ),
+          visibleIndex: 0,
+          timelineIndex: result.length + 1,
+          isLast: true,
+        ),
+      );
+      lastAgentIndex = result.length - 1;
+    }
+    if (lastAgentIndex >= 0) {
+      final lastRoundIndex = activePlaceholderRound ?? lastVisibleRound;
+      final body = _bodyAfterSnapshotRounds(
+        bodySource.content,
+        contentSpansRounds && lastRoundIndex > 0
+            ? rounds.take(lastRoundIndex)
+            : const [],
+      );
+      _mergeRecoveredRoundBody(
+        result[lastAgentIndex],
+        body,
+        streaming: base.state == MessageState.streaming,
+      );
+    }
     return result;
+  }
+
+  String _bodyAfterSnapshotRounds(
+    String content,
+    Iterable<TaskEventRoundSnapshot> precedingRounds,
+  ) {
+    final prefix = precedingRounds.map((round) => round.text).join();
+    return prefix.isNotEmpty && content.startsWith(prefix)
+        ? content.substring(prefix.length)
+        : content;
+  }
+
+  void _mergeRecoveredRoundBody(
+    ChatMessage message,
+    String body, {
+    required bool streaming,
+  }) {
+    if (body.trim().isEmpty) return;
+    final existing = message.content;
+    if (existing.isEmpty || body.startsWith(existing)) {
+      _setRecoveredBody(message, body);
+    } else if (existing.contains(body)) {
+      // The archive is already fuller, or this final result is rendered.
+      return;
+    } else if (body.contains(existing)) {
+      _setRecoveredBody(message, body);
+    } else if (!streaming) {
+      // Some terminal indexes contain only the summary, not earlier
+      // commentary. Keep both and place the missing summary after the tools.
+      _appendTextBlock(message, '\n\n$body');
+      message.content = '$existing\n\n$body';
+    } else {
+      // The unchanged-owner guard establishes this live round's boundary.
+      // Length is not freshness: a newer round can be shorter than an older
+      // snapshot's commentary, while exact contained prefixes/suffixes above
+      // already retain a fuller archive body.
+      _setRecoveredBody(message, body);
+    }
   }
 
   String _restoreTaskRoundMessages(
@@ -4469,6 +4606,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
     if (firstAgentIndex < 0) return fallbackAgentMessageId;
 
+    var startIndex = firstAgentIndex;
+    while (startIndex > 0 &&
+        messages[startIndex - 1].taskId == taskId &&
+        messages[startIndex - 1].isInsertedContext) {
+      startIndex--;
+    }
     var endIndex = firstAgentIndex + 1;
     while (endIndex < messages.length && messages[endIndex].taskId == taskId) {
       endIndex += 1;
@@ -4479,9 +4622,12 @@ class ChatNotifier extends StateNotifier<ChatState> {
         ..historyDetails = (_lastTaskReply(taskId) ?? messages[firstAgentIndex])
             .historyDetails,
       snapshot,
+      currentReply: _lastTaskReply(taskId),
+      contentSpansRounds:
+          _lastTaskReply(taskId)?.id == messages[firstAgentIndex].id,
     );
     if (restored.isEmpty) return fallbackAgentMessageId;
-    messages.replaceRange(firstAgentIndex, endIndex, restored);
+    messages.replaceRange(startIndex, endIndex, restored);
     state = state.copyWith(messages: messages);
     for (final message in restored.reversed) {
       if (message.role == MessageRole.agent) {
@@ -4504,14 +4650,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final roundContent = round.text.isNotEmpty
         ? round.text
         : _goalRoundCompletionContent(round);
-    final canReuseBaseContent = messageId == null && isLast;
-    final visibleContent = roundContent.isNotEmpty
-        ? roundContent
-        : (canReuseBaseContent ? base.content : '');
+    final visibleContent = roundContent;
     final plan = round.planHistory.isNotEmpty
         ? round.planHistory.last.plan
         : null;
-    return ChatMessage(
+    final message = ChatMessage(
       id:
           messageId ??
           (visibleIndex == 0
@@ -4561,6 +4704,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
           ) ??
           (visibleIndex == 0 ? base.firstTokenTime : null),
     );
+    _setRecoveredBody(message, visibleContent);
+    if (base.state != MessageState.streaming) _finalizeRunningTools(message);
+    return message;
   }
 
   String _goalRoundCompletionContent(TaskEventRoundSnapshot round) {
@@ -4578,6 +4724,15 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }
 
   String _finalTaskContent(TaskModel task, TaskEventSnapshot snapshot) {
+    final result = task.result ?? '';
+    if (result.trim().isNotEmpty) {
+      return _bodyAfterSnapshotRounds(
+        result,
+        snapshot.rounds.take(
+          snapshot.rounds.isEmpty ? 0 : snapshot.rounds.length - 1,
+        ),
+      );
+    }
     if (snapshot.appliedInputs.isNotEmpty ||
         _shouldRenderSnapshotAsGoalRounds(snapshot)) {
       for (final round in snapshot.rounds.reversed) {
@@ -4587,8 +4742,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         if (goalContent.isNotEmpty) return goalContent;
       }
     }
-    final result = task.result ?? '';
-    if (result.trim().isNotEmpty) return result;
     final text = snapshot.text;
     if (text.trim().isNotEmpty) return text;
     return '';
@@ -4998,11 +5151,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         }
       }
     }
-    final finalContent = finalRound == null
-        ? _finalTaskContent(task, snapshot)
-        : (finalRound.text.isNotEmpty
-              ? finalRound.text
-              : _goalRoundCompletionContent(finalRound));
+    final finalContent = _finalTaskContent(task, snapshot);
     final reasoning = finalRound?.reasoning ?? snapshot.reasoning;
     final blocks = finalRound?.blocks ?? snapshot.blocks;
     final toolCalls = _finalizedToolCalls(
@@ -5040,10 +5189,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
     message.statusHint = '';
     if (finalContent.isNotEmpty) {
-      message.content = finalContent;
-      if (!_blocksHaveVisibleText(message.blocks)) {
-        _appendTextBlock(message, finalContent);
-      }
+      _mergeRecoveredRoundBody(message, finalContent, streaming: false);
     } else if (message.content.isEmpty) {
       final goalFallback = _goalCompletionContent(message);
       if (goalFallback.isNotEmpty) {

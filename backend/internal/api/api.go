@@ -4628,8 +4628,8 @@ func normalizeDeviceAIModels(provider string, items []model.DeviceAIModel) []mod
 			item.Owned = strings.TrimSpace(provider)
 		}
 		// 供应商返回 > 手填 > 预设推断。后端只做兜底，优先值以 launcher 回传为准。
-		item.Context = firstPositiveLimit(item.Context, item.ManualContext, inferGrokContextLimit(item.Owned, item.ID, item.Name))
-		item.Output = firstPositiveLimit(item.Output, item.ManualOutput)
+		item.Context = firstPositiveLimit(item.UpstreamContext, item.ManualContext, item.PresetContext, item.Context, inferGrokContextLimit(item.Owned, item.ID, item.Name))
+		item.Output = firstPositiveLimit(item.UpstreamOutput, item.ManualOutput, item.PresetOutput, item.Output)
 		if item.Thinking != nil {
 			item.Thinking.Source = strings.TrimSpace(item.Thinking.Source)
 			item.Thinking.Control = strings.TrimSpace(item.Thinking.Control)

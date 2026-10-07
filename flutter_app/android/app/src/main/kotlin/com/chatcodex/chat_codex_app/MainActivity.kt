@@ -1,16 +1,21 @@
 package com.chatcodex.chat_codex_app
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
-import android.content.Intent
-import android.net.Uri
 import cn.jpush.android.api.JPushInterface
+import com.chatcodex.chat_codex_app.artifact.ArtifactDirectoryBridge
+import com.chatcodex.chat_codex_app.overlay.GlobalOverlayEventBridge
+import com.chatcodex.chat_codex_app.overlay.GlobalOverlayService
+import com.chatcodex.chat_codex_app.overlay.NotificationEventBridge
+import com.chatcodex.chat_codex_app.push.JPushBridge
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.EventChannel.EventSink
+import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -24,26 +29,48 @@ class MainActivity : FlutterActivity() {
 
     private val channelName = "chat_codex/push_service"
     private val tag = "JPushMainActivity"
+    private val lifecycleTag = "ChatCodexLifecycle"
     private var launchPayload: Map<String, String> = notificationPayload(intent)
     private var notificationSink: EventSink? = null
 
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.i(lifecycleTag, "生命周期 onCreate 触发，当前=${foregroundLabel()}")
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.i(lifecycleTag, "生命周期 onStart 触发，当前=${foregroundLabel()}")
+    }
+
     override fun onResume() {
         super.onResume()
-        setAppForeground(true)
+        setAppForeground(true, "onResume")
     }
 
     override fun onPause() {
-        setAppForeground(false)
+        setAppForeground(false, "onPause")
         super.onPause()
     }
 
-    private fun setAppForeground(foreground: Boolean) {
+    override fun onStop() {
+        super.onStop()
+        Log.i(lifecycleTag, "生命周期 onStop 触发，当前=${foregroundLabel()}")
+    }
+
+    private fun setAppForeground(foreground: Boolean, reason: String) {
+        val previous = appForeground
         appForeground = foreground
+        val from = if (previous) "前台" else "后台"
+        val to = if (foreground) "前台" else "后台"
+        Log.i(lifecycleTag, "生命周期 $reason 触发：$from -> $to，当前=${if (foreground) "前台" else "后台"}")
         getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
             .edit()
             .putBoolean("chat_codex_app_foreground", foreground)
             .apply()
     }
+
+    private fun foregroundLabel(): String = if (appForeground) "前台" else "后台"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)

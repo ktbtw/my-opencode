@@ -5,6 +5,101 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'prefills catalogue limits without turning them into manual values',
+    (tester) async {
+      final changes = <DeviceAIModelInfo>[];
+      final model = DeviceAIModelInfo.fromJson({
+        'id': 'gpt-5.4',
+        'name': 'GPT 5.4',
+        'preset_context_limit': 1000000,
+        'preset_output_limit': 128000,
+        'preset_source': 'opencode',
+        'preset_model': 'openai/gpt-5.4',
+        'modalities': {
+          'input': ['text', 'image'],
+          'output': ['text'],
+        },
+      });
+      await _pumpEditor(tester, model: model, onChanged: changes.add);
+      final contextField = find.descendant(
+        of: find.byKey(const ValueKey('context-limit-input')),
+        matching: find.byType(EditableText),
+      );
+      final outputField = find.descendant(
+        of: find.byKey(const ValueKey('output-limit-input')),
+        matching: find.byType(EditableText),
+      );
+      expect(
+        tester.widget<EditableText>(contextField).controller.text,
+        '1000000',
+      );
+      expect(
+        tester.widget<EditableText>(outputField).controller.text,
+        '128000',
+      );
+      expect(changes, isEmpty);
+      expect(find.text('OpenCode 预设：openai/gpt-5.4'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('output-preset-16384')),
+      );
+      await tester.tap(find.byKey(const ValueKey('output-preset-16384')));
+      await tester.pump();
+      expect(changes.last.manualOutputLimit, 16384);
+      expect(changes.last.manualContextLimit, isNull);
+      expect(changes.last.contextLimit, 1000000);
+    },
+  );
+
+  testWidgets('shows and edits output modalities from the preset', (
+    tester,
+  ) async {
+    final changes = <DeviceAIModelInfo>[];
+    await _pumpEditor(
+      tester,
+      model: const DeviceAIModelInfo(
+        id: 'image-model',
+        name: 'Image',
+        ownedBy: 'relay',
+        inputModalities: ['text', 'image'],
+        outputModalities: ['image'],
+      ),
+      onChanged: changes.add,
+    );
+    final imageChip = find.byKey(const ValueKey('model-output-image'));
+    expect(tester.widget<ChoiceChip>(imageChip).selected, isTrue);
+    await tester.ensureVisible(find.byKey(const ValueKey('model-output-text')));
+    await tester.tap(find.byKey(const ValueKey('model-output-text')));
+    await tester.pump();
+    expect(changes.last.outputModalities, ['text', 'image']);
+    expect(changes.last.inputModalities, ['text', 'image']);
+    expect(changes.last.modalitiesSource, 'manual');
+  });
+
+  testWidgets('same-model asynchronous preset update refreshes the fields', (
+    tester,
+  ) async {
+    const initial = DeviceAIModelInfo(
+      id: 'gpt-5.4',
+      name: 'GPT 5.4',
+      ownedBy: 'relay',
+    );
+    await _pumpEditor(tester, model: initial, onChanged: (_) {});
+    await _pumpEditor(
+      tester,
+      model: initial.copyWith(
+        presetContextLimit: 1000000,
+        presetOutputLimit: 128000,
+      ),
+      onChanged: (_) {},
+    );
+    final field = find.descendant(
+      of: find.byKey(const ValueKey('context-limit-input')),
+      matching: find.byType(EditableText),
+    );
+    expect(tester.widget<EditableText>(field).controller.text, '1000000');
+  });
+
   testWidgets('applies context window preset without writing json', (
     tester,
   ) async {

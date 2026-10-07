@@ -68,8 +68,27 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
   @override
   void didUpdateWidget(covariant ModelThinkingEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.model.id != widget.model.id) {
+    if (oldWidget.model.id != widget.model.id ||
+        (oldWidget.model.thinking?.overrideEnabled != true &&
+            widget.model.thinking?.overrideEnabled != true &&
+            !identical(oldWidget.model.thinking, widget.model.thinking))) {
       _reset();
+    } else {
+      // Late capability refresh for the same selected model must reach the
+      // fields too, without resetting an active manual reasoning draft.
+      if (oldWidget.model.manualContextLimit ==
+              widget.model.manualContextLimit &&
+          oldWidget.model.contextLimit != widget.model.contextLimit) {
+        _contextLimitController.text = _manualTokenText(
+          widget.model.contextLimit,
+        );
+      }
+      if (oldWidget.model.manualOutputLimit == widget.model.manualOutputLimit &&
+          oldWidget.model.outputLimit != widget.model.outputLimit) {
+        _outputLimitController.text = _manualTokenText(
+          widget.model.outputLimit,
+        );
+      }
     }
   }
 
@@ -100,8 +119,8 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
     _advancedVariants = null;
     _message = '';
     _messageError = false;
-    _contextLimitController.text = _manualTokenText(widget.model.manualContextLimit);
-    _outputLimitController.text = _manualTokenText(widget.model.manualOutputLimit);
+    _contextLimitController.text = _manualTokenText(widget.model.contextLimit);
+    _outputLimitController.text = _manualTokenText(widget.model.outputLimit);
     _contextLimitError = '';
     _outputLimitError = '';
     _syncLevelControllers(forceText: true);
@@ -116,7 +135,7 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
       _contextLimitController.text = value.toString();
       _contextLimitError = '';
     });
-    _emitContextLimit();
+    _emitContextLimit(updateContext: true);
   }
 
   void _applyOutputLimitPreset(int value) {
@@ -124,7 +143,7 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
       _outputLimitController.text = value.toString();
       _outputLimitError = '';
     });
-    _emitContextLimit();
+    _emitContextLimit(updateOutput: true);
   }
 
   void _clearContextLimit() {
@@ -132,7 +151,7 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
       _contextLimitController.text = '';
       _contextLimitError = '';
     });
-    _emitContextLimit(clearContext: true);
+    _emitContextLimit(updateContext: true, clearContext: true);
   }
 
   void _clearOutputLimit() {
@@ -140,10 +159,15 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
       _outputLimitController.text = '';
       _outputLimitError = '';
     });
-    _emitContextLimit(clearOutput: true);
+    _emitContextLimit(updateOutput: true, clearOutput: true);
   }
 
-  void _emitContextLimit({bool clearContext = false, bool clearOutput = false}) {
+  void _emitContextLimit({
+    bool updateContext = false,
+    bool updateOutput = false,
+    bool clearContext = false,
+    bool clearOutput = false,
+  }) {
     final contextError = validateTokenInput(
       _contextLimitController.text,
       label: '上下文窗口',
@@ -161,10 +185,16 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
     final outputValue = int.tryParse(_outputLimitController.text.trim());
     widget.onChanged(
       widget.model.copyWith(
-        manualContextLimit: contextValue,
-        manualOutputLimit: outputValue,
-        clearManualContextLimit: clearContext || contextValue == null,
-        clearManualOutputLimit: clearOutput || outputValue == null,
+        manualContextLimit: updateContext
+            ? contextValue
+            : widget.model.manualContextLimit,
+        manualOutputLimit: updateOutput
+            ? outputValue
+            : widget.model.manualOutputLimit,
+        clearManualContextLimit:
+            updateContext && (clearContext || contextValue == null),
+        clearManualOutputLimit:
+            updateOutput && (clearOutput || outputValue == null),
       ),
     );
   }
@@ -453,7 +483,11 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
         ? widget.model.outputModalities
         : const ['text'];
     widget.onChanged(
-      widget.model.copyWith(inputModalities: input, outputModalities: output),
+      widget.model.copyWith(
+        inputModalities: input,
+        outputModalities: output,
+        modalitiesSource: 'manual',
+      ),
     );
   }
 
@@ -545,6 +579,18 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
                   onChanged: _inputModalitiesChanged,
                 ),
                 const SizedBox(height: 18),
+                _buildOutputModalitiesSection(),
+                if (widget.model.presetModel.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'OpenCode 预设：${widget.model.presetModel}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 18),
                 _buildContextWindowSection(),
                 const SizedBox(height: 18),
                 _SectionTitle(title: '配置来源', trailing: '手动配置始终优先'),
@@ -568,9 +614,52 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
     );
   }
 
+  Widget _buildOutputModalitiesSection() {
+    const options = [
+      ('text', '文本输出'),
+      ('image', '图片输出'),
+      ('video', '视频输出'),
+      ('audio', '音频输出'),
+      ('pdf', 'PDF 输出'),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(title: '输出方式', trailing: '按模型能力预填，可手动调整'),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (value, label) in options)
+              ChoiceChip(
+                key: ValueKey('model-output-$value'),
+                label: Text(label),
+                selected: widget.model.outputModalities.contains(value),
+                onSelected: (selected) {
+                  final values = widget.model.outputModalities.toSet();
+                  selected ? values.add(value) : values.remove(value);
+                  widget.onChanged(
+                    widget.model.copyWith(
+                      modalitiesSource: 'manual',
+                      outputModalities: [
+                        for (final (type, _) in options)
+                          if (values.contains(type)) type,
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildContextWindowSection() {
     final effectiveContext = widget.model.contextLimit;
-    final isOverride = widget.model.manualContextLimit != null ||
+    final isOverride =
+        widget.model.manualContextLimit != null ||
         widget.model.manualOutputLimit != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -616,7 +705,7 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
               controller: _contextLimitController,
               keyboardType: TextInputType.number,
               errorText: _contextLimitError.isEmpty ? null : _contextLimitError,
-              onChanged: (_) => _emitContextLimit(),
+              onChanged: (_) => _emitContextLimit(updateContext: true),
             );
             final outputField = AppInput(
               key: const ValueKey('output-limit-input'),
@@ -625,7 +714,7 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
               controller: _outputLimitController,
               keyboardType: TextInputType.number,
               errorText: _outputLimitError.isEmpty ? null : _outputLimitError,
-              onChanged: (_) => _emitContextLimit(),
+              onChanged: (_) => _emitContextLimit(updateOutput: true),
             );
             if (compact) {
               return Column(
@@ -1590,6 +1679,14 @@ _ThinkingStatus _thinkingStatus(DeviceAIThinkingInfo thinking, {bool? manual}) {
       border: AppColors.border,
     );
   }
+  if (thinking.source == 'opencode') {
+    return const _ThinkingStatus(
+      label: 'OpenCode 预设',
+      color: AppColors.primary,
+      background: AppColors.primaryLight,
+      border: AppColors.primaryMuted,
+    );
+  }
   if (thinking.source == 'runtime') {
     return const _ThinkingStatus(
       label: 'Runtime 已确认',
@@ -1609,6 +1706,7 @@ _ThinkingStatus _thinkingStatus(DeviceAIThinkingInfo thinking, {bool? manual}) {
 String _detectionTitle(String source) {
   return switch (source) {
     'runtime' => 'OpenCode Runtime 已确认该模型支持思考控制',
+    'opencode' => 'OpenCode 模型目录已预填该模型的思考能力',
     'provider' => '模型接口声明该模型支持思考控制',
     _ => 'OpenCode 已识别该模型的思考控制能力',
   };
@@ -1617,6 +1715,7 @@ String _detectionTitle(String source) {
 String _sourceLabel(String source) {
   return switch (source) {
     'runtime' => 'OpenCode Runtime',
+    'opencode' => 'OpenCode 模型预设',
     'provider' => '模型接口',
     'manual' => '手动覆盖',
     _ => 'OpenCode 推断',

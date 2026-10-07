@@ -154,6 +154,8 @@ type DeviceAIModelInfo struct {
 	Name       string              `json:"name"`
 	OwnedBy    string              `json:"owned_by"`
 	Modalities *DeviceAIModalities `json:"modalities,omitempty"`
+	// Distinguish relay/runtime defaults from explicit input/output settings.
+	ModalitiesSource string `json:"modalities_source,omitempty"`
 
 	// Context / Output 是最终生效值：供应商返回 > 手填 > 预设推断。
 	Context int64 `json:"context_limit,omitempty"`
@@ -166,6 +168,12 @@ type DeviceAIModelInfo struct {
 	// Manual* 记录用户在界面上手填的值。0 表示不手填。
 	ManualContext int64 `json:"manual_context_limit,omitempty"`
 	ManualOutput  int64 `json:"manual_output_limit,omitempty"`
+
+	// OpenCode catalogue defaults stay separate from explicit upstream/manual limits.
+	PresetContext int64  `json:"preset_context_limit,omitempty"`
+	PresetOutput  int64  `json:"preset_output_limit,omitempty"`
+	PresetSource  string `json:"preset_source,omitempty"`
+	PresetModel   string `json:"preset_model,omitempty"`
 
 	Variants map[string]any           `json:"variants,omitempty"`
 	Thinking *DeviceAIThinkingInfo    `json:"thinking,omitempty"`

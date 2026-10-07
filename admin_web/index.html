@@ -3,119 +3,93 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chat Codex 控制台</title>
-    <link rel="stylesheet" href="./styles.css?v=202606102140" />
+    <title>Chat Codex · 管理控制台</title>
+    <meta name="description" content="集中管理 Chat Codex 的模型资源、Agent、运行环境和会员配置。" />
+    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href="./assets/geist-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="./styles.css?v=20261007-admin1" />
+    <link rel="stylesheet" href="./console.css?v=20261007-admin1" />
   </head>
   <body>
+    <a class="skip-link" href="#workspace">跳到工作区</a>
     <main id="loginView" class="login-view">
-      <section class="login-card">
-        <div class="brand-mark">CC</div>
-        <p class="eyebrow">Chat Codex</p>
-        <h1>欢迎回来</h1>
-        <p class="muted">进入控制台，继续整理你的工作空间。</p>
-        <form id="loginForm" class="stack-form">
-          <label>
-            <span>服务地址</span>
-            <input id="loginBaseUrl" name="baseUrl" autocomplete="url" placeholder="http://127.0.0.1:8080" />
-          </label>
-          <label>
-            <span>管理员账号</span>
-            <input id="loginUsername" name="username" autocomplete="username" placeholder="admin" />
-          </label>
-          <label>
-            <span>密码</span>
-            <input id="loginPassword" name="password" type="password" autocomplete="current-password" />
-          </label>
-          <button id="loginButton" class="primary-button" type="submit">登录管理端</button>
-        </form>
+      <section class="login-intro" aria-label="管理控制台介绍">
+        <div class="login-brand"><div class="brand-mark">CC</div><strong>Chat Codex</strong><span>管理控制台</span></div>
+        <div class="login-intro-body">
+          <p class="eyebrow">YOUR WORKSPACE, ORGANIZED</p>
+          <h1>让每一项配置，<br />各就其位。</h1>
+          <p class="login-description">资源、Agent 与运行环境。<br />在一个清晰的工作台里，管理你的 Chat Codex。</p>
+          <div class="login-features">
+            <div><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#stack"></use></svg><span><strong>资源目录</strong><small>MCP · Skills · 工具库</small></span></div>
+            <div><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#robot"></use></svg><span><strong>Agent 编排</strong><small>能力引用与工具权限，集中维护</small></span></div>
+            <div><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#cpu"></use></svg><span><strong>运行环境</strong><small>版本、平台包与环境变量预设</small></span></div>
+          </div>
+        </div>
+        <p class="login-intro-footer">CHAT CODEX <span>配置更清晰，工作更专注。</span></p>
+      </section>
+      <section class="login-panel">
+        <div class="login-card">
+          <div class="login-heading"><span class="section-kicker">管理员入口</span><h2>登录工作台</h2><p class="muted">使用管理员账号继续。</p></div>
+          <form id="loginForm" class="stack-form" novalidate>
+            <label><span>管理员账号</span><input id="loginUsername" name="username" autocomplete="username" placeholder="请输入管理员账号" required /></label>
+            <label><span>密码</span><span class="password-field"><input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" required /><button id="togglePassword" type="button" class="password-toggle" aria-label="显示密码" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#eye"></use></svg></button></span></label>
+            <p id="capsWarning" class="field-hint hidden">大写锁定已开启</p>
+            <div id="loginError" class="inline-error hidden" role="alert"></div>
+            <button id="loginButton" class="primary-button login-submit" type="submit"><span data-button-label>登录工作台</span><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#arrow-right"></use></svg></button>
+            <details id="connectionSettings" class="connection-settings">
+              <summary>服务连接<span id="connectionLabel">当前站点</span></summary>
+              <label><span>API 服务地址</span><input id="loginBaseUrl" name="baseUrl" autocomplete="url" placeholder="https://example.com/codex" /></label>
+              <button id="resetConnectionButton" class="text-button" type="button">恢复当前站点默认地址</button>
+            </details>
+          </form>
+          <p id="loginNote" class="login-note">登录会话保存在当前浏览器中。</p>
+        </div>
+        <span class="login-panel-footer">Chat Codex / Resource console</span>
       </section>
     </main>
 
     <main id="appView" class="app-shell hidden">
-      <aside class="sidebar">
-        <div class="sidebar-brand">
-          <div class="brand-mark small">CC</div>
-          <div>
-            <strong>Chat Codex</strong>
-            <span>控制台</span>
-          </div>
-        </div>
-        <nav>
-          <a class="active" href="#mcp-catalog" data-view="mcpCatalog">MCP 库</a>
-          <a href="#skills" data-view="skills">Skill 库</a>
-          <a href="#tool-catalog" data-view="tools">工具库</a>
-          <a href="#semantic-agents" data-view="semantic">语义 Agent</a>
-          <a href="#runtime-catalog" data-view="runtime">运行时环境</a>
-          <a href="#environment-presets" data-view="environment">环境变量预设</a>
-          <a href="#operators" data-view="operators">会员管理</a>
+      <aside id="sidebar" class="sidebar" aria-label="主导航">
+        <div class="sidebar-brand"><div class="brand-mark small">CC</div><div><strong>Chat Codex</strong><span>管理工作台</span></div><button id="closeMenuButton" class="icon-button mobile-only" type="button" aria-label="关闭导航"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#x"></use></svg></button></div>
+        <button id="commandButton" type="button" class="command-trigger"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#magnifying-glass"></use></svg><span>快速跳转</span><kbd>⌘ K</kbd></button>
+        <nav aria-label="管理模块">
+          <p class="nav-group-label">资源目录</p>
+          <a class="active" href="#mcp-catalog" data-view="mcpCatalog"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#stack"></use></svg><span>MCP 库</span><span class="nav-count" data-count="mcpCatalog"></span></a>
+          <a href="#skills" data-view="skills"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#squares-four"></use></svg><span>Skill 库</span><span class="nav-count" data-count="skills"></span></a>
+          <a href="#tool-catalog" data-view="tools"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#terminal-window"></use></svg><span>工具库</span><span class="nav-count" data-count="tools"></span></a>
+          <p class="nav-group-label">编排与环境</p>
+          <a href="#semantic-agents" data-view="semantic"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#robot"></use></svg><span>语义 Agent</span><span class="nav-count" data-count="semantic"></span></a>
+          <a href="#runtime-catalog" data-view="runtime"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#cpu"></use></svg><span>运行时环境</span><span class="nav-count" data-count="runtime"></span></a>
+          <a href="#environment-presets" data-view="environment"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#sliders-horizontal"></use></svg><span>环境变量预设</span><span class="nav-count" data-count="environment"></span></a>
+          <p class="nav-group-label">运营管理</p>
+          <a href="#operators" data-view="operators"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#users"></use></svg><span>会员管理</span><span class="nav-count" data-count="operators"></span></a>
         </nav>
-        <div class="sidebar-footer">
-          <span id="currentUser">admin</span>
-          <button id="logoutButton" class="ghost-button" type="button">退出</button>
-        </div>
+        <div class="sidebar-footer"><div class="account-avatar">A</div><div><strong id="currentUser">admin</strong><span>管理员</span></div><button id="logoutButton" class="icon-button" type="button" aria-label="退出登录" title="退出登录"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#sign-out"></use></svg></button></div>
       </aside>
-
-      <section class="content">
-        <header class="topbar">
-          <div>
-            <p id="topbarEyebrow" class="eyebrow">MCP Catalog</p>
-            <h1 id="topbarTitle">MCP 库</h1>
-            <p id="topbarDescription" class="muted">维护可被客户端发现的 MCP，推荐项会显示在前面。</p>
-          </div>
-          <div class="topbar-actions">
-            <button id="refreshButton" class="secondary-button" type="button">刷新</button>
-            <button id="newButton" class="primary-button" type="button">新增 MCP</button>
-          </div>
-        </header>
-
-        <section class="stats-grid">
-          <article class="stat-card">
-            <span id="statTotalLabel">MCP 总数</span>
-            <strong id="statTotal">0</strong>
-          </article>
-          <article class="stat-card">
-            <span id="statEnabledLabel">已启用</span>
-            <strong id="statEnabled">0</strong>
-          </article>
-          <article class="stat-card">
-            <span id="statDisabledLabel">已停用</span>
-            <strong id="statDisabled">0</strong>
-          </article>
-          <article class="stat-card">
-            <span id="statCategoriesLabel">推荐数量</span>
-            <strong id="statCategories">0</strong>
-          </article>
+      <button id="menuBackdrop" type="button" class="menu-backdrop hidden" aria-label="关闭导航"></button>
+      <section id="workspace" class="content" tabindex="-1">
+        <div class="workspace-bar"><div class="breadcrumb"><button id="menuButton" class="icon-button mobile-only" type="button" aria-label="打开导航" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#list"></use></svg></button><span>工作台</span><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#caret-right"></use></svg><span id="breadcrumbTitle">MCP 库</span></div><span id="connectionStatus" class="connection-status">正在连接</span></div>
+        <header class="topbar"><div><p id="topbarEyebrow" class="eyebrow">MCP CATALOG</p><h1 id="topbarTitle">MCP 库</h1><p id="topbarDescription" class="muted">维护可被客户端发现的 MCP，推荐项会显示在前面。</p></div><div class="topbar-actions"><button id="refreshButton" class="secondary-button" type="button"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#arrow-clockwise"></use></svg><span data-button-label>刷新</span></button><button id="newButton" class="primary-button" type="button"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#plus"></use></svg><span data-button-label>新增 MCP</span></button></div></header>
+        <section class="stats-grid" aria-label="当前模块概况">
+          <article class="stat-card"><span id="statTotalLabel">MCP 总数</span><strong id="statTotal">—</strong><small>当前资源目录</small></article>
+          <article class="stat-card"><span id="statEnabledLabel">已启用</span><strong id="statEnabled">—</strong><small>可供客户端使用</small></article>
+          <article class="stat-card"><span id="statDisabledLabel">已停用</span><strong id="statDisabled">—</strong><small>保留配置，暂不开放</small></article>
+          <article class="stat-card"><span id="statCategoriesLabel">分类数量</span><strong id="statCategories">—</strong><small>资源组织与分类</small></article>
         </section>
-
-        <section class="toolbar">
-          <label class="search-box">
-            <span>搜索</span>
-            <input id="searchInput" placeholder="搜索标题、服务名、描述、命令或环境变量" />
-          </label>
-          <label>
-            <span>分类</span>
-            <select id="categoryFilter"></select>
-          </label>
-          <label>
-            <span>状态</span>
-            <select id="statusFilter">
-              <option value="all">全部</option>
-              <option value="enabled">已启用</option>
-              <option value="disabled">已停用</option>
-            </select>
-          </label>
+        <section class="catalog-section" aria-label="资源列表">
+          <div class="catalog-heading"><div><h2 id="listTitle">资源目录</h2><span id="resultCount" aria-live="polite">正在加载</span></div><div class="view-switch" role="group" aria-label="显示方式"><button id="gridViewButton" type="button" aria-pressed="true"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#squares-four"></use></svg><span>卡片</span></button><button id="listViewButton" type="button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#list"></use></svg><span>列表</span></button></div></div>
+          <section class="toolbar"><label class="search-box"><span class="sr-only">搜索</span><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#magnifying-glass"></use></svg><input id="searchInput" type="search" placeholder="搜索名称、描述、命令…" /><kbd>/</kbd></label><label><span class="sr-only">分类</span><select id="categoryFilter"></select></label><label id="statusFilterGroup"><span class="sr-only">状态</span><select id="statusFilter"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select></label><button id="clearFiltersButton" class="text-button hidden" type="button">清除筛选</button></section>
+          <div id="loadError" class="load-error hidden" role="alert"><div><strong>资源加载失败</strong><p id="loadErrorMessage"></p></div><button id="retryLoadButton" class="secondary-button" type="button">重新加载</button></div>
+          <div id="loadingState" class="skeleton-grid hidden" aria-label="正在加载资源"><div></div><div></div><div></div><div></div><div></div><div></div></div>
+          <section id="grid" class="recommendation-grid" aria-busy="false"></section>
+          <section id="emptyState" class="empty-state hidden"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#magnifying-glass"></use></svg><strong id="emptyTitle">没有匹配的 MCP</strong><span id="emptyDescription">调整筛选条件，或新增资源。</span><button id="emptyResetButton" type="button" class="secondary-button">清除筛选</button></section>
         </section>
-
-        <section id="grid" class="recommendation-grid"></section>
-        <section id="emptyState" class="empty-state hidden">
-          <strong id="emptyTitle">没有匹配的 MCP</strong>
-          <span id="emptyDescription">调整筛选条件，或点击右上角新增 MCP。</span>
-        </section>
+        <footer class="workspace-footer"><span>CHAT CODEX · ADMIN CONSOLE</span><span id="lastSynced">等待同步</span></footer>
       </section>
     </main>
 
     <section id="drawerOverlay" class="drawer-overlay hidden" aria-hidden="true">
-      <form id="editorForm" class="drawer" aria-label="MCP 编辑器" novalidate>
+      <form id="editorForm" class="drawer" aria-label="资源编辑器" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" novalidate>
         <div class="drawer-header">
           <div>
             <p class="eyebrow">Editor</p>
@@ -591,6 +565,7 @@
         </div>
 
         <div class="drawer-footer">
+          <span id="editorStatus" class="editor-status">修改仅在保存后生效</span>
           <button id="deleteButton" class="danger-button hidden" type="button">删除</button>
           <div class="spacer"></div>
           <button class="secondary-button" type="button" id="cancelButton">取消</button>
@@ -600,7 +575,7 @@
     </section>
 
     <section id="confirmOverlay" class="modal-overlay hidden" aria-hidden="true">
-      <div class="confirm-modal">
+      <div class="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
         <h2 id="confirmTitle">确认操作</h2>
         <p id="confirmMessage">确认继续？</p>
         <div class="modal-actions">
@@ -631,7 +606,15 @@
       </div>
     </section>
 
-    <div id="toast" class="toast hidden"></div>
-    <script src="./app.js?v=202606062220"></script>
+    <section id="commandOverlay" class="modal-overlay hidden" aria-hidden="true">
+      <div class="command-modal" role="dialog" aria-modal="true" aria-labelledby="commandTitle">
+        <h2 id="commandTitle" class="sr-only">快速跳转</h2>
+        <label class="command-search"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#magnifying-glass"></use></svg><input id="commandInput" placeholder="搜索模块或操作…" autocomplete="off" aria-label="搜索模块或操作" /><button id="closeCommandButton" type="button" class="icon-button" aria-label="关闭快速跳转"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#x"></use></svg></button></label>
+        <div id="commandResults" class="command-results" role="listbox" aria-label="可用模块和操作"></div>
+        <div class="command-footer"><span>↑ ↓ 选择 · Enter 打开</span><kbd>Esc 关闭</kbd></div>
+      </div>
+    </section>
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+    <script type="module" src="./app.js?v=20261007-admin1"></script>
   </body>
 </html>

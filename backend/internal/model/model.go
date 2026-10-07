@@ -377,8 +377,8 @@ type WelcomePayload struct {
 }
 
 type HeartbeatPayload struct {
-	AgentID       string         `json:"agent_id,omitempty"`
-	RunningTaskID string         `json:"running_task_id,omitempty"`
+	AgentID       string `json:"agent_id,omitempty"`
+	RunningTaskID string `json:"running_task_id,omitempty"`
 	// Metrics 是设备运行状态快照。老版本 launcher 不上报，按"无指标"处理。
 	Metrics *DeviceMetrics `json:"metrics,omitempty"`
 }
@@ -818,20 +818,27 @@ type DeviceAIThinking struct {
 }
 
 type DeviceAIModel struct {
-	ID         string              `json:"id"`
-	Name       string              `json:"name,omitempty"`
-	Owned      string              `json:"owned_by,omitempty"`
-	Modalities *DeviceAIModalities `json:"modalities,omitempty"`
-	Context    int64               `json:"context_limit,omitempty"`
-	Output     int64               `json:"output_limit,omitempty"`
+	ID               string              `json:"id"`
+	Name             string              `json:"name,omitempty"`
+	Owned            string              `json:"owned_by,omitempty"`
+	Modalities       *DeviceAIModalities `json:"modalities,omitempty"`
+	ModalitiesSource string              `json:"modalities_source,omitempty"`
+	Context          int64               `json:"context_limit,omitempty"`
+	Output           int64               `json:"output_limit,omitempty"`
 	// Upstream* 记录供应商接口返回的原始值，Manual* 记录用户手填值。
-	UpstreamContext int64             `json:"upstream_context_limit,omitempty"`
-	UpstreamOutput  int64             `json:"upstream_output_limit,omitempty"`
-	ManualContext   int64             `json:"manual_context_limit,omitempty"`
-	ManualOutput    int64             `json:"manual_output_limit,omitempty"`
-	Variants        map[string]any    `json:"variants,omitempty"`
-	Thinking        *DeviceAIThinking `json:"thinking,omitempty"`
-	Image           *DeviceAIImageCapability `json:"image,omitempty"`
+	UpstreamContext int64 `json:"upstream_context_limit,omitempty"`
+	UpstreamOutput  int64 `json:"upstream_output_limit,omitempty"`
+	ManualContext   int64 `json:"manual_context_limit,omitempty"`
+	ManualOutput    int64 `json:"manual_output_limit,omitempty"`
+	// OpenCode catalogue defaults stay separate from explicit upstream/manual limits.
+	PresetContext int64  `json:"preset_context_limit,omitempty"`
+	PresetOutput  int64  `json:"preset_output_limit,omitempty"`
+	PresetSource  string `json:"preset_source,omitempty"`
+	PresetModel   string `json:"preset_model,omitempty"`
+
+	Variants map[string]any           `json:"variants,omitempty"`
+	Thinking *DeviceAIThinking        `json:"thinking,omitempty"`
+	Image    *DeviceAIImageCapability `json:"image,omitempty"`
 }
 
 type DeviceAIProvider struct {

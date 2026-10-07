@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -13,6 +14,26 @@ class UpdateLogServicePlatform {
   static const _currentLogPathKey = 'app_current_log_path';
   static const _legacyStorageKey = 'app_update_debug_logs';
   static const _logDirName = 'diagnostic-logs';
+  static Future<void> _writeTail = Zone.root.run(() => Future<void>.value());
+
+  // FileMode.append uses independently opened file handles. Concurrent
+  // writes can seek to the same offset and overwrite each other's records.
+  static Future<T> _enqueueWrite<T>(Future<T> Function() write) {
+    // App-wide persistence outlives widget/test zones. Do not retain a
+    // completed route's zone as the scheduler for later diagnostic writes.
+    final completion = Completer<T>();
+    Zone.root.run(() {
+      final work = _writeTail.then((_) => write());
+      _writeTail = work.then<void>(
+        (_) {},
+        onError: (Object error, StackTrace stack) {},
+      );
+      // Deliver errors into the caller's zone as well as releasing the queue.
+      // Futures carrying errors do not cross different error-zone boundaries.
+      work.then(completion.complete, onError: completion.completeError);
+    });
+    return completion.future;
+  }
 
   static String newBatchId() {
     final now = DateTime.now();
@@ -55,7 +76,7 @@ class UpdateLogServicePlatform {
       await AppStorage.setString(_currentLogPathKey, files.first.path);
       return files.first;
     }
-    await startNewBatch(reason: 'auto_recover');
+    await _startNewBatch(reason: 'auto_recover');
     return File(currentLogFilePath()!);
   }
 
@@ -65,11 +86,14 @@ class UpdateLogServicePlatform {
       final file = File(path);
       if (await file.exists()) return file;
     }
-    await startNewBatch(reason: 'auto_recover');
+    await _startNewBatch(reason: 'auto_recover');
     return File(currentLogFilePath()!);
   }
 
-  static Future<String> startNewBatch({String reason = ''}) async {
+  static Future<String> startNewBatch({String reason = ''}) =>
+      _enqueueWrite(() => _startNewBatch(reason: reason));
+
+  static Future<String> _startNewBatch({String reason = ''}) async {
     final batchId = newBatchId();
     await AppStorage.setString(_batchKey, batchId);
     final pkg = await PackageInfo.fromPlatform();
@@ -91,9 +115,14 @@ class UpdateLogServicePlatform {
     await file.writeAsString(header.toString(), flush: true);
     await AppStorage.setString(_currentLogPathKey, file.path);
     await AppStorage.remove(_legacyStorageKey);
-    await append(
-      'log_batch_started',
-      data: {'batch_id': batchId, 'reason': reason, 'log_file': file.path},
+    await _appendEntry(
+      UpdateLogEntry(
+        time: DateTime.now().toIso8601String(),
+        batchId: batchId,
+        level: 'info',
+        event: 'log_batch_started',
+        data: {'batch_id': batchId, 'reason': reason, 'log_file': file.path},
+      ),
     );
     return batchId;
   }
@@ -102,7 +131,7 @@ class UpdateLogServicePlatform {
     String event, {
     String level = 'info',
     Map<String, dynamic>? data,
-  }) async {
+  }) {
     final entry = UpdateLogEntry(
       time: DateTime.now().toIso8601String(),
       batchId: currentBatchId(),
@@ -110,6 +139,10 @@ class UpdateLogServicePlatform {
       event: event,
       data: data ?? const {},
     );
+    return _enqueueWrite(() => _appendEntry(entry));
+  }
+
+  static Future<void> _appendEntry(UpdateLogEntry entry) async {
     final file = await _currentLogFile();
     final line =
         '[${entry.time}] [${entry.level}] [${entry.batchId}] ${entry.event} ${jsonEncode(entry.data)}\n';
@@ -117,6 +150,7 @@ class UpdateLogServicePlatform {
   }
 
   static Future<List<UpdateLogEntry>> list() async {
+    await _writeTail;
     final file = await _latestLogFile();
     if (!await file.exists()) return [];
     final lines = await file.readAsLines();
@@ -143,7 +177,9 @@ class UpdateLogServicePlatform {
     return result;
   }
 
-  static Future<void> clear() async {
+  static Future<void> clear() => _enqueueWrite(_clear);
+
+  static Future<void> _clear() async {
     final logDir = await _logDirectory();
     if (await logDir.exists()) {
       await logDir.delete(recursive: true);
@@ -154,12 +190,14 @@ class UpdateLogServicePlatform {
   }
 
   static Future<String> exportText() async {
+    await _writeTail;
     final file = await _latestLogFile();
     final content = await file.readAsString();
     return 'log_file=${file.path}\n$content';
   }
 
   static Future<void> report({String note = ''}) async {
+    await _writeTail;
     final pkg = await PackageInfo.fromPlatform();
     final file = await _latestLogFile();
     final payload = {

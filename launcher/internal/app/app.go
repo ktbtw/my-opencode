@@ -1269,6 +1269,7 @@ func (s *service) ListAIModels(input model.DeviceAIConfigInput) (*model.DeviceAI
 	if err != nil {
 		return nil, err
 	}
+	aiconfig.SyncOpenCodeModelCatalog()
 	return s.enrichAIConfigFromRuntime(cfg), nil
 }
 
@@ -2498,11 +2499,9 @@ func (s *service) enrichAIConfigFromRuntime(cfg *model.DeviceAIConfigInfo) *mode
 	if cfg == nil {
 		return nil
 	}
-	metadata, err := s.runtimeProviderMetadata()
-	if err != nil {
-		return cfg
-	}
-	return aiconfig.EnrichWithRuntimeProviderMetadata(cfg, metadata)
+	metadata, _ := s.runtimeProviderMetadata()
+	cfg = aiconfig.EnrichWithRuntimeProviderMetadata(cfg, metadata)
+	return aiconfig.EnrichWithOpenCodeCatalog(cfg, metadata)
 }
 
 func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, error) {
@@ -2528,12 +2527,13 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 					Name       string `json:"name"`
 					Limit      struct {
 						Context int64 `json:"context"`
+						Output  int64 `json:"output"`
 					} `json:"limit"`
 					Modalities   *model.DeviceAIModalities `json:"modalities"`
 					Capabilities struct {
-						Reasoning bool                            `json:"reasoning"`
-						Input     map[string]bool                 `json:"input"`
-						Output    map[string]bool                 `json:"output"`
+						Reasoning bool                             `json:"reasoning"`
+						Input     map[string]bool                  `json:"input"`
+						Output    map[string]bool                  `json:"output"`
 						Image     *aiconfig.RuntimeImageCapability `json:"image,omitempty"`
 					} `json:"capabilities"`
 					Variants map[string]any `json:"variants"`
@@ -2576,6 +2576,7 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 					Name:       strings.TrimSpace(item.Name),
 					Limit: aiconfig.RuntimeModelLimit{
 						Context: item.Limit.Context,
+						Output:  item.Limit.Output,
 					},
 					Modalities: item.Modalities,
 					Capabilities: aiconfig.RuntimeModelCapabilities{

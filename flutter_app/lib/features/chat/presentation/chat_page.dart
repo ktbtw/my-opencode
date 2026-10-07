@@ -2549,7 +2549,7 @@ class _ContinuousReplySegment extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                   ],
-                  if (hasReplySurface(message))
+                  if (hasReplySurface(message) || planCard != null)
                     Container(
                       key: first
                           ? const ValueKey('continuous-reply-surface')
@@ -2574,25 +2574,37 @@ class _ContinuousReplySegment extends StatelessWidget {
                         top: first ? 4 : 0,
                         bottom: closesSurface ? 4 : 0,
                       ),
-                      child: background
-                          ? _InlineBackgroundEvent(
-                              key: ValueKey(message.id),
-                              message: message,
-                              animate: animateEvent,
-                            )
-                          : isInlineUserInsert(message)
-                          ? _InlineUserInsert(message: message)
-                          : _BubbleContent(
-                              message: message,
-                              isUser: false,
-                              embedded: true,
-                              // 合并后统计行与复制按钮只出现在整段末尾。
-                              showStats: closesSurface,
-                              // 任务卡片只在被标记为本段拥有者的消息上渲染一次。
-                              showPlanCard: showPlanCard,
-                              planCard: planCard,
-                              showToolHeader: showToolHeader,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (hasReplySurface(message))
+                            background
+                                ? _InlineBackgroundEvent(
+                                    key: ValueKey(message.id),
+                                    message: message,
+                                    animate: animateEvent,
+                                  )
+                                : isInlineUserInsert(message)
+                                ? _InlineUserInsert(message: message)
+                                : _BubbleContent(
+                                    message: message,
+                                    isUser: false,
+                                    embedded: true,
+                                    // 合并后统计行与复制按钮只出现在整段末尾。
+                                    showStats: closesSurface,
+                                    showPlanCard: false,
+                                    showToolHeader: showToolHeader,
+                                  ),
+                          if (showPlanCard && planCard != null)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+                              child: planCard!.status == 'completed' &&
+                                      message.state != MessageState.streaming
+                                  ? _CompletedPlanSummary(plan: planCard!)
+                                  : _PlanCard(plan: planCard!),
                             ),
+                        ],
+                      ),
                     ),
                   if (last &&
                       !background &&
@@ -4905,9 +4917,6 @@ class _BubbleContent extends ConsumerWidget {
   /// 连续回复合并成一段时，任务卡片（执行计划）只在段内出现一次。
   final bool showPlanCard;
 
-  /// 本段要渲染的计划（位置固定在段末）。
-  final PlanInfo? planCard;
-
   /// 无定位工具记录的标题在合并段里只出现一次。
   final bool showToolHeader;
   const _BubbleContent({
@@ -4916,17 +4925,16 @@ class _BubbleContent extends ConsumerWidget {
     this.embedded = false,
     this.showStats = true,
     this.showPlanCard = true,
-    this.planCard,
     this.showToolHeader = true,
   });
 
-  /// 本段生效的计划：合并时取整段的计划，否则取当前消息自己的。
-  PlanInfo? get _effectivePlan => planCard ?? message.plan;
+  /// 连续段的计划由外层统一渲染；单条消息使用自己的计划。
+  PlanInfo? get _effectivePlan => message.plan;
 
   bool get _shouldShowPlanSummary {
     final plan = _effectivePlan;
     if (plan == null || plan.isEmpty) return false;
-    if (planCard == null && !message.hasPlanBinding) return false;
+    if (!message.hasPlanBinding) return false;
     return plan.status == 'completed' &&
         message.state != MessageState.streaming;
   }
@@ -4934,7 +4942,7 @@ class _BubbleContent extends ConsumerWidget {
   bool get _shouldShowPlanCard {
     final plan = _effectivePlan;
     if (plan == null || plan.isEmpty) return false;
-    if (planCard == null && !message.hasPlanBinding) return false;
+    if (!message.hasPlanBinding) return false;
     return plan.status != 'completed' ||
         message.state == MessageState.streaming;
   }
@@ -5134,7 +5142,7 @@ class _BubbleContent extends ConsumerWidget {
                 statusHint: message.statusHint,
               ),
             ),
-          if (!isUser && _shouldShowPlanSummary)
+          if (!isUser && showPlanCard && _shouldShowPlanSummary)
             Padding(
               padding: EdgeInsets.fromLTRB(
                 14,

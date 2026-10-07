@@ -37,7 +37,7 @@ bool hasReplySurface(ChatMessage message) =>
     message.state == MessageState.failed;
 
 /// Presentation only: keep message identities, tool positions and task data.
-/// A user insertion or a different task always starts a separate surface.
+/// An ordinary user message or a different task starts a separate surface.
 List<List<ChatMessage>> groupReplyDisplay(
   List<ChatMessage> messages, {
   required bool continuous,
@@ -134,27 +134,21 @@ class ReplyDisplayLayout {
           break;
         }
       }
-      // 任务卡片（执行计划）属于整段且只渲染一次，位置固定在整段末尾：
-      // 计划往往只在靠前的轮次里出现，若按「最后一条带计划的消息」挂载，
-      // 卡片会插进两段正文中间。这里挂到最后一条会渲染正文的消息上，
-      // 计划内容取组内最后一份非空计划。
+      // Render the plan after every group member, including trailing inserts,
+      // background events and an empty streaming round.
       PlanInfo? groupPlan;
-      ChatMessage? anchor;
       for (final item in members) {
         final plan = item.plan;
         if (plan != null && !plan.isEmpty) groupPlan = plan;
-        // 锚点必须是会走正文渲染的那条：后台事件与插入消息各自走别的分支，
-        // 挂到它们身上卡片不会渲染出来。
-        if (item.role == MessageRole.agent &&
-            !isInlineUserInsert(item) &&
-            hasReplySurface(item)) {
-          anchor = item;
-        }
       }
-      if (groupPlan != null && anchor != null) {
-        planCards[anchor.id] = groupPlan;
+      if (groupPlan != null) {
+        planCards[group.last.id] = groupPlan;
       }
-      final surfaces = group.where(hasReplySurface).toList(growable: false);
+      final surfaces = group
+          .where(
+            (item) => hasReplySurface(item) || planCards.containsKey(item.id),
+          )
+          .toList(growable: false);
       for (var i = 0; i < group.length; i++) {
         boundaries[group[i].id] = (
           i == 0,

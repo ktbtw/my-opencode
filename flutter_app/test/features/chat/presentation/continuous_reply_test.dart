@@ -371,5 +371,37 @@ void main() {
     expect(cardY, greaterThan(lastBodyY));
     await tester.pumpWidget(const SizedBox.shrink());
   });
+  for (final status in ['in_progress', 'completed']) {
+    for (final tail in ['reply', 'insert', 'background', 'empty']) {
+      testWidgets('one $status plan stays below the $tail tail', (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final plan = PlanInfo(
+          id: 'tail-plan', title: '段尾计划', mode: 'build', status: status,
+          items: const [PlanItemInfo(id: 'i', text: '检查顺序', status: 'completed', priority: 'high')],
+        );
+        final tailMessage = switch (tail) {
+          'insert' => event('追加消息', user: true),
+          'background' => event('后台结果'),
+          'empty' => reply('等待回复', live: true)..content = '',
+          _ => reply('最后正文', plan: plan),
+        };
+        final messages = [reply('第一段', plan: plan), reply('中间正文', plan: plan), tailMessage];
+        await tester.pumpWidget(surface(messages));
+        await tester.pump();
+        expect(find.text('段尾计划'), findsOneWidget);
+        final tailText = switch (tail) {
+          'insert' => '你 · 已追加到当前任务',
+          'background' => '后台任务已完成 · 后台结果',
+          'empty' => '中间正文',
+          _ => '最后正文',
+        };
+        expect(tester.getTopLeft(find.text('段尾计划')).dy,
+          greaterThan(tester.getBottomLeft(find.text(tailText, findRichText: true)).dy));
+        expect(ReplyDisplayLayout.of(messages).planCards.keys, [tailMessage.id]);
+        await tester.pumpWidget(const SizedBox.shrink());
+      });
+    }
+  }
+
 }
 
