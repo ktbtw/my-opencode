@@ -1459,6 +1459,14 @@ func thinkingFromVariants(source string, variants map[string]any) *model.DeviceA
 			protocol = "openai-compatible"
 			control = "effort"
 		}
+		if _, ok := options["reasoningBudget"]; ok {
+			protocol = "openai-compatible"
+			control = "budget"
+		}
+		if _, ok := options["reasoning_budget"]; ok {
+			protocol = "openai-compatible"
+			control = "budget"
+		}
 		if _, ok := options["thinkingConfig"]; ok {
 			protocol = "google"
 			control = "effort"

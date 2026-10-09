@@ -18,6 +18,9 @@ class SseDataParser {
   // 当前事件的 event: 值，遇到空行（事件结束）后重置。
   String _pendingEventType = '';
 
+  /// 已解析的心跳（SSE 注释行）数量，仅用于连接诊断日志。
+  int heartbeatCount = 0;
+
   List<String> addChunk(String chunk) {
     if (chunk.isEmpty) return const [];
     _buffer.write(chunk);
@@ -84,7 +87,10 @@ class SseDataParser {
       _pendingEventType = '';
       return null;
     }
-    if (trimmed.startsWith(':')) return null; // 注释/心跳
+    if (trimmed.startsWith(':')) {
+      heartbeatCount += 1;
+      return null; // 注释/心跳
+    }
     if (trimmed.startsWith('event:')) {
       _pendingEventType = trimmed.substring(6).trim();
       return null;

@@ -21,12 +21,18 @@ import (
 type catalogProvider struct {
 	ID     string `json:"id"`
 	Models map[string]struct {
-		ID         string                    `json:"id"`
-		Name       string                    `json:"name"`
-		Reasoning  bool                      `json:"reasoning"`
-		Limit      RuntimeModelLimit         `json:"limit"`
-		Modalities *model.DeviceAIModalities `json:"modalities"`
+		ID               string                    `json:"id"`
+		Name             string                    `json:"name"`
+		Reasoning        bool                      `json:"reasoning"`
+		ReasoningOptions []catalogReasoningOption  `json:"reasoning_options"`
+		Limit            RuntimeModelLimit         `json:"limit"`
+		Modalities       *model.DeviceAIModalities `json:"modalities"`
 	} `json:"models"`
+}
+
+type catalogReasoningOption struct {
+	Type   string   `json:"type"`
+	Values []string `json:"values"`
 }
 
 type catalogSnapshot struct {
@@ -146,10 +152,12 @@ func decodeOpenCodeCatalog(data []byte) []RuntimeProviderMetadataItem {
 		provider := raw[id]
 		models := map[string]RuntimeModelMetadata{}
 		for modelID, item := range provider.Models {
+			variants := catalogReasoningVariantsFromOptions(item.ReasoningOptions)
 			models[modelID] = RuntimeModelMetadata{
 				ID: firstNonEmpty(item.ID, modelID), ProviderID: id, Name: item.Name,
 				Limit: item.Limit, Modalities: item.Modalities,
 				Capabilities: RuntimeModelCapabilities{Reasoning: item.Reasoning},
+				Variants:     variants,
 			}
 		}
 		if len(models) > 0 {
@@ -159,15 +167,39 @@ func decodeOpenCodeCatalog(data []byte) []RuntimeProviderMetadataItem {
 	return result
 }
 
+func catalogReasoningVariantsFromOptions(options []catalogReasoningOption) map[string]any {
+	variants := map[string]any{}
+	for _, option := range options {
+		kind := strings.ToLower(strings.TrimSpace(option.Type))
+		for _, value := range option.Values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if kind == "budget" || kind == "token_budget" {
+				variants[value] = map[string]any{"reasoningBudget": value}
+			} else {
+				variants[value] = map[string]any{"reasoningEffort": value}
+			}
+		}
+	}
+	if len(variants) == 0 {
+		return nil
+	}
+	return variants
+}
+
 type catalogCandidate struct {
 	provider string
 	id       string
 	meta     RuntimeModelMetadata
+	runtime  bool
 }
 
 var catalogSeparators = regexp.MustCompile(`[\s_]+`)
 var catalogGPT5Family = regexp.MustCompile(`^gpt-5([.-]|$)`)
 var catalogGPT5Version = regexp.MustCompile(`^gpt-5[.-](\d+)(?:[.-]|$)`)
+var catalogGenericVersionPattern = regexp.MustCompile(`^(?:gpt|grok)[-_.]?(\d+)(?:[-_.](\d+))?`)
 
 func catalogAlias(value string) string {
 	value = catalogSeparators.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "-")
@@ -188,9 +220,102 @@ func canonicalProvider(id string) bool {
 	return false
 }
 
-// No fuzzy family match: GPT-5.4 must not inherit GPT-5.4-Codex, nor GPT-50.
-// Relay/vendor path prefixes, display-name spacing, and explicit Kimi aliases
-// are normalized without changing the advertised ID saved to the provider.
+func catalogFamily(value string) string {
+	value = strings.ReplaceAll(catalogAlias(value), "-", "")
+	switch {
+	case value == "gpt" || value == "chatgpt" || value == "openai":
+		return "gpt"
+	case value == "grok":
+		return "grok"
+	case value == "kimi3" || value == "kimik3":
+		return "kimi3"
+	case value == "kimi" || value == "moonshot":
+		return "kimi"
+	case value == "claude" || value == "anthropic":
+		return "claude"
+	case value == "gemini" || value == "google":
+		return "gemini"
+	case value == "deepseek":
+		return "deepseek"
+	case value == "qwen" || value == "tongyi":
+		return "qwen"
+	case value == "llama" || value == "meta":
+		return "llama"
+	case value == "mistral" || value == "mixtral":
+		return "mistral"
+	case value == "minimax":
+		return "minimax"
+	case value == "glm" || value == "chatglm" || value == "zhipu":
+		return "glm"
+	case value == "command" || value == "cohere":
+		return "command"
+	case value == "yi" || value == "01ai":
+		return "yi"
+	case value == "doubao" || value == "ark":
+		return "doubao"
+	case value == "ai":
+		return "ai"
+	}
+	return ""
+}
+
+func catalogCandidateFamily(candidate catalogCandidate) string {
+	for _, value := range []string{candidate.id, lastPathSegment(candidate.id), candidate.meta.Name} {
+		compact := strings.ReplaceAll(catalogAlias(value), "-", "")
+		switch {
+		case strings.HasPrefix(compact, "gpt"):
+			return "gpt"
+		case strings.HasPrefix(compact, "grok"):
+			return "grok"
+		case strings.HasPrefix(compact, "kimik3") || strings.HasPrefix(compact, "kimi3"):
+			return "kimi3"
+		case strings.HasPrefix(compact, "kimi") || strings.HasPrefix(compact, "moonshot"):
+			return "kimi"
+		case strings.HasPrefix(compact, "claude") || strings.HasPrefix(compact, "anthropic"):
+			return "claude"
+		case strings.HasPrefix(compact, "gemini") || strings.HasPrefix(compact, "google"):
+			return "gemini"
+		case strings.HasPrefix(compact, "deepseek"):
+			return "deepseek"
+		case strings.HasPrefix(compact, "qwen") || strings.HasPrefix(compact, "tongyi"):
+			return "qwen"
+		case strings.HasPrefix(compact, "llama") || strings.HasPrefix(compact, "meta"):
+			return "llama"
+		case strings.HasPrefix(compact, "mistral") || strings.HasPrefix(compact, "mixtral"):
+			return "mistral"
+		case strings.HasPrefix(compact, "minimax"):
+			return "minimax"
+		case strings.HasPrefix(compact, "glm") || strings.HasPrefix(compact, "chatglm") || strings.HasPrefix(compact, "zhipu"):
+			return "glm"
+		case strings.HasPrefix(compact, "command") || strings.HasPrefix(compact, "cohere"):
+			return "command"
+		case strings.HasPrefix(compact, "yi") || strings.HasPrefix(compact, "01ai"):
+			return "yi"
+		case strings.HasPrefix(compact, "doubao") || strings.HasPrefix(compact, "ark"):
+			return "doubao"
+		}
+	}
+	return ""
+}
+
+func catalogGenericVersionScore(value string) int {
+	match := catalogGenericVersionPattern.FindStringSubmatch(strings.ToLower(lastPathSegment(value)))
+	if len(match) == 0 {
+		return 0
+	}
+	major, _ := strconv.Atoi(match[1])
+	minor := 0
+	if len(match) > 2 {
+		minor, _ = strconv.Atoi(match[2])
+	}
+	return major*100 + minor
+}
+
+// Exact model IDs are preferred. Only deliberately generic aliases (GPT,
+// Grok, AI, Kimi3) use a family match, so GPT-5.4 still cannot inherit
+// GPT-5.4-Codex or GPT-50. Relay/vendor path prefixes and display-name
+// spacing are normalized without changing the advertised ID saved to the
+// provider.
 func matchCatalogModel(provider string, item model.DeviceAIModelInfo, candidates []catalogCandidate) *catalogCandidate {
 	aliases := []string{catalogAlias(item.ID), catalogAlias(lastPathSegment(item.ID)), catalogAlias(item.Name), catalogAlias(lastPathSegment(item.Name))}
 	bestScore := 10000
@@ -203,10 +328,24 @@ func matchCatalogModel(provider string, item model.DeviceAIModelInfo, candidates
 				continue
 			}
 			for ki, key := range keys {
-				if alias != key {
+				exactMatch := alias == key
+				family := catalogFamily(alias)
+				candidateFamily := catalogCandidateFamily(*candidate)
+				familyMatch := !exactMatch && family != "" && family == candidateFamily
+				// "AI" is a common relay display name for an OpenAI-compatible
+				// model. Treat it as the GPT family when no more specific name is
+				// available; it remains limited to the explicit generic alias.
+				if !exactMatch && family == "ai" && candidateFamily == "gpt" {
+					familyMatch = true
+				}
+				if !exactMatch && !familyMatch {
 					continue
 				}
 				score := ai*20 + ki*5 + 10
+				if familyMatch {
+					score += 300
+					score -= catalogGenericVersionScore(candidate.id) / 100
+				}
 				if canonicalProvider(candidate.provider) {
 					score -= 12
 				}
@@ -215,6 +354,14 @@ func matchCatalogModel(provider string, item model.DeviceAIModelInfo, candidates
 				}
 				if strings.EqualFold(candidate.provider, provider) {
 					score -= 4
+				}
+				// A connected runtime may expose relay-specific variants that are
+				// more accurate than the public catalogue. Prefer those variants
+				// for the same configured provider, while still allowing a native
+				// OpenCode provider to supply defaults for a bare relay model.
+				if candidate.runtime && len(candidate.meta.Variants) > 0 &&
+					(strings.EqualFold(candidate.provider, provider) || strings.EqualFold(candidate.provider, item.OwnedBy)) {
+					score -= 60
 				}
 				if score < bestScore {
 					best, bestScore = candidate, score
@@ -233,12 +380,20 @@ func EnrichWithOpenCodeCatalog(info *model.DeviceAIConfigInfo, metadata RuntimeP
 	// Runtime versions win for identical provider/model pairs. All native
 	// providers are considered, including ones without a configured API key.
 	byKey := map[string]catalogCandidate{}
-	for _, group := range append(append([]RuntimeProviderMetadataItem(nil), providers...), metadata.All...) {
+	for _, group := range providers {
 		for id, meta := range group.Models {
 			if meta.ID == "" {
 				meta.ID = id
 			}
-			byKey[group.ID+"/"+id] = catalogCandidate{group.ID, id, meta}
+			byKey[group.ID+"/"+id] = catalogCandidate{provider: group.ID, id: id, meta: meta, runtime: false}
+		}
+	}
+	for _, group := range metadata.All {
+		for id, meta := range group.Models {
+			if meta.ID == "" {
+				meta.ID = id
+			}
+			byKey[group.ID+"/"+id] = catalogCandidate{provider: group.ID, id: id, meta: meta, runtime: true}
 		}
 	}
 	keys := make([]string, 0, len(byKey))

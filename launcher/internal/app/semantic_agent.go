@@ -694,7 +694,10 @@ func (s *service) agentSemanticConfigContent(cfg model.AgentConfig, existing str
 	if skillRoot, ok := s.prepareSemanticAgentSkills(item); ok && skillRoot != "" {
 		content["skills"] = map[string]any{"paths": []string{skillRoot}, "urls": []string{}}
 	}
-	if strings.TrimSpace(item.prompt) != "" {
+	modelPrompt := modelPromptFor(item.profile, content)
+	agentPrompt := firstNonEmpty(strings.TrimSpace(item.profile.Prompt), strings.TrimSpace(item.prompt))
+	prompt := composeSemanticPrompt(agentPrompt, modelPrompt, item.profile.PromptMode)
+	if strings.TrimSpace(prompt) != "" {
 		agentMap, _ := content["agent"].(map[string]any)
 		if agentMap == nil {
 			agentMap = map[string]any{}
@@ -702,7 +705,7 @@ func (s *service) agentSemanticConfigContent(cfg model.AgentConfig, existing str
 		entry := map[string]any{
 			"mode":        "primary",
 			"description": item.profile.Description,
-			"prompt":      item.prompt,
+			"prompt":      prompt,
 			"color":       item.profile.Color,
 		}
 		if len(item.permission) > 0 {
@@ -717,6 +720,51 @@ func (s *service) agentSemanticConfigContent(cfg model.AgentConfig, existing str
 		return "", false
 	}
 	return string(data), true
+}
+
+func modelPromptFor(profile model.SemanticAgentProfile, content map[string]any) string {
+	modelRef, _ := content["model"].(string)
+	provider, modelID := splitProviderModel(modelRef)
+	for _, preset := range profile.ModelPromptPresets {
+		if !preset.Enabled || strings.TrimSpace(preset.Prompt) == "" {
+			continue
+		}
+		if preset.Provider != "" && !strings.Contains(strings.ToLower(provider), strings.ToLower(preset.Provider)) {
+			continue
+		}
+		pattern := strings.ToLower(strings.TrimSpace(preset.ModelPattern))
+		if pattern != "" && !strings.Contains(strings.ToLower(modelID), pattern) {
+			continue
+		}
+		return preset.Prompt
+	}
+	return ""
+}
+
+func splitProviderModel(modelRef string) (string, string) {
+	parts := strings.SplitN(strings.TrimSpace(modelRef), "/", 2)
+	if len(parts) == 2 {
+		return strings.ToLower(parts[0]), strings.ToLower(parts[1])
+	}
+	return "", strings.ToLower(modelRef)
+}
+
+func composeSemanticPrompt(agentPrompt, modelPrompt, mode string) string {
+	agentPrompt, modelPrompt = strings.TrimSpace(agentPrompt), strings.TrimSpace(modelPrompt)
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "model":
+		return modelPrompt
+	case "both":
+		if agentPrompt == "" {
+			return modelPrompt
+		}
+		if modelPrompt == "" {
+			return agentPrompt
+		}
+		return agentPrompt + "\n\n--- 模型专属提示词 ---\n" + modelPrompt
+	default:
+		return agentPrompt
+	}
 }
 
 func appendOrchestrationInstruction(raw any) []string {

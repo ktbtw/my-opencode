@@ -289,6 +289,10 @@
               <span>运行时注入</span>
             </div>
             <textarea id="agentFieldPrompt" rows="12" spellcheck="false"></textarea>
+            <label><span>提示词生效模式</span><select id="agentFieldPromptMode"><option value="agent">仅语义 Agent</option><option value="model">仅模型提示词</option><option value="both">两方同时生效</option></select></label>
+            <div class="section-title"><h3>模型提示词预设</h3><span>按供应商与模型名包含规则匹配，先匹配优先</span></div>
+            <div id="agentModelPromptPresets" class="model-prompt-presets"></div>
+            <div class="model-prompt-actions"><button id="addAgentModelPromptButton" class="secondary-button compact-button" type="button">添加模型预设</button><button id="saveGlobalModelPromptButton" class="secondary-button compact-button" type="button">保存为全局预设</button></div>
           </section>
 
           <section class="form-section semantic-editor-section hidden">

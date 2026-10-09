@@ -1,6 +1,6 @@
 {
   "name": "launcher-darwin-arm64",
-  "version": "0.1.186",
+  "version": "0.1.187",
   "os": ["darwin"],
   "cpu": ["arm64"]
 }

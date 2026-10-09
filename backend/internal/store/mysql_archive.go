@@ -1297,6 +1297,12 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 	if err := ensureColumn(ctx, db, "semantic_agents", "mcp_ids_json", "ALTER TABLE semantic_agents ADD COLUMN mcp_ids_json JSON NULL"); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, db, "semantic_agents", "prompt_mode", "ALTER TABLE semantic_agents ADD COLUMN prompt_mode VARCHAR(16) NOT NULL DEFAULT 'agent'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "semantic_agents", "model_prompt_presets_json", "ALTER TABLE semantic_agents ADD COLUMN model_prompt_presets_json JSON NULL"); err != nil {
+		return err
+	}
 	if err := ensureColumn(ctx, db, "mcp_catalog", "source_url", "ALTER TABLE mcp_catalog ADD COLUMN source_url VARCHAR(1024) NOT NULL DEFAULT '' AFTER source"); err != nil {
 		return err
 	}
@@ -2104,6 +2110,8 @@ var schemaStatements = []string{
   color VARCHAR(64) NOT NULL DEFAULT '',
   opencode_name VARCHAR(128) NOT NULL DEFAULT '',
   prompt MEDIUMTEXT NOT NULL,
+  prompt_mode VARCHAR(16) NOT NULL DEFAULT 'agent',
+  model_prompt_presets_json JSON NULL,
   skill_ids_json JSON NULL,
   mcp_ids_json JSON NULL,
   skills_json JSON NOT NULL,
@@ -2117,6 +2125,18 @@ var schemaStatements = []string{
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   KEY idx_semantic_agents_enabled_sort (enabled, sort_order, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
+	`CREATE TABLE IF NOT EXISTS semantic_agent_model_prompts (
+  id VARCHAR(128) PRIMARY KEY,
+  name VARCHAR(128) NOT NULL DEFAULT '',
+  provider VARCHAR(128) NOT NULL DEFAULT '',
+  model_pattern VARCHAR(255) NOT NULL DEFAULT '',
+  prompt MEDIUMTEXT NOT NULL,
+  enabled TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 100,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_semantic_agent_model_prompts_enabled_sort (enabled, sort_order, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS semantic_agent_skills (
   agent_id VARCHAR(128) NOT NULL,
@@ -4209,7 +4229,7 @@ func normalizeToolCatalogItemForStore(item model.ToolCatalogItem) model.ToolCata
 
 func (m *MySQLArchive) ListSemanticAgents(includeDisabled bool) ([]model.SemanticAgentProfile, error) {
 	query := `
-SELECT id, name, description, icon, color, opencode_name, prompt,
+SELECT id, name, description, icon, color, opencode_name, prompt, prompt_mode, model_prompt_presets_json,
        skill_ids_json, mcp_ids_json, skills_json, skill_definitions_json,
        recommended_mcp_servers_json, tool_permissions_json,
        model, enabled, sort_order, built_in, created_at, updated_at
@@ -4263,12 +4283,16 @@ func (m *MySQLArchive) UpsertSemanticAgent(item model.SemanticAgentProfile) (*mo
 	if err != nil {
 		return nil, err
 	}
+	modelPromptPresetsJSON, err := json.Marshal(item.ModelPromptPresets)
+	if err != nil {
+		return nil, err
+	}
 	_, err = m.db.Exec(`
 INSERT INTO semantic_agents (
-  id, name, description, icon, color, opencode_name, prompt,
+  id, name, description, icon, color, opencode_name, prompt, prompt_mode, model_prompt_presets_json,
   skill_ids_json, mcp_ids_json, skills_json, skill_definitions_json, recommended_mcp_servers_json, tool_permissions_json,
   model, enabled, sort_order, built_in
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   description = VALUES(description),
@@ -4276,6 +4300,8 @@ ON DUPLICATE KEY UPDATE
   color = VALUES(color),
   opencode_name = VALUES(opencode_name),
   prompt = VALUES(prompt),
+  prompt_mode = VALUES(prompt_mode),
+  model_prompt_presets_json = VALUES(model_prompt_presets_json),
   skill_ids_json = VALUES(skill_ids_json),
   mcp_ids_json = VALUES(mcp_ids_json),
   skills_json = VALUES(skills_json),
@@ -4286,7 +4312,7 @@ ON DUPLICATE KEY UPDATE
   enabled = VALUES(enabled),
   sort_order = VALUES(sort_order),
   built_in = VALUES(built_in)
-`, item.ID, item.Name, item.Description, item.Icon, item.Color, item.OpencodeName, item.Prompt,
+`, item.ID, item.Name, item.Description, item.Icon, item.Color, item.OpencodeName, item.Prompt, item.PromptMode, string(modelPromptPresetsJSON),
 		string(skillIDsJSON), string(mcpIDsJSON), string(skillsJSON), string(skillDefinitionsJSON), string(recommendedJSON), string(permissionsJSON),
 		item.Model, item.Enabled, item.SortOrder, item.BuiltIn)
 	if err != nil {
@@ -4329,9 +4355,64 @@ func (m *MySQLArchive) DeleteSemanticAgent(id string) error {
 	return nil
 }
 
+func (m *MySQLArchive) ListSemanticAgentModelPromptPresets(includeDisabled bool) ([]model.SemanticAgentModelPromptPreset, error) {
+	query := `SELECT id, name, provider, model_pattern, prompt, enabled, sort_order FROM semantic_agent_model_prompts`
+	if !includeDisabled {
+		query += " WHERE enabled = 1"
+	}
+	query += " ORDER BY sort_order ASC, updated_at DESC, id ASC"
+	rows, err := m.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.SemanticAgentModelPromptPreset
+	for rows.Next() {
+		var item model.SemanticAgentModelPromptPreset
+		if err := rows.Scan(&item.ID, &item.Name, &item.Provider, &item.ModelPattern, &item.Prompt, &item.Enabled, &item.SortOrder); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (m *MySQLArchive) UpsertSemanticAgentModelPromptPreset(item model.SemanticAgentModelPromptPreset) (*model.SemanticAgentModelPromptPreset, error) {
+	_, err := m.db.Exec(`INSERT INTO semantic_agent_model_prompts (id, name, provider, model_pattern, prompt, enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE name=VALUES(name), provider=VALUES(provider), model_pattern=VALUES(model_pattern), prompt=VALUES(prompt), enabled=VALUES(enabled), sort_order=VALUES(sort_order)`, item.ID, item.Name, item.Provider, item.ModelPattern, item.Prompt, item.Enabled, item.SortOrder)
+	if err != nil {
+		return nil, err
+	}
+	items, err := m.ListSemanticAgentModelPromptPresets(true)
+	if err != nil {
+		return nil, err
+	}
+	for _, stored := range items {
+		if stored.ID == item.ID {
+			return &stored, nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (m *MySQLArchive) DeleteSemanticAgentModelPromptPreset(id string) error {
+	result, err := m.db.Exec("DELETE FROM semantic_agent_model_prompts WHERE id = ?", strings.TrimSpace(id))
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (m *MySQLArchive) getSemanticAgent(id string) (*model.SemanticAgentProfile, error) {
 	row := m.db.QueryRow(`
-SELECT id, name, description, icon, color, opencode_name, prompt,
+SELECT id, name, description, icon, color, opencode_name, prompt, prompt_mode, model_prompt_presets_json,
        skill_ids_json, mcp_ids_json, skills_json, skill_definitions_json,
        recommended_mcp_servers_json, tool_permissions_json,
        model, enabled, sort_order, built_in, created_at, updated_at
@@ -4360,6 +4441,7 @@ func scanSemanticAgent(scanner semanticAgentScanner) (model.SemanticAgentProfile
 	var skillDefinitionsJSON []byte
 	var recommendedJSON []byte
 	var permissionsJSON []byte
+	var modelPromptPresetsJSON []byte
 	if err := scanner.Scan(
 		&item.ID,
 		&item.Name,
@@ -4368,6 +4450,8 @@ func scanSemanticAgent(scanner semanticAgentScanner) (model.SemanticAgentProfile
 		&item.Color,
 		&item.OpencodeName,
 		&item.Prompt,
+		&item.PromptMode,
+		&modelPromptPresetsJSON,
 		&skillIDsJSON,
 		&mcpIDsJSON,
 		&skillsJSON,
@@ -4410,6 +4494,11 @@ func scanSemanticAgent(scanner semanticAgentScanner) (model.SemanticAgentProfile
 	}
 	if len(permissionsJSON) > 0 {
 		if err := json.Unmarshal(permissionsJSON, &item.ToolPermissions); err != nil {
+			return model.SemanticAgentProfile{}, err
+		}
+	}
+	if len(modelPromptPresetsJSON) > 0 {
+		if err := json.Unmarshal(modelPromptPresetsJSON, &item.ModelPromptPresets); err != nil {
 			return model.SemanticAgentProfile{}, err
 		}
 	}
@@ -5077,6 +5166,22 @@ func normalizeSemanticAgentForStore(item model.SemanticAgentProfile) model.Seman
 		item.OpencodeName = item.ID
 	}
 	item.Prompt = strings.TrimSpace(item.Prompt)
+	switch strings.ToLower(strings.TrimSpace(item.PromptMode)) {
+	case "model", "both":
+		item.PromptMode = strings.ToLower(strings.TrimSpace(item.PromptMode))
+	default:
+		item.PromptMode = "agent"
+	}
+	for i := range item.ModelPromptPresets {
+		item.ModelPromptPresets[i].ID = strings.TrimSpace(item.ModelPromptPresets[i].ID)
+		item.ModelPromptPresets[i].Name = strings.TrimSpace(item.ModelPromptPresets[i].Name)
+		item.ModelPromptPresets[i].Provider = strings.TrimSpace(strings.ToLower(item.ModelPromptPresets[i].Provider))
+		item.ModelPromptPresets[i].ModelPattern = strings.TrimSpace(strings.ToLower(item.ModelPromptPresets[i].ModelPattern))
+		item.ModelPromptPresets[i].Prompt = strings.TrimSpace(item.ModelPromptPresets[i].Prompt)
+		if item.ModelPromptPresets[i].SortOrder == 0 {
+			item.ModelPromptPresets[i].SortOrder = (i + 1) * 10
+		}
+	}
 	item.Model = strings.TrimSpace(item.Model)
 	item.SkillIDs = cleanStringList(item.SkillIDs)
 	item.MCPIDs = cleanStringList(item.MCPIDs)

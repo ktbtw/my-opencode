@@ -38,6 +38,16 @@ info["comments"] = "码控 launcher"
 path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 
+# The tunnel helper is maintained as a separate sibling project in the full
+# release workspace. Some checkout bundles only carry the last packaged
+# helpers; keep those binaries usable so Launcher releases can still rebuild
+# when the sibling source tree is absent.
+TUNNEL_FALLBACK_DIR=""
+if [ ! -d "$ROOT_DIR/../tunnel" ] && [ -d "$DIST_DIR/tunnel" ]; then
+  TUNNEL_FALLBACK_DIR="$(mktemp -d)"
+  cp -a "$DIST_DIR/tunnel/." "$TUNNEL_FALLBACK_DIR/"
+  trap 'rm -rf "$TUNNEL_FALLBACK_DIR"' EXIT
+fi
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
@@ -134,10 +144,18 @@ build_tunnel_target() {
   local bin_name="$4"
   local out_dir="$DIST_DIR/tunnel"
   mkdir -p "$out_dir"
-  (
-    cd "$ROOT_DIR/../tunnel"
-    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$out_dir/chat-codex-tunnel-${key}${bin_name}" ./cmd/chat-codex-tunnel
-  )
+  local output="$out_dir/chat-codex-tunnel-${key}${bin_name}"
+  if [ -d "$ROOT_DIR/../tunnel" ]; then
+    (
+      cd "$ROOT_DIR/../tunnel"
+      CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$output" ./cmd/chat-codex-tunnel
+    )
+  elif [ -n "$TUNNEL_FALLBACK_DIR" ] && [ -f "$TUNNEL_FALLBACK_DIR/$(basename "$output")" ]; then
+    cp "$TUNNEL_FALLBACK_DIR/$(basename "$output")" "$output"
+  else
+    echo "缺少 tunnel 源码和可复用构建产物: $key" >&2
+    exit 1
+  fi
 }
 
 build_tunnel_target "darwin-arm64" "darwin" "arm64" ""

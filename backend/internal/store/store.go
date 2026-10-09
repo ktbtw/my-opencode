@@ -92,6 +92,7 @@ type Memory struct {
 	runtimeMirrors            map[string]model.RuntimeMirror
 	toolCatalog               map[string]model.ToolCatalogItem
 	semanticAgents            map[string]model.SemanticAgentProfile
+	semanticModelPrompts      map[string]model.SemanticAgentModelPromptPreset
 	runtimeJobs               map[string]model.RuntimeInstallJob
 	runtimeJobItems           map[string][]model.RuntimeInstallJobItem
 	runtimeEvents             map[string][]model.RuntimeInstallEvent
@@ -177,6 +178,7 @@ func NewMemory(archive TaskArchive) *Memory {
 		runtimeMirrors:          map[string]model.RuntimeMirror{},
 		toolCatalog:             map[string]model.ToolCatalogItem{},
 		semanticAgents:          map[string]model.SemanticAgentProfile{},
+		semanticModelPrompts:    map[string]model.SemanticAgentModelPromptPreset{},
 		runtimeJobs:             map[string]model.RuntimeInstallJob{},
 		runtimeJobItems:         map[string][]model.RuntimeInstallJobItem{},
 		runtimeEvents:           map[string][]model.RuntimeInstallEvent{},
@@ -2423,6 +2425,72 @@ func (m *Memory) DeleteSemanticAgent(id string) error {
 	return nil
 }
 
+func (m *Memory) ListSemanticAgentModelPromptPresets(includeDisabled bool) ([]model.SemanticAgentModelPromptPreset, error) {
+	if archive, ok := m.archive.(SemanticAgentModelPromptArchive); ok {
+		items, err := archive.ListSemanticAgentModelPromptPresets(includeDisabled)
+		if err != nil {
+			return nil, err
+		}
+		m.mu.Lock()
+		m.semanticModelPrompts = map[string]model.SemanticAgentModelPromptPreset{}
+		for _, item := range items {
+			m.semanticModelPrompts[item.ID] = item
+		}
+		m.mu.Unlock()
+		return items, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]model.SemanticAgentModelPromptPreset, 0, len(m.semanticModelPrompts))
+	for _, item := range m.semanticModelPrompts {
+		if includeDisabled || item.Enabled {
+			out = append(out, item)
+		}
+	}
+	slices.SortFunc(out, func(a, b model.SemanticAgentModelPromptPreset) int {
+		if a.SortOrder != b.SortOrder {
+			return a.SortOrder - b.SortOrder
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
+func (m *Memory) UpsertSemanticAgentModelPromptPreset(item model.SemanticAgentModelPromptPreset) (*model.SemanticAgentModelPromptPreset, error) {
+	if archive, ok := m.archive.(SemanticAgentModelPromptArchive); ok {
+		stored, err := archive.UpsertSemanticAgentModelPromptPreset(item)
+		if err != nil {
+			return nil, err
+		}
+		if stored != nil {
+			m.mu.Lock()
+			m.semanticModelPrompts[stored.ID] = *stored
+			m.mu.Unlock()
+		}
+		return stored, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if item.SortOrder == 0 {
+		item.SortOrder = 100
+	}
+	m.semanticModelPrompts[item.ID] = item
+	out := item
+	return &out, nil
+}
+
+func (m *Memory) DeleteSemanticAgentModelPromptPreset(id string) error {
+	if archive, ok := m.archive.(SemanticAgentModelPromptArchive); ok {
+		if err := archive.DeleteSemanticAgentModelPromptPreset(id); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.semanticModelPrompts, id)
+	return nil
+}
+
 func isNoopArchive(archive TaskArchive) bool {
 	_, ok := archive.(noopArchive)
 	return ok
@@ -2748,6 +2816,7 @@ func cloneSemanticAgentProfile(item model.SemanticAgentProfile) model.SemanticAg
 	item.ToolPermissions = cloneAnyMapStore(item.ToolPermissions)
 	item.SkillDefinitions = cloneSemanticAgentSkills(item.SkillDefinitions)
 	item.RuntimeRequirements = cloneSemanticAgentRuntimes(item.RuntimeRequirements)
+	item.ModelPromptPresets = append([]model.SemanticAgentModelPromptPreset(nil), item.ModelPromptPresets...)
 	return item
 }
 

@@ -264,6 +264,22 @@ class _UpdateDialogState extends State<_UpdateDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // AlertDialog measures its content with IntrinsicWidth, which cannot query
+    // a LayoutBuilder: the debug-only intrinsic assertion would throw and leave
+    // the dialog on the navigator stack without ever painting. Derive the
+    // actions width from the screen instead, subtracting the dialog insets and
+    // the actions padding.
+    const dialogHorizontalInsets = 80.0; // Dialog.insetPadding, 40 per side
+    const actionsHorizontalPadding = 32.0; // actionsPadding, 16 per side
+    final actionsWidth =
+        MediaQuery.sizeOf(context).width -
+        dialogHorizontalInsets -
+        actionsHorizontalPadding;
+    final compact = actionsWidth < 320;
+    final compactButtonStyle = TextButton.styleFrom(
+      minimumSize: const Size(0, 40),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+    );
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: const Text(
@@ -365,56 +381,45 @@ class _UpdateDialogState extends State<_UpdateDialog> {
           : [
               SizedBox(
                 width: double.infinity,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 320;
-                    final compactButtonStyle = TextButton.styleFrom(
-                      minimumSize: const Size(0, 40),
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                    );
-                    return Row(
-                      children: [
-                        if (compact)
-                          IconButton(
-                            onPressed: _openReleaseHistory,
-                            tooltip: '更新历史',
-                            icon: const Icon(Icons.history_rounded, size: 20),
-                          )
-                        else
-                          TextButton.icon(
-                            onPressed: _openReleaseHistory,
-                            icon: const Icon(Icons.history_rounded, size: 16),
-                            label: const Text('历史记录'),
-                          ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            style: compactButtonStyle,
-                            child: const Text('稍后再说'),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _startUpdate,
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(0, 40),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                              ),
-                              backgroundColor: const Color(0xFF3B82F6),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            child: const Text('立即更新'),
+                child: Row(
+                  children: [
+                    if (compact)
+                      IconButton(
+                        onPressed: _openReleaseHistory,
+                        tooltip: '更新历史',
+                        icon: const Icon(Icons.history_rounded, size: 20),
+                      )
+                    else
+                      TextButton.icon(
+                        onPressed: _openReleaseHistory,
+                        icon: const Icon(Icons.history_rounded, size: 16),
+                        label: const Text('历史记录'),
+                      ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: compactButtonStyle,
+                        child: const Text('稍后再说'),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _startUpdate,
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size(0, 40),
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          backgroundColor: const Color(0xFF3B82F6),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                      ],
-                    );
-                  },
+                        child: const Text('立即更新'),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],

@@ -217,6 +217,11 @@ kbd { font: 11px Geist, sans-serif; border: 1px solid var(--border); border-radi
 .command-empty { padding: 20px; font-size: 12px; color: var(--text-muted); }
 .toast { border-radius: 8px; border: 1px solid var(--border); background: white; box-shadow: 0 8px 35px #1434211c; font-size: 12px; bottom: 25px; }
 .toast.pending { color: var(--primary); border-color: #c4ddd0; background: var(--primary-soft); }
+.model-prompt-presets { display: grid; gap: 12px; margin: 10px 0; }
+.model-prompt-row { border: 1px solid var(--border-light); border-radius: 6px; padding: 13px; background: #fbfcfb; }
+.model-prompt-row .switch-row input[type="checkbox"] { width: 16px; height: 16px; min-width: 16px; padding: 0; }
+.model-prompt-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.model-prompt-row .text-button { margin-top: 8px; }
 
 @media (max-width: 1100px) {
   .app-shell { grid-template-columns: 200px minmax(0,1fr); }

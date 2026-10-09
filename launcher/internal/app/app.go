@@ -1261,6 +1261,11 @@ func (s *service) AIConfig() (*model.DeviceAIConfigInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The initial configuration view must use the same OpenCode catalogue as
+	// the explicit model refresh action. Without this refresh, a running
+	// runtime can provide metadata while the local catalogue is still empty,
+	// so presets only appear after the user manually refreshes models.
+	aiconfig.SyncOpenCodeModelCatalog()
 	return s.enrichAIConfigFromRuntime(cfg), nil
 }
 
@@ -1283,7 +1288,7 @@ func (s *service) SaveAIConfig(input model.DeviceAIConfigInfo) (*model.DeviceAIC
 	if err := s.reloadAgentsWithOpsLocked(); err != nil {
 		return nil, err
 	}
-	return cfg, nil
+	return s.enrichAIConfigFromRuntime(cfg), nil
 }
 
 func (s *service) SaveAIConfigText(text string) (*model.DeviceAIConfigInfo, error) {
@@ -1296,7 +1301,7 @@ func (s *service) SaveAIConfigText(text string) (*model.DeviceAIConfigInfo, erro
 	if err := s.reloadAgentsWithOpsLocked(); err != nil {
 		return nil, err
 	}
-	return cfg, nil
+	return s.enrichAIConfigFromRuntime(cfg), nil
 }
 
 func (s *service) ClearAIProvider(id string) (*model.DeviceAIConfigInfo, error) {

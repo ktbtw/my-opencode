@@ -35,6 +35,15 @@ test('blocked writes and deletes do not revive stale persisted sessions', () => 
   storage.set('session','new-session'); assert.equal(storage.get('session'),'new-session');
   storage.remove('session'); assert.equal(storage.get('session'),'');
 });
+test('quota failures disable repeated persistent writes while keeping memory session', () => {
+  let writes = 0;
+  const storage = safeBrowserStorage({localStorage:{getItem(){return ''},setItem(){writes++;throw new Error('QuotaExceededError')},removeItem(){}}});
+  assert.equal(storage.set('session','new-session'),false);
+  assert.equal(storage.set('username','admin'),false);
+  assert.equal(writes,1);
+  assert.equal(storage.get('session'),'new-session');
+  assert.equal(storage.get('username'),'admin');
+});
 test('successful JSON is returned', async () => assert.deepEqual(await readJSONResponse(Response.json({ok:true})), {ok:true}));
 test('invalid credentials get a readable inline message', async () => {
   await assert.rejects(readJSONResponse(Response.json({error:'username or password invalid'}, {status:401})), error => error.statusCode===401 && error.message.includes('账号或密码'));

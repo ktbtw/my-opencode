@@ -129,6 +129,13 @@ type DevicePreferenceArchive interface {
 	ReorderDevicePreferences(operatorID int64, machineIDs []string) ([]model.DevicePreference, error)
 }
 
+// SemanticAgentModelPromptArchive is optional so lightweight archives remain compatible.
+type SemanticAgentModelPromptArchive interface {
+	ListSemanticAgentModelPromptPresets(includeDisabled bool) ([]model.SemanticAgentModelPromptPreset, error)
+	UpsertSemanticAgentModelPromptPreset(item model.SemanticAgentModelPromptPreset) (*model.SemanticAgentModelPromptPreset, error)
+	DeleteSemanticAgentModelPromptPreset(id string) error
+}
+
 type AgentPreferenceArchive interface {
 	ListAgentPreferences(operatorID int64, machineIDs []string) ([]model.AgentPreference, error)
 	ReorderAgentPreferences(operatorID int64, machineID string, agentIDs []string) ([]model.AgentPreference, error)

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/api_client.dart';
+import '../config/sse_log.dart';
 import '../config/sse_parser.dart';
 import '../storage/app_storage.dart';
 import 'account_scope.dart';
@@ -69,12 +70,20 @@ class AppLiveEvents {
     Timer? retry;
     var closed = false;
     var attempt = 0;
+    var firstEventSeen = false;
     late void Function() connect;
     void reconnect() {
       if (closed || retry != null) return;
       connection.disconnected(retry: true);
       unawaited(subscription?.cancel());
-      retry = Timer(Duration(seconds: (++attempt).clamp(1, 15)), () {
+      final delaySeconds = (++attempt).clamp(1, 15);
+      SseLog.retry(
+        SseChannel.overlay,
+        attempt,
+        delaySeconds * 1000,
+        '连接中断',
+      );
+      retry = Timer(Duration(seconds: delaySeconds), () {
         retry = null;
         connect();
       });
@@ -94,6 +103,10 @@ class AppLiveEvents {
               .listen(
                 (event) {
                   connection.activity();
+                  if (!firstEventSeen) {
+                    firstEventSeen = true;
+                    SseLog.firstEvent(SseChannel.overlay, event.type);
+                  }
                   _rememberAgents(event);
                   attempt = 0;
                   controller.add(event);

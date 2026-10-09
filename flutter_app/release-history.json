@@ -1,5 +1,17 @@
 [
   {
+    "version": "1.6.120",
+    "version_code": 267,
+    "released_at": "",
+    "items": [
+      "AI 配置模型管理同步 OpenCode 最新模型目录，自动预填上下文窗口、最大输出、输入方式、输出方式、思考协议和思考档位",
+      "第三方中转模型支持 GPT、Grok、Kimi、Claude、Gemini、DeepSeek、Qwen、Llama、Mistral、GLM 等简称匹配，同时保留完整模型 ID 的精确匹配",
+      "模型编辑器和模型列表明确显示 OpenCode 预设来源、能力模态、思考强度与档位，保存后不再丢失自动预设",
+      "语义 Agent 支持按供应商和模型名配置提示词，并支持 Agent 提示词、模型提示词或两者同时生效",
+      "管理后台修复登录会话存储配额异常，优化提示词预设配置界面与模型配置控件"
+    ]
+  },
+  {
     "version": "1.6.119",
     "version_code": 266,
     "released_at": "",

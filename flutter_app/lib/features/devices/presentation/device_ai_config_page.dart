@@ -9,6 +9,7 @@ import '../../../core/notifications/app_notification_feedback.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/provider_console_url.dart';
+import '../../../shared/context_window.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../../shared/widgets/step_guide_dialog.dart';
 import '../../chat/data/chat_model.dart';
@@ -1801,6 +1802,19 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
                         color: AppColors.textMuted,
                       ),
                     ),
+                    if (_hasOpenCodePreset(item)) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _modelPresetSummary(item),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 5),
                     Row(
                       children: [
@@ -1887,6 +1901,38 @@ class _ProviderModelsDialogState extends State<ProviderModelsDialog> {
     }
     return ('未检测到思考能力', AppColors.statusOffline);
   }
+}
+
+bool _hasOpenCodePreset(DeviceAIModelInfo item) {
+  return item.presetSource.toLowerCase() == 'opencode' ||
+      item.presetModel.isNotEmpty ||
+      item.presetContextLimit != null ||
+      item.presetOutputLimit != null ||
+      item.modalitiesSource.toLowerCase() == 'opencode' ||
+      item.thinking?.source.toLowerCase() == 'opencode';
+}
+
+String _modelPresetSummary(DeviceAIModelInfo item) {
+  final values = <String>['OpenCode 预设'];
+  if (item.presetContextLimit != null) {
+    values.add('上下文 ${formatTokenCount(item.presetContextLimit)}');
+  }
+  if (item.presetOutputLimit != null) {
+    values.add('输出 ${formatTokenCount(item.presetOutputLimit)}');
+  }
+  if (item.modalitiesSource.toLowerCase() == 'opencode' &&
+      (item.inputModalities.isNotEmpty || item.outputModalities.isNotEmpty)) {
+    values.add(
+      '输入 ${item.inputModalities.join('/')} · 输出 ${item.outputModalities.join('/')}',
+    );
+  }
+  final variants = item.thinking?.variants.isNotEmpty == true
+      ? item.thinking!.variants
+      : item.variants;
+  if (variants.isNotEmpty) {
+    values.add('思考 ${variants.keys.join('/')}');
+  }
+  return values.join(' · ');
 }
 
 class _QuickTextButton extends StatelessWidget {

@@ -580,13 +580,36 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
                 ),
                 const SizedBox(height: 18),
                 _buildOutputModalitiesSection(),
-                if (widget.model.presetModel.isNotEmpty) ...[
+                if (_hasOpenCodePreset(widget.model)) ...[
                   const SizedBox(height: 10),
-                  Text(
-                    'OpenCode 预设：${widget.model.presetModel}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.textMuted,
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      borderRadius: AppRadius.smRadius,
+                      border: Border.all(color: AppColors.primaryMuted),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (widget.model.presetModel.isNotEmpty)
+                          Text(
+                            'OpenCode 预设：${widget.model.presetModel}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.primary,
+                              height: 1.4,
+                            ),
+                          ),
+                        Text(
+                          _openCodePresetSummary(widget.model),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.primary,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -672,6 +695,15 @@ class _ModelThinkingEditorState extends State<ModelThinkingEditor> {
               : '当前生效：${formatContextWindow(effectiveContext)}',
           style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
         ),
+        if (widget.model.presetContextLimit != null ||
+            widget.model.presetOutputLimit != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '目录预设：${widget.model.presetContextLimit == null ? '上下文未设置' : '上下文 ${formatTokenCount(widget.model.presetContextLimit)}'}'
+            '${widget.model.presetOutputLimit == null ? '' : ' · 最大输出 ${formatTokenCount(widget.model.presetOutputLimit)}'}',
+            style: const TextStyle(fontSize: 11, color: AppColors.primary),
+          ),
+        ],
         const SizedBox(height: 10),
         _SectionTitle(title: '窗口预设', trailing: '点击即填入'),
         const SizedBox(height: 6),
@@ -1070,6 +1102,7 @@ class _EditorHeader extends StatelessWidget {
                   [
                     model.id,
                     formatContextWindow(model.contextLimit),
+                    if (_hasOpenCodePreset(model)) 'OpenCode 预设',
                   ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1087,6 +1120,35 @@ class _EditorHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _hasOpenCodePreset(DeviceAIModelInfo model) {
+  return model.presetSource.toLowerCase() == 'opencode' ||
+      model.presetModel.isNotEmpty ||
+      model.presetContextLimit != null ||
+      model.presetOutputLimit != null ||
+      model.modalitiesSource.toLowerCase() == 'opencode' ||
+      model.thinking?.source.toLowerCase() == 'opencode';
+}
+
+String _openCodePresetSummary(DeviceAIModelInfo model) {
+  final values = <String>[
+    'OpenCode 模型目录已识别',
+    if (model.presetModel.isNotEmpty) model.presetModel,
+  ];
+  if (model.presetContextLimit != null) {
+    values.add('上下文 ${formatTokenCount(model.presetContextLimit)}');
+  }
+  if (model.presetOutputLimit != null) {
+    values.add('最大输出 ${formatTokenCount(model.presetOutputLimit)}');
+  }
+  if (model.modalitiesSource.toLowerCase() == 'opencode' &&
+      (model.inputModalities.isNotEmpty || model.outputModalities.isNotEmpty)) {
+    values.add(
+      '输入 ${model.inputModalities.join('/')} · 输出 ${model.outputModalities.join('/')}',
+    );
+  }
+  return values.join(' · ');
 }
 
 class _SourceSegment extends StatelessWidget {

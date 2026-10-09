@@ -99,6 +99,30 @@ func TestCatalogNormalizesRelayPathsDisplayNamesAndKimi3Alias(t *testing.T) {
 	}
 }
 
+func TestCatalogMatchesGenericRelayFamilyNames(t *testing.T) {
+	catalogFixture(t)
+	metadata := catalogMetadata()
+	metadata.All = append(metadata.All,
+		RuntimeProviderMetadataItem{ID: "anthropic", Models: map[string]RuntimeModelMetadata{
+			"claude-opus-4-7": {ID: "claude-opus-4-7", Name: "Claude Opus 4.7", Limit: RuntimeModelLimit{Context: 200000, Output: 32000}, Capabilities: RuntimeModelCapabilities{Reasoning: true}},
+		}},
+		RuntimeProviderMetadataItem{ID: "google", Models: map[string]RuntimeModelMetadata{
+			"gemini-3-pro": {ID: "gemini-3-pro", Name: "Gemini 3 Pro", Limit: RuntimeModelLimit{Context: 1000000, Output: 64000}, Capabilities: RuntimeModelCapabilities{Reasoning: true}},
+		}},
+		RuntimeProviderMetadataItem{ID: "deepseek", Models: map[string]RuntimeModelMetadata{
+			"deepseek-v3": {ID: "deepseek-v3", Name: "DeepSeek V3", Limit: RuntimeModelLimit{Context: 128000, Output: 8192}},
+		}},
+	)
+	for _, id := range []string{"GPT", "Grok", "AI", "Claude", "Gemini", "DeepSeek"} {
+		cfg := &model.DeviceAIConfigInfo{Provider: "relay", Models: []model.DeviceAIModelInfo{{ID: id, Name: id}}}
+		EnrichWithOpenCodeCatalog(cfg, metadata)
+		item := cfg.Models[0]
+		if item.PresetModel == "" || item.Context <= 0 || item.Output <= 0 {
+			t.Fatalf("generic family %q was not matched: %+v", id, item)
+		}
+	}
+}
+
 func TestCatalogDoesNotFuzzyMatchDifferentModelVersion(t *testing.T) {
 	catalogFixture(t)
 	for _, id := range []string{"gpt-50", "gpt-5.4-codex", "unrelated-AI", "kimi-k30"} {
@@ -188,7 +212,7 @@ func TestCatalogRefreshReadsModelsDevSchemaAndKeepsValidSnapshot(t *testing.T) {
 	catalogFixture(t)
 	t.Setenv("OPENCODE_MODELS_PATH", "")
 	t.Setenv("OPENCODE_DISABLE_MODELS_FETCH", "")
-	data := `{"openai":{"id":"openai","models":{"gpt-5.4":{"id":"gpt-5.4","name":"GPT 5.4","reasoning":true,"limit":{"context":1000000,"output":128000},"modalities":{"input":["text","image"],"output":["text"]}}}}}`
+	data := `{"openai":{"id":"openai","models":{"gpt-5.4":{"id":"gpt-5.4","name":"GPT 5.4","reasoning":true,"reasoning_options":[{"type":"effort","values":["low","high"]}],"limit":{"context":1000000,"output":128000},"modalities":{"input":["text","image"],"output":["text"]}}}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api.json" {
 			t.Errorf("wrong path %s", r.URL.Path)
@@ -199,7 +223,7 @@ func TestCatalogRefreshReadsModelsDevSchemaAndKeepsValidSnapshot(t *testing.T) {
 	t.Setenv("OPENCODE_MODELS_URL", server.URL)
 	SyncOpenCodeModelCatalog()
 	got := loadOpenCodeCatalog(false)
-	if len(got) != 1 || got[0].Models["gpt-5.4"].Limit.Output != 128000 {
+	if len(got) != 1 || got[0].Models["gpt-5.4"].Limit.Output != 128000 || len(got[0].Models["gpt-5.4"].Variants) != 2 {
 		t.Fatalf("schema output dropped: %+v", got)
 	}
 	// Force another request and simulate a corrupt response.

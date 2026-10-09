@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../storage/app_storage.dart';
+import 'sse_log.dart';
 import 'sse_parser.dart';
 
 // Web 平台条件导入
@@ -250,6 +251,7 @@ class ApiClient {
     void Function()? onConnected,
     void Function()? onActivity,
   }) {
+    final channel = SseChannel.fromPath(uri.path);
     var refreshed = false;
     var cancelled = false;
     StreamSubscription<SseEvent>? subscription;
@@ -282,10 +284,12 @@ class ApiClient {
                   !refreshed &&
                   await _tryRefreshToken()) {
                 refreshed = true;
+                SseLog.authRefresh(channel);
                 connect();
                 return;
               }
               if (cancelled) return;
+              // 连接级日志由传输层输出（含字节/事件/心跳统计），此处只转发。
               controller.addError(error, stack);
               unawaited(controller.close());
             },

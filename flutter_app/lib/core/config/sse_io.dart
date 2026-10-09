@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'sse_log.dart';
 import 'sse_parser.dart';
 
 Stream<String> sseStream(Uri uri, Map<String, String> headers) =>
@@ -15,22 +16,43 @@ Stream<SseEvent> sseEventStream(
   void Function()? onConnected,
   void Function()? onActivity,
 }) {
+  final channel = SseChannel.fromPath(uri.path);
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
   final parser = SseDataParser();
   StreamSubscription<String>? subscription;
   var closed = false;
+  var sawFirstData = false;
+  var sawFirstHeartbeat = false;
+  var bytesReceived = 0;
+  var eventsReceived = 0;
+  var connectStartedAt = DateTime.now();
+  var connectedAt = DateTime.now();
   late final StreamController<SseEvent> controller;
 
   void finish([Object? error, StackTrace? stack]) {
     if (closed) return;
     closed = true;
     client.close(force: true);
+    if (error != null) {
+      SseLog.error(channel, error);
+    } else {
+      SseLog.closed(
+        channel,
+        reason: '服务端关闭流',
+        durationMs: DateTime.now().difference(connectedAt).inMilliseconds,
+        bytes: bytesReceived,
+        events: eventsReceived,
+        heartbeats: parser.heartbeatCount,
+      );
+    }
     if (error != null) controller.addError(error, stack);
     unawaited(controller.close());
     unawaited(subscription?.cancel());
   }
 
   Future<void> connect() async {
+    connectStartedAt = DateTime.now();
+    SseLog.connecting(channel, uri.toString());
     try {
       final request = await client.getUrl(uri);
       if (closed) return;
@@ -39,10 +61,16 @@ Stream<SseEvent> sseEventStream(
         const Duration(seconds: 30),
       );
       if (closed) return;
+      SseLog.responded(channel, response.statusCode);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         finish(SseHttpException(response.statusCode));
         return;
       }
+      connectedAt = DateTime.now();
+      SseLog.connected(
+        channel,
+        connectedAt.difference(connectStartedAt).inMilliseconds,
+      );
       onConnected?.call();
       // Time out on missing bytes, not missing business events. SSE comments
       // are heartbeats and keep a healthy but quiet connection alive.
@@ -52,12 +80,28 @@ Stream<SseEvent> sseEventStream(
           .listen(
             (chunk) {
               if (closed) return;
+              bytesReceived += chunk.length;
+              if (!sawFirstData) {
+                sawFirstData = true;
+                SseLog.firstData(channel, chunk.length);
+              }
               onActivity?.call();
-              for (final event in parser.addChunkEvents(chunk)) {
+              final events = parser.addChunkEvents(chunk);
+              if (!sawFirstHeartbeat && parser.heartbeatCount > 0) {
+                sawFirstHeartbeat = true;
+                SseLog.firstHeartbeat(channel);
+              }
+              eventsReceived += events.length;
+              for (final event in events) {
                 controller.add(event);
               }
             },
-            onError: (Object error, StackTrace stack) => finish(error, stack),
+            onError: (Object error, StackTrace stack) {
+              if (error is TimeoutException) {
+                SseLog.idleTimeout(channel, idleTimeout.inSeconds);
+              }
+              finish(error, stack);
+            },
             onDone: () {
               if (closed) return;
               for (final event in parser.closeEvents()) {
@@ -74,11 +118,18 @@ Stream<SseEvent> sseEventStream(
 
   controller = StreamController<SseEvent>(
     onListen: () => unawaited(connect()),
-    onPause: () => subscription?.pause(),
-    onResume: () => subscription?.resume(),
+    onPause: () {
+      SseLog.step(channel, '数据流暂停（下游背压）');
+      subscription?.pause();
+    },
+    onResume: () {
+      SseLog.step(channel, '数据流恢复');
+      subscription?.resume();
+    },
     onCancel: () async {
       // An async* reader waits for another event before reaching finally.
       // Close the socket directly so background resume never waits on it.
+      if (!closed) SseLog.cancelled(channel);
       closed = true;
       client.close(force: true);
       await subscription?.cancel();

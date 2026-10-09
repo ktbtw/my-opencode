@@ -362,27 +362,39 @@ type SemanticAgentSkill struct {
 	PackageFiles []SkillPackageFile `json:"package_files,omitempty"`
 }
 
+type SemanticAgentModelPromptPreset struct {
+	ID           string `json:"id"`
+	Name         string `json:"name,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	ModelPattern string `json:"model_pattern,omitempty"`
+	Prompt       string `json:"prompt,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	SortOrder    int    `json:"sort_order,omitempty"`
+}
+
 type SemanticAgentProfile struct {
-	ID                    string                       `json:"id"`
-	Name                  string                       `json:"name"`
-	Description           string                       `json:"description,omitempty"`
-	Icon                  string                       `json:"icon,omitempty"`
-	Color                 string                       `json:"color,omitempty"`
-	OpencodeName          string                       `json:"opencode_name,omitempty"`
-	Prompt                string                       `json:"prompt,omitempty"`
-	SkillIDs              []string                     `json:"skill_ids,omitempty"`
-	MCPIDs                []string                     `json:"mcp_ids,omitempty"`
-	Skills                []string                     `json:"skills,omitempty"`
-	SkillDefinitions      []SemanticAgentSkill         `json:"skill_definitions,omitempty"`
-	RecommendedMCPServers []string                     `json:"recommended_mcp_servers,omitempty"`
-	RecommendedMCPConfigs []DeviceMCPServerInfo        `json:"recommended_mcp_configs,omitempty"`
-	MCPDependencies       []SemanticAgentMCPDependency `json:"mcp_dependencies,omitempty"`
-	ToolPermissions       map[string]any               `json:"tool_permissions,omitempty"`
-	RuntimeRequirements   []SemanticAgentRuntime       `json:"runtime_requirements,omitempty"`
-	Model                 string                       `json:"model,omitempty"`
-	Enabled               bool                         `json:"enabled"`
-	SortOrder             int                          `json:"sort_order,omitempty"`
-	BuiltIn               bool                         `json:"built_in,omitempty"`
+	ID                    string                           `json:"id"`
+	Name                  string                           `json:"name"`
+	Description           string                           `json:"description,omitempty"`
+	Icon                  string                           `json:"icon,omitempty"`
+	Color                 string                           `json:"color,omitempty"`
+	OpencodeName          string                           `json:"opencode_name,omitempty"`
+	Prompt                string                           `json:"prompt,omitempty"`
+	PromptMode            string                           `json:"prompt_mode,omitempty"`
+	ModelPromptPresets    []SemanticAgentModelPromptPreset `json:"model_prompt_presets,omitempty"`
+	SkillIDs              []string                         `json:"skill_ids,omitempty"`
+	MCPIDs                []string                         `json:"mcp_ids,omitempty"`
+	Skills                []string                         `json:"skills,omitempty"`
+	SkillDefinitions      []SemanticAgentSkill             `json:"skill_definitions,omitempty"`
+	RecommendedMCPServers []string                         `json:"recommended_mcp_servers,omitempty"`
+	RecommendedMCPConfigs []DeviceMCPServerInfo            `json:"recommended_mcp_configs,omitempty"`
+	MCPDependencies       []SemanticAgentMCPDependency     `json:"mcp_dependencies,omitempty"`
+	ToolPermissions       map[string]any                   `json:"tool_permissions,omitempty"`
+	RuntimeRequirements   []SemanticAgentRuntime           `json:"runtime_requirements,omitempty"`
+	Model                 string                           `json:"model,omitempty"`
+	Enabled               bool                             `json:"enabled"`
+	SortOrder             int                              `json:"sort_order,omitempty"`
+	BuiltIn               bool                             `json:"built_in,omitempty"`
 }
 
 type DeviceAgentSemanticSelectionInfo struct {

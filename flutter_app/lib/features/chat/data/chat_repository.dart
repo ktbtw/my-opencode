@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../../../core/config/api_client.dart';
+import '../../../core/config/sse_log.dart';
 import '../../../core/config/sse_parser.dart';
 import '../../../core/services/shared_streams.dart';
 import '../../../core/services/connection_telemetry.dart';
@@ -119,18 +120,23 @@ class ChatRepository {
   Stream<ChatQueueSnapshot> watchChatQueue(String sessionId) =>
       _queueStreams.watch(sessionId, () => _watchChatQueue(sessionId));
 
-  Stream<ChatQueueSnapshot> _watchChatQueue(String sessionId) =>
-      ApiClient.sse(
-        '/api/sessions/${Uri.encodeComponent(sessionId)}/queue/events',
-      ).where((raw) => raw.isNotEmpty).expand((raw) {
-        try {
-          return [
-            ChatQueueSnapshot.fromJson(jsonDecode(raw) as Map<String, dynamic>),
-          ];
-        } catch (_) {
-          return <ChatQueueSnapshot>[];
-        }
-      });
+  Stream<ChatQueueSnapshot> _watchChatQueue(String sessionId) {
+    SseLog.subscribed(
+      SseChannel.queue(sessionId),
+      '待发送队列状态（session_id=$sessionId）',
+    );
+    return ApiClient.sse(
+      '/api/sessions/${Uri.encodeComponent(sessionId)}/queue/events',
+    ).where((raw) => raw.isNotEmpty).expand((raw) {
+      try {
+        return [
+          ChatQueueSnapshot.fromJson(jsonDecode(raw) as Map<String, dynamic>),
+        ];
+      } catch (_) {
+        return <ChatQueueSnapshot>[];
+      }
+    });
+  }
 
   Future<ChatQueueItem> createChatQueueItem({
     required String sessionId,
@@ -657,13 +663,8 @@ class ChatRepository {
     String source = '',
   }) async* {
     String? cursor;
-    var pageIndex = 0;
-    var total = 0;
     String? historySource;
-    final startedAt = DateTime.now();
     while (true) {
-      pageIndex += 1;
-      final pageStartedAt = DateTime.now();
       final query = Uri(
         queryParameters: {
           'limit': '200',
@@ -683,17 +684,6 @@ class ChatRepository {
           .whereType<Map>()
           .map((event) => Map<String, dynamic>.from(event))
           .toList(growable: false);
-      total += events.length;
-      _chatDiag('history_page', {
-        'task_id': taskId,
-        'source': source,
-        'page': pageIndex,
-        'events': events.length,
-        'total': total,
-        'has_more': page['has_more'] == true,
-        'page_ms': DateTime.now().difference(pageStartedAt).inMilliseconds,
-        'elapsed_ms': DateTime.now().difference(startedAt).inMilliseconds,
-      });
       for (final event in events) {
         yield {
           ...event,
@@ -731,12 +721,12 @@ class ChatRepository {
     void retry(String reason, [Object? error]) {
       if (cancelled) return;
       telemetry.disconnected(retry: true);
-      _chatDiag('sse_reconnect', {
-        'task_id': taskId,
-        'reason': reason,
-        if (error != null) 'error': error.toString(),
-        'wait_ms': 1000,
-      });
+      SseLog.retry(
+        SseChannel.task(taskId),
+        1,
+        1000,
+        '$reason${error == null ? '' : '（$error）'}',
+      );
       reconnect?.cancel();
       reconnect = Timer(const Duration(seconds: 1), connect);
     }
@@ -750,11 +740,6 @@ class ChatRepository {
       var first = true;
       var terminal = false;
       var decodeFailures = 0;
-      _chatDiag('sse_connect', {
-        'task_id': taskId,
-        'last_event_id': lastSequence,
-        'has_cursor': lastCursor != null && lastCursor.isNotEmpty,
-      });
       subscription =
           ApiClient.sseEvents(
             '/api/tasks/${Uri.encodeComponent(taskId)}/events',
@@ -873,6 +858,10 @@ class ChatRepository {
   }
 
   Stream<Map<String, dynamic>> watchModelTestEvents(String testId) async* {
+    SseLog.subscribed(
+      SseChannel.modelTest(testId),
+      '模型测速过程与结果（test_id=$testId）',
+    );
     await for (final raw in ApiClient.sse('/api/model-tests/$testId/events')) {
       if (raw.isEmpty) continue;
       try {
@@ -897,7 +886,6 @@ class ChatRepository {
 
   Future<TaskEventSnapshot> _collectTaskEventSnapshot(String taskId) async {
     final events = <Map<String, dynamic>>[];
-    final startedAt = DateTime.now();
     var timedOut = false;
     var readFailed = false;
     var truncated = false;
@@ -962,32 +950,6 @@ class ChatRepository {
       events,
       complete: !timedOut && !readFailed && !truncated,
     );
-    final counts = <String, int>{};
-    for (final event in events) {
-      final type = event['type']?.toString() ?? 'unknown';
-      counts[type] = (counts[type] ?? 0) + 1;
-    }
-    var textBlocks = 0;
-    var toolBlocks = 0;
-    for (final block in snapshot.blocks) {
-      if (block.tool != null) {
-        toolBlocks += 1;
-      } else if (block.type == ChatMessageBlockType.text &&
-          block.text.trim().isNotEmpty) {
-        textBlocks += 1;
-      }
-    }
-    _chatDiag('history_snapshot', {
-      'task_id': taskId,
-      'events': events.length,
-      'counts': counts,
-      'text_blocks': textBlocks,
-      'tool_blocks': toolBlocks,
-      'text_len': snapshot.text.length,
-      'timed_out': timedOut,
-      'truncated': truncated,
-      'elapsed_ms': DateTime.now().difference(startedAt).inMilliseconds,
-    });
     return snapshot;
   }
 

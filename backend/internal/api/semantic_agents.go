@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -152,6 +153,54 @@ func (a *API) ListSemanticAgents(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (a *API) ListSemanticModelPromptPresets(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	items, err := a.store.ListSemanticAgentModelPromptPresets(true)
+	if err != nil {
+		write(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) UpsertSemanticModelPromptPreset(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var item model.SemanticAgentModelPromptPreset
+	if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+		write(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if id := strings.TrimSpace(chi.URLParam(r, "id")); id != "" {
+		item.ID = id
+	}
+	item = normalizeSemanticPromptPreset(item)
+	if item.ID == "" || item.Prompt == "" || (item.Provider == "" && item.ModelPattern == "") {
+		write(w, http.StatusBadRequest, map[string]string{"error": "模型预设需要 ID、匹配规则和提示词"})
+		return
+	}
+	stored, err := a.store.UpsertSemanticAgentModelPromptPreset(item)
+	if err != nil {
+		write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	write(w, http.StatusOK, stored)
+}
+
+func (a *API) DeleteSemanticModelPromptPreset(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if err := a.store.DeleteSemanticAgentModelPromptPreset(strings.TrimSpace(chi.URLParam(r, "id"))); err != nil {
+		write(w, statusForStoreError(err), map[string]string{"error": err.Error()})
+		return
+	}
+	write(w, http.StatusOK, map[string]any{"success": true})
+}
+
 func (a *API) UpdateSemanticAgent(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdmin(w, r) {
 		return
@@ -173,6 +222,21 @@ func (a *API) UpdateSemanticAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, stored)
+}
+
+func normalizeSemanticPromptPreset(item model.SemanticAgentModelPromptPreset) model.SemanticAgentModelPromptPreset {
+	item.ID = strings.TrimSpace(item.ID)
+	item.Name = strings.TrimSpace(item.Name)
+	item.Provider = strings.ToLower(strings.TrimSpace(item.Provider))
+	item.ModelPattern = strings.ToLower(strings.TrimSpace(item.ModelPattern))
+	item.Prompt = strings.TrimSpace(item.Prompt)
+	if item.Name == "" {
+		item.Name = item.ID
+	}
+	if item.SortOrder == 0 {
+		item.SortOrder = 100
+	}
+	return item
 }
 
 func (a *API) SetSemanticAgentEnabled(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +425,9 @@ func (a *API) semanticAgentProfiles(includeDisabled bool) ([]model.SemanticAgent
 	if err != nil {
 		return nil, err
 	}
+	globalPrompts, _ := a.store.ListSemanticAgentModelPromptPresets(false)
 	for index := range items {
+		items[index].ModelPromptPresets = append(append([]model.SemanticAgentModelPromptPreset(nil), globalPrompts...), items[index].ModelPromptPresets...)
 		if err := a.expandSemanticAgentReferences(&items[index]); err != nil {
 			return nil, err
 		}
@@ -845,6 +911,29 @@ func (a *API) upsertSemanticAgent(item model.SemanticAgentProfile) (*model.Seman
 	item.Color = strings.TrimSpace(item.Color)
 	item.OpencodeName = strings.TrimSpace(item.OpencodeName)
 	item.Prompt = strings.TrimSpace(item.Prompt)
+	switch strings.ToLower(strings.TrimSpace(item.PromptMode)) {
+	case "model", "both":
+		item.PromptMode = strings.ToLower(strings.TrimSpace(item.PromptMode))
+	default:
+		item.PromptMode = "agent"
+	}
+	cleanPrompts := make([]model.SemanticAgentModelPromptPreset, 0, len(item.ModelPromptPresets))
+	seenPromptIDs := map[string]bool{}
+	for index, preset := range item.ModelPromptPresets {
+		preset = normalizeSemanticPromptPreset(preset)
+		if preset.ID == "" {
+			preset.ID = "model-prompt-" + strconv.Itoa(index+1)
+		}
+		if seenPromptIDs[preset.ID] || (preset.Provider == "" && preset.ModelPattern == "") {
+			continue
+		}
+		seenPromptIDs[preset.ID] = true
+		if preset.SortOrder == 100 {
+			preset.SortOrder = (index + 1) * 10
+		}
+		cleanPrompts = append(cleanPrompts, preset)
+	}
+	item.ModelPromptPresets = cleanPrompts
 	item.Model = strings.TrimSpace(item.Model)
 	item.SkillIDs = cleanStringSlice(item.SkillIDs)
 	item.MCPIDs = cleanStringSlice(item.MCPIDs)

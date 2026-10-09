@@ -2,6 +2,7 @@
 export function safeBrowserStorage(browser) {
   const memory = new Map();
   let storage;
+  let persistent = true;
   try { storage = browser.localStorage; } catch { /* Private mode may deny storage. */ }
   return {
     get(key) {
@@ -11,8 +12,15 @@ export function safeBrowserStorage(browser) {
     },
     set(key, value) {
       memory.set(key, String(value));
-      try { storage?.setItem(key, String(value)); return Boolean(storage); }
-      catch { return false; }
+      if (!persistent || !storage) return false;
+      try { storage.setItem(key, String(value)); return true; }
+      catch {
+        // QuotaExceededError and private-mode storage failures must not break login.
+        // Keep this session in memory and stop retrying a known-broken backend.
+        persistent = false;
+        try { storage.removeItem(key); } catch { /* Ignore a blocked cleanup. */ }
+        return false;
+      }
     },
     remove(key) {
       memory.set(key, "");

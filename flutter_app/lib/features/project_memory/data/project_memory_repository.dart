@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../../core/config/api_client.dart';
+import '../../../core/config/sse_log.dart';
 import 'project_memory_model.dart';
 import 'project_memory_settings_model.dart';
 
@@ -181,6 +182,10 @@ class ProjectMemoryRepository {
   ) {
     final path =
         '${_base(machineId, scopeId)}/memory-jobs/${Uri.encodeComponent(jobId)}/events';
+    SseLog.subscribed(
+      SseChannel.memoryJob(jobId),
+      '项目记忆整理进度（machine=$machineId scope=$scopeId）',
+    );
     return ApiClient.sse(path).map(
       (payload) => ProjectMemoryJobEventModel.fromJson(
         (jsonDecode(payload) as Map).cast<String, dynamic>(),

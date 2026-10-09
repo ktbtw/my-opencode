@@ -5028,6 +5028,10 @@ func TestSemanticAgentAdminListUpdateAndToggle(t *testing.T) {
 
 	reverse.Description = "已编辑的逆向专家描述"
 	reverse.Prompt = "自定义逆向专家提示词"
+	reverse.PromptMode = "both"
+	reverse.ModelPromptPresets = []model.SemanticAgentModelPromptPreset{{
+		ID: "codex", Name: "OpenAI Codex", Provider: " OPENAI ", ModelPattern: " Codex ", Prompt: "codex 专用提示词", Enabled: true,
+	}}
 	reverse.SkillDefinitions = []model.SemanticAgentSkill{{
 		Name:        "reverse-custom",
 		Description: "自定义 skill",
@@ -5055,6 +5059,9 @@ func TestSemanticAgentAdminListUpdateAndToggle(t *testing.T) {
 	}
 	if updated.Description != "已编辑的逆向专家描述" || updated.Skills[0] != "reverse-custom" || len(updated.RecommendedMCPServers) != 0 {
 		t.Fatalf("unexpected updated semantic agent: %+v", updated)
+	}
+	if updated.PromptMode != "both" || len(updated.ModelPromptPresets) != 1 || updated.ModelPromptPresets[0].Provider != "openai" || updated.ModelPromptPresets[0].ModelPattern != "codex" {
+		t.Fatalf("model prompt configuration was not normalized and saved: %+v", updated)
 	}
 
 	enabledReq := httptest.NewRequest(http.MethodPost, "/api/admin/semantic-agents/reverse-windows/enabled", strings.NewReader(`{"enabled":false}`))

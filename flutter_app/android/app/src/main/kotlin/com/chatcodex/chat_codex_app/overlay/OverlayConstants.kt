@@ -37,6 +37,12 @@ internal const val COMPLETION_CHANNEL_ID = "task_completion_v3"
 /** 前台常驻通知 ID。 */
 internal const val NOTIFICATION_ID = 1841
 
+/** 后台事件流（SSE）路径。 */
+internal const val OVERLAY_STREAM_PATH = "/api/overlay/events"
+
+/** 后台事件流的中文通道名，与 Dart 侧 SseChannel.overlay 保持一致。 */
+internal const val OVERLAY_STREAM_LABEL = "全局状态流"
+
 /** 通知投递失败后的重试间隔（毫秒）。 */
 internal const val NOTIFICATION_RETRY_DELAY_MS = 15_000L
 

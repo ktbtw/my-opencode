@@ -26,25 +26,37 @@ internal fun GlobalOverlayService.connectEventStream() {
     executor.execute {
         try {
             var retrySeconds = 1L
+            var connectCount = 0
             while (!destroyed && backgroundNotificationEnabled && !Thread.currentThread().isInterrupted) {
+                connectCount += 1
+                Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】开始第${connectCount}次连接（已连接游标=$notificationCursor）")
                 val streamResult = runCatching { readEventStream() }
                 streamResult.exceptionOrNull()?.let { error ->
                     lastStreamError = error.message.orEmpty().ifBlank { error::class.simpleName.orEmpty() }
-                    Log.w(TAG, "event stream disconnected: ${error.message}", error)
+                    Log.w(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】连接异常：${error.message}", error)
                 }
                 val connected = streamResult.isSuccess
+                if (connected) {
+                    Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】第${connectCount}次连接已结束，重置退避间隔")
+                    retrySeconds = 1L
+                } else {
+                    Log.w(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】第${connectCount}次连接中断，${retrySeconds}秒后重连")
+                }
                 handler.post {
                     streamConnected = false
                     refreshOverlayContent()
                     GlobalOverlayEventBridge.emit(statusSnapshot())
                 }
-                if (destroyed || !backgroundNotificationEnabled) return@execute
-                if (connected) retrySeconds = 1L
+                if (destroyed || !backgroundNotificationEnabled) {
+                    Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】服务已停止或后台通知已关闭，退出事件流循环")
+                    return@execute
+                }
                 runCatching { TimeUnit.SECONDS.sleep(retrySeconds) }
                 retrySeconds = (retrySeconds * 2).coerceAtMost(30L)
             }
         } finally {
             synchronized(this) { streamLoopRunning = false }
+            Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】事件流循环已退出")
             // A rapid off/on setting change may try to restart while the old
             // loop is still exiting. Recheck after releasing its singleton slot.
             handler.post { if (!destroyed && backgroundNotificationEnabled) connectEventStream() }
@@ -103,7 +115,15 @@ internal fun GlobalOverlayService.readEventStream() {
     while (!destroyed && backgroundNotificationEnabled) {
         val token = prefs.getString("flutter.access_token", "").orEmpty()
         check(token.isNotBlank())
-        val connection = (URL("$base/api/overlay/events").openConnection() as HttpURLConnection).apply {
+        val streamUrl = "$base$OVERLAY_STREAM_PATH"
+        var sawFirstData = false
+        val connectStartedAt = SystemClock.elapsedRealtime()
+        var connectedAt = SystemClock.elapsedRealtime()
+        var bytesReceived = 0L
+        var eventsReceived = 0
+        var heartbeats = 0
+        Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】发起连接 → $streamUrl")
+        val connection = (URL(streamUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
             readTimeout = NOTIFICATION_STREAM_READ_TIMEOUT_MS
@@ -118,12 +138,19 @@ internal fun GlobalOverlayService.readEventStream() {
         lastStreamActivityAt = SystemClock.elapsedRealtime()
         try {
             val statusCode = connection.responseCode
-            Log.i(TAG, "event stream response status=$statusCode base=$base")
+            Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】服务端响应，状态码=$statusCode")
             if (statusCode == HttpURLConnection.HTTP_UNAUTHORIZED && !retriedAuth && refreshAccessToken(token)) {
                 retriedAuth = true
+                Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】鉴权失效（401），已刷新令牌，重新连接")
                 continue
             }
             check(statusCode in 200..299)
+            connectedAt = SystemClock.elapsedRealtime()
+            Log.i(
+                TAG,
+                "【SSE】【$OVERLAY_STREAM_LABEL】连接已建立，握手耗时${connectedAt - connectStartedAt}毫秒，" +
+                    "等待事件推送（游标=$notificationCursor）",
+            )
             handler.post {
                 if (destroyed || !backgroundNotificationEnabled || requestScope != notificationCursorScope) return@post
                 streamConnected = true
@@ -138,6 +165,18 @@ internal fun GlobalOverlayService.readEventStream() {
                     val line = reader.readLine() ?: break
                     // Include SSE comments/heartbeats, not only business events.
                     lastStreamActivityAt = SystemClock.elapsedRealtime()
+                    if (line.startsWith(":")) {
+                        heartbeats += 1
+                        if (heartbeats == 1) {
+                            Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】收到首个心跳，链路存活")
+                        }
+                    } else if (line.isNotEmpty()) {
+                        bytesReceived += line.length
+                        if (!sawFirstData) {
+                            sawFirstData = true
+                            Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】收到首批数据，连接工作正常")
+                        }
+                    }
                     when {
                         line.startsWith("event:") -> eventType = line.substringAfter(':').trim()
                         line.startsWith("data:") -> {
@@ -147,7 +186,7 @@ internal fun GlobalOverlayService.readEventStream() {
                         line.isEmpty() -> {
                             if (eventType.isNotBlank() && data.isNotEmpty()) {
                                 lastStreamEventAt = System.currentTimeMillis()
-                                Log.i(TAG, "event stream received type=$eventType bytes=${data.length}")
+                                eventsReceived += 1
                                 dispatchStreamEvent(eventType, data.toString(), requestScope)
                             }
                             eventType = ""
@@ -156,18 +195,25 @@ internal fun GlobalOverlayService.readEventStream() {
                     }
                 }
             }
+            Log.i(
+                TAG,
+                "【SSE】【$OVERLAY_STREAM_LABEL】连接结束（服务端关闭流）：" +
+                    "持续${SystemClock.elapsedRealtime() - connectedAt}毫秒，" +
+                    "收到${bytesReceived}字节 / ${eventsReceived}个事件 / ${heartbeats}个心跳",
+            )
             return
         } finally {
             streamConnection = null
             connection.disconnect()
         }
     }
+    Log.i(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】读取循环退出（服务已停止或后台通知已关闭）")
 }
 
 /** 把单条 SSE 事件分发到对应的处理函数（在主线程执行）。 */
 internal fun GlobalOverlayService.dispatchStreamEvent(eventType: String, rawData: String, requestScope: String = notificationCursorScope) {
     val data = runCatching { JSONObject(rawData) }.getOrNull() ?: run {
-        Log.w(TAG, "event stream invalid json type=$eventType bytes=${rawData.length}")
+        Log.w(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】事件解析失败（非法 JSON）type=$eventType bytes=${rawData.length}")
         return
     }
     handler.post {
@@ -179,7 +225,7 @@ internal fun GlobalOverlayService.dispatchStreamEvent(eventType: String, rawData
                 if (snapshotCursor >= 0 && !notificationDeliveryBlocked && pendingNotificationChanges.isEmpty()) {
                     recordNotificationCursor(snapshotCursor)
                 } else if (snapshotCursor >= 0) {
-                    Log.w(TAG, "notification cursor held at $notificationCursor; pending delivery through $snapshotCursor")
+                    Log.w(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】通知游标暂不推进：当前=$notificationCursor，待投递到=$snapshotCursor")
                 }
             }
             "agent.upsert" -> upsertAgent(data)
@@ -199,7 +245,7 @@ internal fun GlobalOverlayService.ensureHealthyEventStream(reason: String, netwo
     val idleMs = SystemClock.elapsedRealtime() - lastStreamActivityAt
     val connection = streamConnection
     if (connection != null && (networkChanged || idleMs >= NOTIFICATION_STREAM_STALE_MS)) {
-        Log.w(TAG, "notification stream reconnect reason=$reason idleMs=$idleMs cursor=$notificationCursor")
+        Log.w(TAG, "【SSE】【$OVERLAY_STREAM_LABEL】连接已失效，主动断开重连：原因=$reason，空闲=${idleMs}毫秒，游标=$notificationCursor")
         NotificationEventBridge.diagnostic("stream_reconnect", mapOf("reason" to reason, "idle_ms" to idleMs, "cursor" to notificationCursor))
         executor.execute { runCatching { connection.disconnect() } }
     }

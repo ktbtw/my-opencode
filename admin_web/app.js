@@ -1,4 +1,4 @@
-import { safeBrowserStorage, defaultAPIBase, normalizeAPIBase, initialAPIBase, readJSONResponse, fetchWithTimeout, assertAdmin } from "./session.mjs?v=20261007-admin1";
+import { safeBrowserStorage, defaultAPIBase, normalizeAPIBase, initialAPIBase, readJSONResponse, fetchWithTimeout, assertAdmin } from "./session.mjs?v=20261007-admin2";
 
 const storageKeys = {
   baseUrl: "chat_codex_admin_base_url",
@@ -130,6 +130,10 @@ const el = {
   agentFieldEnabled: document.querySelector("#agentFieldEnabled"),
   agentFieldDescription: document.querySelector("#agentFieldDescription"),
   agentFieldPrompt: document.querySelector("#agentFieldPrompt"),
+  agentFieldPromptMode: document.querySelector("#agentFieldPromptMode"),
+  agentModelPromptPresets: document.querySelector("#agentModelPromptPresets"),
+  addAgentModelPromptButton: document.querySelector("#addAgentModelPromptButton"),
+  saveGlobalModelPromptButton: document.querySelector("#saveGlobalModelPromptButton"),
   agentSkillPicker: document.querySelector("#agentSkillPicker"),
   agentMcpPicker: document.querySelector("#agentMcpPicker"),
   agentRuntimePicker: document.querySelector("#agentRuntimePicker"),
@@ -236,6 +240,24 @@ function bootstrap() {
   el.addAgentSkillButton.addEventListener("click", () => openReferencePicker("skill"));
   el.addAgentMcpButton.addEventListener("click", () => openReferencePicker("mcp"));
   el.addAgentRuntimeButton.addEventListener("click", () => openReferencePicker("runtime"));
+  el.addAgentModelPromptButton.addEventListener("click", () => {
+    const items = readModelPromptPresets();
+    items.push({ name: "", provider: "", model_pattern: "", prompt: "", enabled: true });
+    renderModelPromptPresets(items);
+    markEditorDirty();
+  });
+  el.agentModelPromptPresets.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-model-prompt]");
+    if (!button) return;
+    const items = readModelPromptPresets();
+    items.splice(Number(button.dataset.removeModelPrompt), 1);
+    renderModelPromptPresets(items);
+    markEditorDirty();
+  });
+  el.agentModelPromptPresets.addEventListener("input", markEditorDirty);
+  el.agentModelPromptPresets.addEventListener("change", markEditorDirty);
+  el.agentFieldPromptMode.addEventListener("change", markEditorDirty);
+  el.saveGlobalModelPromptButton.addEventListener("click", saveGlobalModelPrompts);
   el.addRuntimeVersionButton.addEventListener("click", () => addRuntimeNestedItem("version"));
   el.addRuntimeMirrorButton.addEventListener("click", () => addRuntimeNestedItem("mirror"));
   el.addRuntimeArtifactButton.addEventListener("click", () => addRuntimeNestedItem("artifact"));
@@ -1404,6 +1426,9 @@ function fillSemanticForm(item) {
   el.agentFieldEnabled.checked = item.enabled !== false;
   el.agentFieldDescription.value = item.description || "";
   el.agentFieldPrompt.value = item.prompt || "";
+  el.agentFieldPromptMode.value = item.prompt_mode || "agent";
+  syncCustomSelect(el.agentFieldPromptMode);
+  renderModelPromptPresets(item.model_prompt_presets || []);
   state.agentSkillSelection = selectedIDs(item.skill_ids, item.skills);
   state.agentMcpSelection = selectedIDs(item.mcp_ids, item.recommended_mcp_servers);
   state.agentRuntimeSelection = normalizeAgentRuntimeSelection(item.runtime_requirements || []);
@@ -1413,6 +1438,36 @@ function fillSemanticForm(item) {
   renderSelectedReferences("runtime");
   renderToolPermissionList();
   syncToolPermissionsJson();
+}
+
+function renderModelPromptPresets(items) {
+  const presets = Array.isArray(items) ? items : [];
+  el.agentModelPromptPresets.innerHTML = presets.map((item, index) => `<article class="model-prompt-row"><div class="form-grid two"><label><span>预设名称</span><input data-model-prompt="name" data-index="${index}" value="${escapeAttr(item.name || "")}" placeholder="OpenAI Codex" /></label><label><span>供应商包含</span><input data-model-prompt="provider" data-index="${index}" value="${escapeAttr(item.provider || "")}" placeholder="openai 或 xai" /></label><label><span>模型名包含</span><input data-model-prompt="model_pattern" data-index="${index}" value="${escapeAttr(item.model_pattern || "")}" placeholder="codex 或 grok" /></label><label class="switch-row"><span>启用</span><input data-model-prompt="enabled" data-index="${index}" type="checkbox" ${item.enabled !== false ? "checked" : ""} /></label></div><label><span>模型提示词</span><textarea data-model-prompt="prompt" data-index="${index}" rows="5" spellcheck="false" placeholder="输入该模型专用提示词"></textarea></label><button class="text-button" type="button" data-remove-model-prompt="${index}">移除此预设</button></article>`).join("");
+  presets.forEach((item, index) => { const field = el.agentModelPromptPresets.querySelector(`[data-model-prompt="prompt"][data-index="${index}"]`); if (field) field.value = item.prompt || ""; });
+}
+
+function readModelPromptPresets() {
+  return [...el.agentModelPromptPresets.querySelectorAll(".model-prompt-row")].map((row, index) => ({
+    id: `model-prompt-${index + 1}`,
+    name: row.querySelector('[data-model-prompt="name"]').value.trim(),
+    provider: row.querySelector('[data-model-prompt="provider"]').value.trim(),
+    model_pattern: row.querySelector('[data-model-prompt="model_pattern"]').value.trim(),
+    enabled: row.querySelector('[data-model-prompt="enabled"]').checked,
+    prompt: row.querySelector('[data-model-prompt="prompt"]').value.trim(),
+    sort_order: (index + 1) * 10,
+  })).filter((item) => item.name || item.provider || item.model_pattern || item.prompt);
+}
+
+async function saveGlobalModelPrompts() {
+  try {
+    const presets = readModelPromptPresets();
+    for (const preset of presets) {
+      await apiPost(`/api/admin/semantic-model-prompts/${encodeURIComponent(preset.id)}`, preset);
+    }
+    showToast(`已保存 ${presets.length} 条全局模型提示词预设`);
+  } catch (error) {
+    showToast(`全局预设保存失败：${error.message || "未知错误"}`);
+  }
 }
 
 function fillSkillForm(item) {
@@ -1823,6 +1878,8 @@ function semanticFormPayload() {
     color: el.agentFieldColor.value.trim(),
     opencode_name: el.agentFieldOpencodeName.value.trim() || id,
     prompt: el.agentFieldPrompt.value.trim(),
+    prompt_mode: el.agentFieldPromptMode.value || "agent",
+    model_prompt_presets: readModelPromptPresets(),
     skill_ids: state.agentSkillSelection.slice(),
     mcp_ids: state.agentMcpSelection.slice(),
     runtime_requirements: state.agentRuntimeSelection.map((item, index) => ({
@@ -3008,6 +3065,7 @@ function initCustomSelects() {
     el.runtimeFieldKind,
     el.runtimeFieldInstallStrategy,
     el.toolFieldDefaultAction,
+    el.agentFieldPromptMode,
   ].forEach(enhanceSelect);
   document.addEventListener("click", closeCustomSelects);
   document.addEventListener("keydown", (event) => {

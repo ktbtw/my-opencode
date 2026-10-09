@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/config/api_client.dart';
+import '../../../core/config/sse_log.dart';
 import '../../../core/services/account_scope.dart';
 import '../../../core/services/app_log_service.dart';
 import '../../../core/storage/app_storage.dart';
@@ -1195,24 +1196,11 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  String _blockOrderSummary(List<ChatMessageBlock> blocks) {
-    final parts = <String>[];
-    var textBlocks = 0;
-    var toolBlocks = 0;
-    for (final block in blocks) {
-      if (block.tool != null) {
-        toolBlocks += 1;
-        parts.add(block.tool!.tool);
-      } else if (block.type == ChatMessageBlockType.text &&
-          block.text.trim().isNotEmpty) {
-        textBlocks += 1;
-        parts.add('text(${block.text.trim().length})');
-      }
-    }
-    final preview = parts.length <= 12
-        ? parts.join('>')
-        : '${parts.take(8).join('>')}...(${parts.length})';
-    return 'text=$textBlocks tools=$toolBlocks mixed=${_blocksHaveMixedInsertion(blocks)} $preview';
+  String _sseCountsSummary(Map<String, int> counts) {
+    if (counts.isEmpty) return '无';
+    final entries = counts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return entries.map((entry) => '${entry.key}=${entry.value}').join('、');
   }
 
   GoalProgressEntry? _latestGoalProgressEntry() {
@@ -2524,40 +2512,31 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
 
     _logChatLatency('sse_listen_started', taskId: taskId, startedAt: sentAt);
-    _logChatDiag('sse_listen_started', taskId: taskId);
+    SseLog.subscribed(
+      SseChannel.task(taskId),
+      '对话正文、思考过程与工具调用（task_id=$taskId）',
+    );
     _startTerminalReconcileTimer(taskId);
     final sseCounts = <String, int>{};
-    var persistedCount = 0;
     var dupDropped = 0;
-    var lastSseSummaryAt = DateTime.now();
 
-    void logSseSummary({required bool force}) {
+    void logSseSummary(String reason) {
       final total = sseCounts.values.fold<int>(0, (sum, count) => sum + count);
       if (total == 0) return;
-      final elapsed = DateTime.now().difference(lastSseSummaryAt);
-      if (!force && elapsed.inMilliseconds < 2000 && total % 40 != 0) {
-        return;
-      }
-      lastSseSummaryAt = DateTime.now();
-      _logChatDiag(
-        'sse_summary',
-        taskId: taskId,
-        data: {
-          'counts': Map<String, int>.from(sseCounts),
-          'persisted': persistedCount,
-          'dup_dropped': dupDropped,
-          'listen_ms': _elapsedMsSince(sseListenStartedAt),
-        },
+      SseLog.summary(
+        SseChannel.task(taskId),
+        '$reason，共收到$total条事件（去重丢弃$dupDropped条），'
+        '监听时长${_elapsedMsSince(sseListenStartedAt)}毫秒，'
+        '分类：${_sseCountsSummary(sseCounts)}',
       );
     }
 
     final rawEvents = _repo.watchTaskEvents(taskId).where((event) {
       if (!_detailsEnabled || liveVersion != _liveVersion) return false;
       if (event['type'] == 'connection_ready') {
-        _logChatDiag(
-          'resume_live_connected',
-          taskId: taskId,
-          data: {'elapsed_ms': _elapsedMsSince(sseListenStartedAt)},
+        SseLog.step(
+          SseChannel.task(taskId),
+          '底层通道已就绪，耗时${_elapsedMsSince(sseListenStartedAt)}毫秒',
         );
         _updateMessage(activeAgentMessageId(), (m) {
           m.streamRecovery = StreamRecovery.following;
@@ -2576,7 +2555,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         dupDropped += 1;
         return false;
       }
-      persistedCount += 1;
       _persistTaskEvent(taskId, eventKey, event);
       return true;
     });
@@ -2589,33 +2567,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
             if (!_detailsEnabled || liveVersion != _liveVersion) return;
             final type = event['type'] as String? ?? 'unknown';
             sseCounts[type] = (sseCounts[type] ?? 0) + 1;
-            final notable =
-                type == 'tool_updated' ||
-                type == 'completed' ||
-                type == 'failed' ||
-                type == 'cancelled' ||
-                type == 'started';
-            if (notable) {
-              _logChatDiag(
-                'sse_event',
-                taskId: taskId,
-                data: {
-                  'type': type,
-                  'tool': type == 'tool_updated'
-                      ? (event['tool'] is Map
-                            ? (event['tool'] as Map)['tool']
-                            : null)
-                      : null,
-                  'status': type == 'tool_updated'
-                      ? (event['tool'] is Map
-                            ? (event['tool'] as Map)['status']
-                            : null)
-                      : null,
-                  'listen_ms': _elapsedMsSince(sseListenStartedAt),
-                },
-              );
-            }
-            logSseSummary(force: notable);
             if (firstSseEvent) {
               firstSseEvent = false;
               _updateMessage(activeAgentMessageId(), (m) {
@@ -3486,13 +3437,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           },
           onError: (e) {
             if (!_detailsEnabled || liveVersion != _liveVersion) return;
-            debugPrint('[Chat] SSE error: $e');
-            logSseSummary(force: true);
-            _logChatDiag(
-              'sse_error',
-              taskId: taskId,
-              data: {'error': e.toString()},
-            );
+            logSseSummary('中断');
             _logChatLatency(
               'sse_error',
               taskId: taskId,
@@ -3510,16 +3455,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           },
           onDone: () {
             if (!_detailsEnabled || liveVersion != _liveVersion) return;
-            debugPrint('[Chat] SSE stream done');
-            logSseSummary(force: true);
-            _logChatDiag(
-              'sse_done',
-              taskId: taskId,
-              data: {
-                'has_first_text_delta': firstTextDeltaLogged,
-                'persisted': persistedCount,
-              },
-            );
+            logSseSummary('结束');
             _logChatLatency(
               'sse_done',
               taskId: taskId,
@@ -3784,14 +3720,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         return const TaskEventSnapshot();
       }
       final snapshot = _repo.snapshotFromTaskEvents(taskId, events);
-      _logChatDiag(
-        'history_local_loaded',
-        taskId: taskId,
-        data: {
-          'events': events.length,
-          'order': _blockOrderSummary(snapshot.blocks),
-        },
-      );
       return snapshot;
     } catch (error) {
       _logChatDiag(
@@ -3829,15 +3757,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
       server.toolCalls.isNotEmpty
           ? server.toolCalls
           : _toolsFromBlocks(server.blocks),
-    );
-    _logChatDiag(
-      'history_order',
-      taskId: taskId,
-      data: {
-        'used': used,
-        'local': _blockOrderSummary(local.blocks),
-        'server': _blockOrderSummary(server.blocks),
-      },
     );
     final preferServerText = used == 'server' && server.text.isNotEmpty;
     return TaskEventSnapshot(
@@ -4080,7 +3999,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
   }) async {
     final owners = {for (final id in taskIds) id: _lastTaskReply(id)};
     final startedAt = DateTime.now();
-    _logChatDiag('history_hydrate_start', data: {'tasks': taskIds.length});
     final snapshots = await Future.wait(
       taskIds.map((taskId) async {
         try {
@@ -4167,10 +4085,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
           detail: '已保留实时回复，历史详情可重试',
         );
       }
-      _logChatDiag(
-        'history_hydrate_end',
-        data: {'tasks': 0, 'elapsed_ms': _elapsedMsSince(startedAt)},
-      );
       return;
     }
     _snapshotRetryKeys.clear();
@@ -4359,13 +4273,6 @@ class ChatNotifier extends StateNotifier<ChatState> {
         'tasks': snapshotMap.length,
         'changed': changed,
         'elapsed_ms': _elapsedMsSince(startedAt),
-        'orders': {
-          for (final message in msgs)
-            if (message.role == MessageRole.agent &&
-                message.taskId != null &&
-                snapshotMap.containsKey(message.taskId))
-              message.taskId!: _blockOrderSummary(message.blocks),
-        },
       },
     );
   }
