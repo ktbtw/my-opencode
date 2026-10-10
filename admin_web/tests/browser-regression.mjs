@@ -16,6 +16,7 @@ function ready(){run('wait','--fn','!document.querySelector("#appView").classLis
 async function control(value){const response=await fetch(base+'/_fixture/control',{method:'POST',body:JSON.stringify(value)});assert.equal(response.status,200);}
 async function login(){run('fill','#loginUsername','admin');run('fill','#loginPassword','fixture-password');run('click','#loginButton');ready();}
 try{
+ run('set','viewport','1440','960');
  run('open',base+'/');
  run('click','#loginButton');
  check('!document.querySelector("#loginError").classList.contains("hidden")','empty credentials show inline validation');
@@ -29,21 +30,30 @@ try{
  run('fill','#searchInput','no-matching-fixture');
  check('!document.querySelector("#emptyState").classList.contains("hidden") && document.querySelectorAll("#grid article").length===0','search shows contextual empty state');
  run('click','#emptyResetButton');
- run('click','#statusFilterGroup .custom-select-trigger');run('click','#statusFilterGroup [data-select-value=disabled]');
+ run('wait','--fn','document.querySelector("#searchInput").value==="" && document.querySelectorAll("#grid article").length===2');
+ run('click','#statusFilterGroup .custom-select-trigger');
+ run('wait','--fn','document.querySelector("#statusFilterGroup .custom-select").classList.contains("open")');
+ run('click','#statusFilterGroup [data-select-value=disabled]');
+ run('wait','--fn','document.querySelector("#statusFilter").value==="disabled"');
  check('document.querySelectorAll("#grid article").length===1','status filtering works');
- run('click','#clearFiltersButton');run('click','#listViewButton');run('reload');ready();
+ run('click','#clearFiltersButton');
+ run('wait','--fn','document.querySelector("#statusFilter").value==="all"');
+ run('click','#listViewButton');run('reload');ready();
  check('document.querySelector("#grid").classList.contains("list-mode") && document.querySelector("#listViewButton").getAttribute("aria-pressed")==="true"','list display mode survives reload');
  run('press','Control+k');run('fill','#commandInput','Skill');run('press','Enter');ready();
  check('document.querySelector("#topbarTitle").textContent==="Skill 库" && document.querySelectorAll("#grid article").length===1','command search and keyboard navigation work');
- for(const [view,title] of [['tools','工具库'],['semantic','语义 Agent'],['runtime','运行时环境'],['environment','环境变量预设'],['operators','会员管理']]){
-  run('click',`a[data-view=${view}]`);ready();
+ for(const [view,title] of [['tools','工具库'],['semantic','语义 Agent'],['runtime','运行时环境'],['environment','环境变量预设'],['modelPrompts','模型提示词预设'],['operators','会员管理']]){
+  run('scrollintoview',`a[data-view=${view}]`);run('click',`a[data-view=${view}]`);ready();
   check(`document.querySelector('#topbarTitle').textContent===${JSON.stringify(title)} && document.querySelectorAll('#grid article').length>0`,`${title} renders successfully`);
  }
  check('document.querySelector("#newButton").classList.contains("hidden") && document.querySelector("#statusFilterGroup").classList.contains("hidden")','membership view hides irrelevant resource controls');
- for(const view of ['skills','semantic','runtime','environment','tools']){
-  run('click',`a[data-view=${view}]`);ready();run('click','#grid [data-action=edit]');
+ for(const view of ['skills','semantic','runtime','environment','modelPrompts','tools']){
+  run('scrollintoview',`a[data-view=${view}]`);run('click',`a[data-view=${view}]`);ready();run('click','#grid [data-action=edit]');
   run('wait','--fn','!document.querySelector("#drawerOverlay").classList.contains("hidden")');
   check('document.querySelector("#appView").inert && document.querySelector("#drawerOverlay input:focus")!==null',`${view} editor opens with keyboard focus`);
+  if(view==='modelPrompts'){
+   check('document.querySelector("#modelPromptFieldPrompt")!==null && [...document.querySelectorAll(".form-section")].filter(s=>!s.classList.contains("hidden")).length===1','model prompt editor shows only its own section');
+  }
   run('press','Escape');
  }
  run('click','a[data-view=mcpCatalog]');ready();run('click','#grid [data-id=fixture-a][data-action=edit]');
@@ -67,6 +77,23 @@ try{
  run('click','#grid [data-id=fixture-created][data-action=delete]');run('click','#confirmOk');
  run('wait','--fn','document.querySelectorAll("#grid article").length===2');
  check('document.querySelectorAll("#grid article").length===2','confirmed deletion refreshes the resource list');
+ run('scrollintoview','a[data-view=modelPrompts]');run('click','a[data-view=modelPrompts]');ready();
+ run('click','#newButton');run('fill','#modelPromptFieldId','fixture-deepseek');run('fill','#modelPromptFieldName','DeepSeek 预设');run('fill','#modelPromptFieldPattern','deepseek');run('fill','#modelPromptFieldPrompt','面向 DeepSeek 的提示词。');
+ run('click','#saveButton');
+ run('wait','--fn','document.querySelector("#drawerOverlay").classList.contains("hidden") && document.querySelectorAll("#grid article").length===2');
+ check('document.querySelector("#grid").textContent.includes("DeepSeek 预设")','model prompt preset creation persists');
+ run('click','#grid [data-id=fixture-deepseek][data-action=toggle]');
+ run('wait','--fn','document.querySelector("#grid [data-id=fixture-deepseek][data-action=toggle]").textContent.trim()==="启用"');
+ check('document.querySelector("#grid").textContent.includes("DeepSeek 预设")','disabling a model prompt preset keeps its other fields');
+ run('click','#grid [data-id=fixture-deepseek][data-action=delete]');run('click','#confirmOk');
+ run('wait','--fn','document.querySelectorAll("#grid article").length===1');
+ check('document.querySelectorAll("#grid article").length===1 && !document.querySelector("#grid").textContent.includes("DeepSeek 预设")','confirmed deletion removes the model prompt preset');
+ run('click','#newButton');run('fill','#modelPromptFieldId','fixture-invalid');run('fill','#modelPromptFieldPrompt','缺少匹配规则');run('click','#saveButton');
+ run('wait','--fn','document.querySelector("#toast").textContent.includes("供应商与模型名至少填写一项")');
+ check('!document.querySelector("#drawerOverlay").classList.contains("hidden")','model prompt preset rejects a missing match rule');
+ run('press','Escape');run('press','Escape');run('press','Escape');run('click','#confirmOk');
+ check('document.querySelector("#drawerOverlay").classList.contains("hidden") && !document.querySelector("#appView").inert','discarding the invalid model prompt draft closes the editor');
+ run('scrollintoview','a[data-view=mcpCatalog]');run('click','a[data-view=mcpCatalog]');ready();
  await control({fail:'mcp-catalog'});run('click','#refreshButton');
  run('wait','--fn','!document.querySelector("#loadError").classList.contains("hidden")');
  check('!document.querySelector("#appView").classList.contains("hidden") && document.querySelector("#emptyState").classList.contains("hidden")','network failure is not mistaken for logout or empty data');

@@ -8,6 +8,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'multipart_test_support.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -25,10 +27,12 @@ void main() {
       final requests = <_CapturedRequest>[];
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sub = server.listen((request) async {
-        final bodyText = await utf8.decoder.bind(request).join();
-        final body = bodyText.isEmpty
-            ? <String, dynamic>{}
-            : jsonDecode(bodyText) as Map<String, dynamic>;
+        final raw = await collectRequestBytes(request);
+        final captured = parseRequestBody(
+          request.headers.contentType?.toString() ?? '',
+          raw,
+        );
+        final body = captured.fields;
         requests.add(
           _CapturedRequest(
             path: request.uri.path,
@@ -36,6 +40,7 @@ void main() {
               HttpHeaders.authorizationHeader,
             ),
             body: body,
+            rawChunk: captured.chunk,
           ),
         );
         request.response.headers.contentType = ContentType.json;
@@ -51,8 +56,10 @@ void main() {
             }),
           );
         } else {
-          final offset = body['offset'] as int;
-          final length = body['length'] as int;
+          // 下载仍走 JSON（数值就是数值）；上传已改 multipart（字段是字符串）。
+          // 这里两者都要兼容。
+          final offset = _asInt(body['offset']);
+          final length = _asInt(body['length']);
           final chunk = source.sublist(
             offset,
             (offset + length).clamp(0, source.length),
@@ -116,7 +123,7 @@ void main() {
               .toList()
             ..sort(
               (a, b) =>
-                  (a['chunk_index'] as int).compareTo(b['chunk_index'] as int),
+                  _asInt(a['chunk_index']).compareTo(_asInt(b['chunk_index'])),
             );
       expect(chunks.map((e) => e['offset']), [0, 2, 4]);
       expect(chunks.map((e) => e['length']), [2, 2, 1]);
@@ -138,8 +145,11 @@ void main() {
       final requests = <_CapturedRequest>[];
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sub = server.listen((request) async {
-        final bodyText = await utf8.decoder.bind(request).join();
-        final body = jsonDecode(bodyText) as Map<String, dynamic>;
+        final captured = parseRequestBody(
+          request.headers.contentType?.toString() ?? '',
+          await collectRequestBytes(request),
+        );
+        final body = captured.fields;
         requests.add(
           _CapturedRequest(
             path: request.uri.path,
@@ -147,6 +157,7 @@ void main() {
               HttpHeaders.authorizationHeader,
             ),
             body: body,
+            rawChunk: captured.chunk,
           ),
         );
         request.response.headers.contentType = ContentType.json;
@@ -204,24 +215,25 @@ void main() {
       expect(create['total_chunks'], 3);
       expect(create['sha256'], sha256.convert(bytes).toString());
 
-      final chunks =
-          requests
-              .where((e) => e.path.endsWith('/chunk'))
-              .map((e) => e.body)
-              .toList()
-            ..sort(
-              (a, b) =>
-                  (a['chunk_index'] as int).compareTo(b['chunk_index'] as int),
-            );
-      expect(chunks.map((e) => e['offset']), [0, 2, 4]);
+      final chunkRequests = requests
+          .where((e) => e.path.endsWith('/chunk'))
+          .toList()
+        ..sort(
+          (a, b) =>
+              _asInt(a.body['chunk_index']).compareTo(_asInt(b.body['chunk_index'])),
+        );
+      // 分块以 multipart 原始字节提交，不再是 base64 字段。
+      expect(chunkRequests.map((e) => e.body['offset']), ['0', '2', '4']);
       expect(
-        chunks.map((e) => utf8.decode(base64Decode(e['content'] as String))),
+        chunkRequests.map((e) => utf8.decode(e.rawChunk!)),
         ['he', 'll', 'o'],
       );
-      expect(chunks.map((e) => e['encoding']).toSet(), {'base64'});
-      for (final chunk in chunks) {
-        final decoded = base64Decode(chunk['content'] as String);
-        expect(chunk['sha256'], sha256.convert(decoded).toString());
+      expect(chunkRequests.map((e) => e.body['encoding']).toSet(), {'binary'});
+      for (final chunk in chunkRequests) {
+        expect(
+          chunk.body['sha256'],
+          sha256.convert(chunk.rawChunk!).toString(),
+        );
       }
 
       final complete = requests.last.body;
@@ -266,8 +278,11 @@ void main() {
       final requests = <_CapturedRequest>[];
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sub = server.listen((request) async {
-        final bodyText = await utf8.decoder.bind(request).join();
-        final body = jsonDecode(bodyText) as Map<String, dynamic>;
+        final captured = parseRequestBody(
+          request.headers.contentType?.toString() ?? '',
+          await collectRequestBytes(request),
+        );
+        final body = captured.fields;
         requests.add(
           _CapturedRequest(
             path: request.uri.path,
@@ -275,6 +290,7 @@ void main() {
               HttpHeaders.authorizationHeader,
             ),
             body: body,
+            rawChunk: captured.chunk,
           ),
         );
         request.response.headers.contentType = ContentType.json;
@@ -331,23 +347,24 @@ void main() {
       expect(create['total_chunks'], 3);
       expect(create.containsKey('sha256'), isFalse);
 
-      final chunks =
-          requests
-              .where((e) => e.path.endsWith('/chunk'))
-              .map((e) => e.body)
-              .toList()
-            ..sort(
-              (a, b) =>
-                  (a['chunk_index'] as int).compareTo(b['chunk_index'] as int),
-            );
-      expect(chunks.map((e) => e['offset']), [0, 2, 4]);
+      final chunkRequests = requests
+          .where((e) => e.path.endsWith('/chunk'))
+          .toList()
+        ..sort(
+          (a, b) =>
+              _asInt(a.body['chunk_index']).compareTo(_asInt(b.body['chunk_index'])),
+        );
+      expect(chunkRequests.map((e) => e.body['offset']), ['0', '2', '4']);
+      // 分块以 multipart 原始字节提交，不再是 base64 字段。
       expect(
-        chunks.map((e) => utf8.decode(base64Decode(e['content'] as String))),
+        chunkRequests.map((e) => utf8.decode(e.rawChunk!)),
         ['he', 'll', 'o'],
       );
-      for (final chunk in chunks) {
-        final decoded = base64Decode(chunk['content'] as String);
-        expect(chunk['sha256'], sha256.convert(decoded).toString());
+      for (final chunk in chunkRequests) {
+        expect(
+          chunk.body['sha256'],
+          sha256.convert(chunk.rawChunk!).toString(),
+        );
       }
 
       final complete = requests.last.body;
@@ -375,8 +392,10 @@ void main() {
     String? seenUploadId;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final sub = server.listen((request) async {
-      final bodyText = await utf8.decoder.bind(request).join();
-      final body = jsonDecode(bodyText) as Map<String, dynamic>;
+      final body = parseRequestBody(
+        request.headers.contentType?.toString() ?? '',
+        await collectRequestBytes(request),
+      ).fields;
       requests.add(
         _CapturedRequest(
           path: request.uri.path,
@@ -398,7 +417,7 @@ void main() {
           }),
         );
       } else if (path.endsWith('/upload/create')) {
-        seenUploadId ??= body['upload_id'] as String;
+        seenUploadId ??= '${body['upload_id']}';
         request.response.write(
           jsonEncode({
             'file': {'path': body['path'], 'name': 'hello.txt', 'size': 5},
@@ -447,9 +466,9 @@ void main() {
     expect(create.body['upload_id'], firstId);
     expect(create.body['resume'], isTrue);
     final chunks = requests.where((e) => e.path.endsWith('/chunk')).toList();
-    expect(chunks.map((e) => e.body['chunk_index']), [1, 2]);
+    expect(chunks.map((e) => e.body['chunk_index']), ['1', '2']);
     // 分块请求必须带上会话大小，否则设备侧清单里的 size 会变成 0。
-    expect(chunks.every((e) => e.body['size'] == source.length), isTrue);
+    expect(chunks.every((e) => _asInt(e.body['size']) == source.length), isTrue);
 
     // 上传成功后要清掉续传记录，下一次是全新会话。
     requests.clear();
@@ -472,10 +491,12 @@ void main() {
       final requests = <_CapturedRequest>[];
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final sub = server.listen((request) async {
-        final bodyText = await utf8.decoder.bind(request).join();
-        final body = bodyText.isEmpty
-            ? <String, dynamic>{}
-            : jsonDecode(bodyText) as Map<String, dynamic>;
+        final raw = await collectRequestBytes(request);
+        final captured = parseRequestBody(
+          request.headers.contentType?.toString() ?? '',
+          raw,
+        );
+        final body = captured.fields;
         requests.add(
           _CapturedRequest(
             path: request.uri.path,
@@ -483,6 +504,7 @@ void main() {
               HttpHeaders.authorizationHeader,
             ),
             body: body,
+            rawChunk: captured.chunk,
           ),
         );
         request.response.headers.contentType = ContentType.json;
@@ -533,10 +555,20 @@ class _CapturedRequest {
   final String path;
   final String? authorization;
   final Map<String, dynamic> body;
+  /// multipart 分块请求携带的原始字节；JSON 请求为 null。
+  final List<int>? rawChunk;
 
   const _CapturedRequest({
     required this.path,
     required this.authorization,
     required this.body,
+    this.rawChunk,
   });
+}
+
+/// 兼容 JSON（数值）与 multipart（字符串）两种字段形态。
+int _asInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.parse('$value');
 }

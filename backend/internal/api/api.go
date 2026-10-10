@@ -88,6 +88,9 @@ type API struct {
 	envConfigRequest      func(context.Context, int64, string, string, string, any) (model.DeviceEnvConfigResultPayload, error)
 	launcherRequest       func(context.Context, int64, string, string, string, any) (model.DeviceLauncherResultPayload, error)
 	directoryRequest      func(context.Context, int64, string, string, string, any) (model.DeviceDirectoriesResultPayload, error)
+	// directoryChunkRequest 是 directoryRequest 的分块增强版：
+	// 末尾参数为分块原始字节，非空时走二进制帧下发（省掉 base64 膨胀）。
+	directoryChunkRequest func(context.Context, int64, string, string, string, any, []byte) (model.DeviceDirectoriesResultPayload, error)
 	sessionHistoryRequest func(context.Context, int64, string, string, model.SessionHistoryRequestPayload) (model.SessionHistoryResultPayload, error)
 	projectMemoryEnabled  bool
 	overlayHub            *overlay.Hub
@@ -163,26 +166,70 @@ func New(
 	directoryRequest func(context.Context, int64, string, string, string, any) (model.DeviceDirectoriesResultPayload, error),
 	projectMemoryFeature ...bool,
 ) *API {
+	return newAPI(s, b, a, m, artifactFetcher, notifyService, pushService, aiConfigRequest, goalOptimizeRequest, mcpConfigRequest, envConfigRequest, launcherRequest, directoryRequest, nil, projectMemoryFeature...)
+}
+
+// newAPI 是 api.New 的内部实现，额外接受分块增强版的目录请求。
+func newAPI(
+	s *store.Memory,
+	b *broker.Broker,
+	a *auth.Manager,
+	m *mail.Mailer,
+	artifactFetcher func(context.Context, *model.Task, model.Artifact, io.Writer) error,
+	notifyService *notify.Service,
+	pushService *push.Service,
+	aiConfigRequest func(context.Context, int64, string, string, string, any) (model.DeviceAIConfigResultPayload, error),
+	goalOptimizeRequest func(context.Context, int64, string, string, string, any) (model.GoalOptimizeResultPayload, error),
+	mcpConfigRequest func(context.Context, int64, string, string, string, any) (model.DeviceMCPConfigResultPayload, error),
+	envConfigRequest func(context.Context, int64, string, string, string, any) (model.DeviceEnvConfigResultPayload, error),
+	launcherRequest func(context.Context, int64, string, string, string, any) (model.DeviceLauncherResultPayload, error),
+	directoryRequest func(context.Context, int64, string, string, string, any) (model.DeviceDirectoriesResultPayload, error),
+	directoryChunkRequest func(context.Context, int64, string, string, string, any, []byte) (model.DeviceDirectoriesResultPayload, error),
+	projectMemoryFeature ...bool,
+) *API {
 	projectMemoryEnabled := true
 	if len(projectMemoryFeature) > 0 {
 		projectMemoryEnabled = projectMemoryFeature[0]
 	}
 	return &API{
-		store:                s,
-		broker:               b,
-		auth:                 a,
-		mailer:               m,
-		notifyService:        notifyService,
-		artifactFetcher:      artifactFetcher,
-		pushService:          pushService,
-		aiConfigRequest:      aiConfigRequest,
-		goalOptimizeRequest:  goalOptimizeRequest,
-		mcpConfigRequest:     mcpConfigRequest,
-		envConfigRequest:     envConfigRequest,
-		launcherRequest:      launcherRequest,
-		directoryRequest:     directoryRequest,
-		projectMemoryEnabled: projectMemoryEnabled,
+		store:                 s,
+		broker:                b,
+		auth:                  a,
+		mailer:                m,
+		notifyService:         notifyService,
+		artifactFetcher:       artifactFetcher,
+		pushService:           pushService,
+		aiConfigRequest:       aiConfigRequest,
+		goalOptimizeRequest:   goalOptimizeRequest,
+		mcpConfigRequest:      mcpConfigRequest,
+		envConfigRequest:      envConfigRequest,
+		launcherRequest:       launcherRequest,
+		directoryRequest:      directoryRequest,
+		directoryChunkRequest: directoryChunkRequest,
+		projectMemoryEnabled:  projectMemoryEnabled,
 	}
+}
+
+// NewWithChunkRequest 构造带分块二进制能力的 API。
+// 由 app 层注入，使分块内容可以走二进制帧而不是 base64。
+func NewWithChunkRequest(
+	s *store.Memory,
+	b *broker.Broker,
+	a *auth.Manager,
+	m *mail.Mailer,
+	artifactFetcher func(context.Context, *model.Task, model.Artifact, io.Writer) error,
+	notifyService *notify.Service,
+	pushService *push.Service,
+	aiConfigRequest func(context.Context, int64, string, string, string, any) (model.DeviceAIConfigResultPayload, error),
+	goalOptimizeRequest func(context.Context, int64, string, string, string, any) (model.GoalOptimizeResultPayload, error),
+	mcpConfigRequest func(context.Context, int64, string, string, string, any) (model.DeviceMCPConfigResultPayload, error),
+	envConfigRequest func(context.Context, int64, string, string, string, any) (model.DeviceEnvConfigResultPayload, error),
+	launcherRequest func(context.Context, int64, string, string, string, any) (model.DeviceLauncherResultPayload, error),
+	directoryRequest func(context.Context, int64, string, string, string, any) (model.DeviceDirectoriesResultPayload, error),
+	directoryChunkRequest func(context.Context, int64, string, string, string, any, []byte) (model.DeviceDirectoriesResultPayload, error),
+	projectMemoryFeature ...bool,
+) *API {
+	return newAPI(s, b, a, m, artifactFetcher, notifyService, pushService, aiConfigRequest, goalOptimizeRequest, mcpConfigRequest, envConfigRequest, launcherRequest, directoryRequest, directoryChunkRequest, projectMemoryFeature...)
 }
 
 type registerPushDeviceReq struct {
@@ -3447,6 +3494,23 @@ func (a *API) requestDeviceDirectories(
 	return a.directoryRequest(ctx, operatorID, deviceID, requestID, envType, payload)
 }
 
+// requestDeviceDirectoriesWithChunk 在普通目录请求之上携带分块原始字节。
+// 注入方未提供 chunk 版本时退回普通请求，分块内容已在 payload 里（base64）。
+func (a *API) requestDeviceDirectoriesWithChunk(
+	ctx context.Context,
+	operatorID int64,
+	deviceID string,
+	requestID string,
+	envType string,
+	payload any,
+	chunk []byte,
+) (model.DeviceDirectoriesResultPayload, error) {
+	if a.directoryChunkRequest == nil {
+		return a.requestDeviceDirectories(ctx, operatorID, deviceID, requestID, envType, payload)
+	}
+	return a.directoryChunkRequest(ctx, operatorID, deviceID, requestID, envType, payload, chunk)
+}
+
 func (a *API) GetDeviceLauncherState(w http.ResponseWriter, r *http.Request) {
 	operator, ok := a.currentOperator(r)
 	if !ok {
@@ -3919,7 +3983,26 @@ func (a *API) forwardDeviceDirectoryFile(
 		SHA256      string `json:"sha256"`
 		Resume      bool   `json:"resume"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// 分块可以走 multipart 原始字节，避免 base64 的 33% 膨胀。
+	// 非 multipart 请求保持原 JSON 解析，旧客户端不受影响。
+	var rawChunk []byte
+	if isMultipart(r) {
+		form, chunk, err := parseChunkMultipart(r)
+		if err != nil {
+			write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		req.Path = form.Path
+		req.UploadID = form.UploadID
+		req.Size = form.Size
+		req.TotalChunks = form.TotalChunks
+		req.ChunkIndex = form.ChunkIndex
+		req.Offset = form.Offset
+		req.SHA256 = form.SHA256
+		req.Resume = form.Resume
+		req.Encoding = "binary"
+		rawChunk = chunk
+	} else if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		write(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
@@ -3937,7 +4020,7 @@ func (a *API) forwardDeviceDirectoryFile(
 	}
 	// 分块上传按会员等级限制单块大小，普通用户不允许超过 512KB。
 	if isChunkStep(envType) {
-		if err := a.validateUploadChunkSize(operator, req.Content); err != nil {
+		if err := a.validateUploadChunkSize(operator, req.Content, rawChunk); err != nil {
 			write(w, http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
 			return
 		}
@@ -3953,7 +4036,7 @@ func (a *API) forwardDeviceDirectoryFile(
 		return
 	}
 	requestID := fmt.Sprintf("%s_%d", requestPrefix, time.Now().UnixNano())
-	result, err := a.requestDeviceDirectories(
+	result, err := a.requestDeviceDirectoriesWithChunk(
 		r.Context(),
 		operator.ID,
 		launcherID,
@@ -3974,6 +4057,7 @@ func (a *API) forwardDeviceDirectoryFile(
 			SHA256:      req.SHA256,
 			Resume:      req.Resume,
 		},
+		rawChunk,
 	)
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
@@ -4166,18 +4250,100 @@ func isChunkStep(envType string) bool {
 		envType == "device.directory_files.upload_chunk"
 }
 
-// validateUploadChunkSize 校验 base64 内容对应的原始分块是否超过该等级的允许上限。
-// 校验在解码之前完成，避免为超限请求分配内存。
-func (a *API) validateUploadChunkSize(operator model.Operator, content string) error {
+// maxUploadChunkBytes 是单个分块允许的最大原始字节数（含 multipart 缓冲上限）。
+// 取会员上限再留 1MB 余量，超限请求由 validateUploadChunkSize 给出精确提示。
+const maxUploadChunkBytes = 17 * 1024 * 1024
+
+// isMultipart 判断请求体是否为 multipart（分块二进制上传）。
+func isMultipart(r *http.Request) bool {
+	return strings.HasPrefix(
+		strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))),
+		"multipart/form-data",
+	)
+}
+
+// chunkMultipartForm 是 multipart 分块请求的元数据字段。
+type chunkMultipartForm struct {
+	Path        string
+	UploadID    string
+	Size        int64
+	TotalChunks int
+	ChunkIndex  int
+	Offset      int64
+	Length      int64
+	SHA256      string
+	Resume      bool
+}
+
+// parseChunkMultipart 解析 multipart 分块请求：元数据走表单字段，
+// 分块内容走名为 chunk 的文件部分，原样读取不做 base64 编解码。
+func parseChunkMultipart(r *http.Request) (chunkMultipartForm, []byte, error) {
+	var form chunkMultipartForm
+	if err := r.ParseMultipartForm(maxUploadChunkBytes); err != nil {
+		return form, nil, fmt.Errorf("解析 multipart 失败: %w", err)
+	}
+	values := r.MultipartForm.Value
+	pick := func(key string) string {
+		if list := values[key]; len(list) > 0 {
+			return strings.TrimSpace(list[0])
+		}
+		return ""
+	}
+	form.Path = pick("path")
+	form.UploadID = pick("upload_id")
+	form.SHA256 = pick("sha256")
+	form.Size, _ = strconv.ParseInt(pick("size"), 10, 64)
+	form.Offset, _ = strconv.ParseInt(pick("offset"), 10, 64)
+	form.Length, _ = strconv.ParseInt(pick("length"), 10, 64)
+	chunkIndex, _ := strconv.Atoi(pick("chunk_index"))
+	totalChunks, _ := strconv.Atoi(pick("total_chunks"))
+	form.ChunkIndex = chunkIndex
+	form.TotalChunks = totalChunks
+	form.Resume = pick("resume") == "true"
+
+	files := r.MultipartForm.File["chunk"]
+	if len(files) == 0 {
+		return form, nil, errors.New("缺少 chunk 分块内容")
+	}
+	file, err := files[0].Open()
+	if err != nil {
+		return form, nil, fmt.Errorf("读取分块失败: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxUploadChunkBytes+1))
+	if err != nil {
+		return form, nil, fmt.Errorf("读取分块内容失败: %w", err)
+	}
+	if int64(len(data)) > maxUploadChunkBytes {
+		return form, nil, errors.New("分块超过允许上限")
+	}
+	return form, data, nil
+}
+
+// validateUploadChunkSize 校验分块是否超过该等级的允许上限。
+//
+// 两种形态统一在这里判定：base64 文本按解码后大小估算（避免先解码再分配内存），
+// 二进制直接按字节长度。上限判定只看「有效载荷」，与传输编码无关。
+func (a *API) validateUploadChunkSize(operator model.Operator, content string, raw []byte) error {
 	policy := a.uploadPolicyForOperator(operator)
+	if len(raw) > 0 {
+		if int64(len(raw)) > policy.MaxChunkSize {
+			return chunkTooLargeError(policy)
+		}
+		return nil
+	}
 	maxContentLen := model.MaxBase64ContentLen(policy.MaxChunkSize)
 	if int64(len(content)) > maxContentLen {
-		if policy.IsMember {
-			return fmt.Errorf("分块超过会员上限 %d MB", policy.MaxChunkSize/1024/1024)
-		}
-		return fmt.Errorf("普通用户单个分块不能超过 %d KB，升级会员可使用更大分块", policy.MaxChunkSize/1024)
+		return chunkTooLargeError(policy)
 	}
 	return nil
+}
+
+func chunkTooLargeError(policy model.UploadPolicy) error {
+	if policy.IsMember {
+		return fmt.Errorf("分块超过会员上限 %d MB", policy.MaxChunkSize/1024/1024)
+	}
+	return fmt.Errorf("普通用户单个分块不能超过 %d KB，升级会员可使用更大分块", policy.MaxChunkSize/1024)
 }
 
 func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.Request, envType string, requestPrefix string, requireUploadID bool) {
@@ -4205,7 +4371,27 @@ func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.
 		SHA256      string `json:"sha256"`
 		Resume      bool   `json:"resume"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// 分块可以走 multipart 原始字节，避免 base64 的 33% 膨胀。
+	// 非 multipart 请求保持原 JSON 解析，旧客户端不受影响。
+	var rawChunk []byte
+	if isMultipart(r) {
+		form, chunk, err := parseChunkMultipart(r)
+		if err != nil {
+			write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		req.Path = form.Path
+		req.UploadID = form.UploadID
+		req.Size = form.Size
+		req.TotalChunks = form.TotalChunks
+		req.ChunkIndex = form.ChunkIndex
+		req.Offset = form.Offset
+		req.Length = form.Length
+		req.SHA256 = form.SHA256
+		req.Resume = form.Resume
+		req.Encoding = "binary"
+		rawChunk = chunk
+	} else if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		write(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
@@ -4222,7 +4408,7 @@ func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.
 	}
 	// 分块上传按会员等级限制单块大小，普通用户不允许超过 512KB。
 	if isChunkStep(envType) {
-		if err := a.validateUploadChunkSize(operator, req.Content); err != nil {
+		if err := a.validateUploadChunkSize(operator, req.Content, rawChunk); err != nil {
 			write(w, http.StatusRequestEntityTooLarge, map[string]string{"error": err.Error()})
 			return
 		}
@@ -4233,7 +4419,7 @@ func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.
 		return
 	}
 	requestID := fmt.Sprintf("%s_%d", requestPrefix, time.Now().UnixNano())
-	result, err := a.requestDeviceDirectories(r.Context(), operator.ID, launcherID, requestID, envType, model.DeviceProjectFilesPayload{
+	result, err := a.requestDeviceDirectoriesWithChunk(r.Context(), operator.ID, launcherID, requestID, envType, model.DeviceProjectFilesPayload{
 		MachineID:   machineID,
 		AgentID:     agentID,
 		Path:        req.Path,
@@ -4247,7 +4433,7 @@ func (a *API) forwardDeviceAgentFileTransferStep(w http.ResponseWriter, r *http.
 		Length:      req.Length,
 		SHA256:      req.SHA256,
 		Resume:      req.Resume,
-	})
+	}, rawChunk)
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return

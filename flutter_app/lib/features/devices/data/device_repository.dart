@@ -20,6 +20,7 @@ import 'device_storage_model.dart';
 import 'device_semantic_agent_model.dart';
 import 'device_skill_model.dart';
 import 'upload_policy.dart';
+import 'upload_diag.dart';
 import 'upload_resume_store.dart';
 
 typedef DeviceUploadProgressCallback =
@@ -992,16 +993,20 @@ class DeviceRepository {
         final end = min(start + chunkSize, totalBytes);
         final chunk = bytes.sublist(start, end);
         final chunkHash = sha256.convert(chunk).toString();
-        await ApiClient.post('$basePath/chunk', {
-          'path': path,
-          'upload_id': actualUploadId,
-          'chunk_index': chunkIndex,
-          'total_chunks': totalChunks,
-          'offset': start,
-          'content': base64Encode(chunk),
-          'encoding': 'base64',
-          'sha256': chunkHash,
-        });
+        // 分块以 multipart 二进制提交，省掉 base64 的 33% 膨胀。
+        await ApiClient.postChunkMultipart(
+          '$basePath/chunk',
+          fields: {
+            'path': path,
+            'upload_id': actualUploadId,
+            'chunk_index': '$chunkIndex',
+            'total_chunks': '$totalChunks',
+            'offset': '$start',
+            'encoding': 'binary',
+            'sha256': chunkHash,
+          },
+          chunk: chunk,
+        );
         uploaded[chunkIndex] = chunk.length;
         completedChunks += 1;
         progress(
@@ -1182,19 +1187,32 @@ class DeviceRepository {
 
   /// 上传单个分块，失败时按指数退避重试。
   /// 分块写入使用固定 offset，重试同一分块是幂等的。
+  ///
+  /// 分块以 multipart 二进制提交，不再做 base64 编码：
+  /// 这一步省掉客户端到后端链路上 33% 的传输量。
   Future<void> _postChunkWithRetry({
     required String url,
-    required Map<String, dynamic> body,
+    required Map<String, String> fields,
+    required Uint8List chunk,
     required Duration timeout,
+    void Function(int attempt, Object error)? onRetry,
   }) async {
     Object? lastError;
     for (var attempt = 0; attempt < _chunkMaxAttempts; attempt++) {
       try {
-        await ApiClient.post(url, body, timeout: timeout);
+        await ApiClient.postChunkMultipart(
+          url,
+          fields: fields,
+          chunk: chunk,
+          timeout: timeout,
+        );
         return;
       } catch (error) {
         lastError = error;
         if (attempt == _chunkMaxAttempts - 1) break;
+        // 重试次数是判断「链路抖动」还是「设备端排队」的关键信号：
+        // 若重试集中在锁竞争激烈时，说明重试又排在设备锁后面，越试越糟。
+        onRetry?.call(attempt + 1, error);
         // 退避 1s、2s、4s，避免在链路抖动时持续打满上行。
         await Future<void>.delayed(Duration(seconds: 1 << attempt));
       }
@@ -1249,6 +1267,10 @@ class DeviceRepository {
     final digestInput = sha256.startChunkedConversion(digestSink);
     var uploadedBytes = 0;
     var completedChunks = 0;
+    // 诊断用：记录每个分块的往返耗时，供整体统计与瓶颈判定。
+    final chunkDurationsMs = <int>[];
+    var chunkRetries = 0;
+    final uploadStartedAt = DateTime.now();
 
     void progress({
       required int uploadedBytes,
@@ -1331,22 +1353,66 @@ class DeviceRepository {
         );
         return;
       }
-      await _postChunkWithRetry(
-        url: chunkUrl,
-        body: {
-          'path': path,
-          'upload_id': actualUploadId,
-          // 设备侧把它写进续传清单，缺失会让清单里的 size 变成 0，
-          // 而续传校验要求清单 size 与本次一致，续传就会被判为过期重建。
-          'size': totalBytes,
-          'chunk_index': chunkIndex,
-          'total_chunks': totalChunks,
-          'offset': chunkIndex * effectiveChunkSize,
-          'content': base64Encode(chunk),
-          'encoding': 'base64',
-          'sha256': sha256.convert(chunk).toString(),
-        },
-        timeout: chunkTimeout,
+      // 记录起止时间戳：并发是否真正重叠，只能靠区间比对判断，
+      // 单看总耗时分不清「并发被串行化」和「链路本身慢」。
+      final chunkStartedAt = DateTime.now();
+      final chunkBody = <String, String>{
+        'path': path,
+        'upload_id': actualUploadId,
+        // 设备侧把它写进续传清单，缺失会让清单里的 size 变成 0，
+        // 而续传校验要求清单 size 与本次一致，续传就会被判为过期重建。
+        'size': '$totalBytes',
+        'chunk_index': '$chunkIndex',
+        'total_chunks': '$totalChunks',
+        'offset': '${chunkIndex * effectiveChunkSize}',
+        'encoding': 'binary',
+        'sha256': sha256.convert(chunk).toString(),
+      };
+      try {
+        await _postChunkWithRetry(
+          url: chunkUrl,
+          fields: chunkBody,
+          chunk: chunk,
+          timeout: chunkTimeout,
+          onRetry: (attempt, error) {
+            chunkRetries += 1;
+            UploadDiag.chunk(
+              uploadId: actualUploadId,
+              chunkIndex: chunkIndex,
+              payloadBytes: chunk.length,
+              decodedBytes: chunk.length,
+              startedAt: chunkStartedAt,
+              endedAt: DateTime.now(),
+              attempt: attempt,
+              error: error.toString(),
+            );
+          },
+        );
+      } catch (error) {
+        UploadDiag.chunk(
+          uploadId: actualUploadId,
+          chunkIndex: chunkIndex,
+          payloadBytes: chunk.length,
+          decodedBytes: chunk.length,
+          startedAt: chunkStartedAt,
+          endedAt: DateTime.now(),
+          attempt: _chunkMaxAttempts,
+          error: error.toString(),
+        );
+        rethrow;
+      }
+      final chunkEndedAt = DateTime.now();
+      chunkDurationsMs.add(
+        chunkEndedAt.difference(chunkStartedAt).inMilliseconds,
+      );
+      UploadDiag.chunk(
+        uploadId: actualUploadId,
+        chunkIndex: chunkIndex,
+        payloadBytes: chunk.length,
+        decodedBytes: chunk.length,
+        startedAt: chunkStartedAt,
+        endedAt: chunkEndedAt,
+        attempt: 1,
       );
       uploadedBytes += chunk.length;
       completedChunks += 1;
@@ -1364,17 +1430,34 @@ class DeviceRepository {
       stage: '上传分块',
     );
     var pending = <int>[];
-    // 窗口内并发上传，内存占用上限约为 concurrency * chunkSize。
-    var window = <(int, Uint8List)>[];
+    // 真滑动窗口：任意一块完成就立刻补一块新的，保持 concurrency 条通道始终满载。
+    // 旧实现用「攒满一批 → 等整批完成」，批内最快与最慢的分块差多少就空转多少，
+    // 实测 73.8MB 上传因此多花约 40% 时间。
+    // 内存占用上限仍为 concurrency * chunkSize（在途块数不超过 concurrency）。
+    final inFlight = <Future<void>>{};
+    // 首个错误必须留存：失败的分块会立刻从 inFlight 移除，
+    // 若只依赖最后的 Future.wait，错误会被漏掉而让上传「假装成功」。
+    Object? firstError;
+    StackTrace? firstStack;
     var nextIndex = 0;
 
-    Future<void> flushWindow() async {
-      if (window.isEmpty) return;
-      final batch = window;
-      window = [];
-      await Future.wait(
-        batch.map((item) => uploadChunk(item.$1, item.$2)),
-      );
+    Future<void> awaitOneSlot() async {
+      if (inFlight.length < effectiveConcurrency) return;
+      // 等任意一块完成即可释放一个通道，而不是等整批。
+      await Future.any(inFlight);
+      // 被等待的那块若失败，此处抛出，避免错误只停留在闭包里。
+      if (firstError != null) throw firstError!;
+    }
+
+    void submit(int index, Uint8List chunk) {
+      late final Future<void> task;
+      task = uploadChunk(index, chunk)
+          .then<void>((_) {}, onError: (Object error, StackTrace stack) {
+            firstError ??= error;
+            firstStack ??= stack;
+          })
+          .whenComplete(() => inFlight.remove(task));
+      inFlight.add(task);
     }
 
     await for (final data in openRead()) {
@@ -1387,25 +1470,28 @@ class DeviceRepository {
         pending = pending.sublist(effectiveChunkSize);
         // 摘要按读取顺序计算，与上传并发无关。
         digestInput.add(chunk);
-        window.add((nextIndex, chunk));
+        await awaitOneSlot();
+        submit(nextIndex, chunk);
         nextIndex += 1;
-        if (window.length >= effectiveConcurrency) {
-          await flushWindow();
-        }
       }
     }
     if (pending.isNotEmpty) {
       final chunk = Uint8List.fromList(pending);
       digestInput.add(chunk);
-      window.add((nextIndex, chunk));
+      await awaitOneSlot();
+      submit(nextIndex, chunk);
       nextIndex += 1;
     } else if (totalBytes == 0 && nextIndex == 0) {
       final chunk = Uint8List(0);
       digestInput.add(chunk);
-      window.add((0, chunk));
+      submit(0, chunk);
       nextIndex += 1;
     }
-    await flushWindow();
+    // 排空所有在途分块；任何一块失败都在这里抛出。
+    await Future.wait(inFlight.toList());
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStack ?? StackTrace.current);
+    }
     digestInput.close();
 
     if (uploadedBytes != totalBytes) {
@@ -1440,6 +1526,17 @@ class DeviceRepository {
     // 会话已经发布到目标目录，设备侧临时目录会被删掉，清掉续传记录，
     // 避免下次上传同一个文件时去查询一个已经不存在的会话。
     await UploadResumeStore.clear(resumeKey);
+    UploadDiag.summary(
+      uploadId: actualUploadId,
+      totalBytes: totalBytes,
+      totalChunks: totalChunks,
+      chunkSize: effectiveChunkSize,
+      concurrency: effectiveConcurrency,
+      startedAt: uploadStartedAt,
+      endedAt: DateTime.now(),
+      chunkDurationsMs: chunkDurationsMs,
+      retries: chunkRetries,
+    );
     final file = (data['file'] as Map<String, dynamic>?) ?? data;
     return DeviceProjectFile.fromJson(file);
   }

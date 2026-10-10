@@ -1,0 +1,1221 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>暗房 · 独立生图界面</title>
+<style>
+/* ============================================================
+   暗房 —— 独立生图界面
+   深暖黑房间，唯一光源是琥珀安全灯，图片是画面里唯一发光的东西
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* 房间 */
+  --room:      #12100D;
+  --room-2:    #17140F;
+  --tray:      #1C1813;
+  --tray-2:    #221D16;
+  --tray-3:    #292319;
+
+  /* 边缘 —— 暖调，不是中性灰 */
+  --edge:      #2E2721;
+  --edge-2:    #3D342A;
+
+  /* 安全灯 */
+  --safelight:      #E8A33D;
+  --safelight-hi:   #F5C070;
+  --safelight-dim:  #8A6430;
+  --safelight-glow: rgba(232,163,61,.14);
+
+  /* 纸与墨 */
+  --paper:     #EFE7DA;
+  --ink:       #E6DED1;
+  --ink-2:     #A79C8C;
+  --ink-3:     #6E6558;
+
+  /* 蜡笔标记 */
+  --grease:    #D9563C;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  background: #0A0908;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 52px 32px 96px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1240px; margin: 0 auto; }
+
+/* ============================================================
+   页头
+   ============================================================ */
+.page-head { margin-bottom: 40px; max-width: 700px; }
+.page-head .eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--safelight-dim);
+  margin-bottom: 14px;
+}
+.page-head h1 {
+  font-size: 29px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.28;
+  margin-bottom: 14px;
+  color: #F2ECE2;
+}
+.page-head p { color: var(--ink-3); font-size: 13.5px; line-height: 1.75; }
+.page-head p b { color: var(--ink-2); font-weight: 500; }
+
+/* ============================================================
+   房间 —— 安全灯是唯一光源
+   ============================================================ */
+.room {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  background:
+    radial-gradient(ellipse 70% 55% at 4% -8%, var(--safelight-glow), transparent 62%),
+    radial-gradient(ellipse 50% 40% at 96% 108%, rgba(232,163,61,.05), transparent 60%),
+    linear-gradient(168deg, var(--room-2) 0%, var(--room) 55%, #0E0C0A 100%);
+  box-shadow: 0 40px 90px -30px #000;
+}
+
+/* 颗粒 —— 整个房间覆一层胶片颗粒 */
+.room::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+}
+
+/* ---------- 顶栏 ---------- */
+.st-head {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--edge);
+  position: relative;
+  z-index: 2;
+}
+
+.aperture {
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  flex: 0 0 auto;
+  color: var(--safelight);
+}
+
+.st-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: #F2ECE2;
+  flex: 0 0 auto;
+}
+
+.st-sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: .02em;
+  flex: 0 0 auto;
+}
+
+.st-dot {
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: var(--edge-2);
+  flex: 0 0 auto;
+}
+
+.st-spacer { flex: 1; }
+
+.st-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 3px;
+  border: 1px solid var(--edge-2);
+  background: var(--tray);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  flex: 0 0 auto;
+}
+.st-model .pip {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--safelight);
+  box-shadow: 0 0 6px var(--safelight);
+}
+
+.st-ico {
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  border-radius: 3px;
+  color: var(--ink-3);
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+/* ---------- 主体三栏 ---------- */
+.st-body {
+  display: grid;
+  grid-template-columns: 54px 1fr 196px;
+  position: relative;
+  z-index: 2;
+  min-height: 0;
+}
+
+/* ============================================================
+   左轨 —— 挂起来晾干的胶片条（批次历史）
+   ============================================================ */
+.rail {
+  border-right: 1px solid var(--edge);
+  padding: 14px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background: rgba(0,0,0,.18);
+}
+
+.strip {
+  width: 36px;
+  padding: 6px 0;
+  border-radius: 2px;
+  background: #0C0A08;
+  border: 1px solid #221C16;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+}
+/* 齿孔 */
+.strip::before, .strip::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 4px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    rgba(232,163,61,.16) 2px 5px,
+    transparent 5px 7px
+  );
+}
+.strip::before { left: 2px; }
+.strip::after  { right: 2px; }
+
+.strip .fr {
+  width: 20px; height: 20px;
+  border-radius: 1px;
+}
+.strip.active {
+  border-color: var(--safelight-dim);
+  box-shadow: 0 0 0 1px rgba(232,163,61,.2), 0 0 14px -3px var(--safelight);
+}
+
+.rail-add {
+  width: 36px; height: 36px;
+  border-radius: 2px;
+  border: 1px dashed var(--edge-2);
+  display: grid; place-items: center;
+  color: var(--ink-3);
+  font-size: 15px;
+  margin-top: 4px;
+}
+
+/* ============================================================
+   印样台 —— 接触印相纸
+   ============================================================ */
+.sheet {
+  padding: 22px 24px 26px;
+  min-height: 0;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.sheet-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.sheet-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--safelight-dim);
+  margin-left: auto;
+  letter-spacing: .04em;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px 16px;
+}
+
+/* ---------- 单张印样 ---------- */
+.frame { position: relative; }
+
+.frame .plate {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid var(--edge-2);
+  transition: border-color .3s, box-shadow .3s;
+}
+
+.frame .plate .art { position: absolute; inset: 0; }
+
+/* 颗粒 */
+.frame .plate::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .32;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23g)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* 底片号 */
+.frame .no {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  color: var(--ink-3);
+}
+.frame .no .idx { color: var(--safelight-dim); }
+.frame .no .sz { margin-left: auto; }
+
+/* ---------- 选中：装裱到白边上 ---------- */
+.frame.picked .plate {
+  border-color: var(--paper);
+  box-shadow:
+    0 0 0 4px var(--paper),
+    0 14px 34px -10px rgba(0,0,0,.85),
+    0 0 30px -8px rgba(232,163,61,.35);
+}
+.frame.picked .no .idx { color: var(--safelight-hi); }
+
+/* 蜡笔圈选 —— 手绘感 */
+.grease {
+  position: absolute;
+  top: -14px; left: -16px;
+  width: calc(100% + 30px);
+  height: calc(100% + 26px);
+  pointer-events: none;
+  overflow: visible;
+}
+.grease ellipse {
+  fill: none;
+  stroke: var(--grease);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: .82;
+}
+
+/* ---------- 显影中 ---------- */
+.frame.dev .plate {
+  border-color: var(--safelight-dim);
+  box-shadow:
+    0 0 0 1px rgba(232,163,61,.35),
+    0 0 26px -4px rgba(232,163,61,.5),
+    inset 0 0 30px -6px rgba(232,163,61,.4);
+  animation: tray-breathe 3.6s ease-in-out infinite;
+}
+@keyframes tray-breathe {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(232,163,61,.28),
+                         0 0 20px -6px rgba(232,163,61,.38),
+                         inset 0 0 26px -8px rgba(232,163,61,.3); }
+  50%      { box-shadow: 0 0 0 1px rgba(232,163,61,.5),
+                         0 0 32px -2px rgba(232,163,61,.6),
+                         inset 0 0 34px -4px rgba(232,163,61,.5); }
+}
+
+/* 从药水里浮出来 */
+.frame.dev .art {
+  animation: emerge 5.4s ease-out infinite;
+}
+@keyframes emerge {
+  0%   { filter: blur(15px) saturate(.1) contrast(.5) brightness(.6); opacity: .22; }
+  50%  { filter: blur(6px)  saturate(.55) contrast(.85) brightness(.9); opacity: .75; }
+  100% { filter: blur(0)    saturate(1)  contrast(1)  brightness(1); opacity: 1; }
+}
+
+/* 液面涟漪 */
+.liquid {
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(
+      104deg,
+      transparent 0 22px,
+      rgba(232,163,61,.055) 22px 24px,
+      transparent 24px 46px
+    );
+  animation: ripple 6.5s ease-in-out infinite alternate;
+}
+@keyframes ripple {
+  from { transform: translate3d(-3%, -1%, 0) scale(1.04); }
+  to   { transform: translate3d(3%, 1%, 0)  scale(1); }
+}
+
+.frame.dev .no .idx { color: var(--safelight-hi); }
+.frame.dev .no .stage {
+  color: var(--safelight);
+  animation: fade-pulse 2.4s ease-in-out infinite;
+}
+@keyframes fade-pulse { 0%,100%{opacity:.55} 50%{opacity:1} }
+
+/* ---------- 未曝光的空位 ---------- */
+.frame.blank .plate {
+  border: 1px dashed var(--edge-2);
+  background: rgba(255,255,255,.012);
+  display: grid;
+  place-items: center;
+}
+.frame.blank .plate .ph {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .16em;
+  color: #4A423A;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   参数台 —— 化学试剂架
+   ============================================================ */
+.params {
+  border-left: 1px solid var(--edge);
+  background: rgba(0,0,0,.2);
+  padding: 20px 0;
+}
+
+.p-head {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: 0 16px 14px;
+  border-bottom: 1px solid var(--edge);
+  margin-bottom: 6px;
+}
+
+.p-row {
+  padding: 10px 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-left: 2px solid transparent;
+}
+.p-row.on { border-left-color: var(--safelight); }
+
+.p-row .k {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: .04em;
+  flex: 0 0 auto;
+}
+.p-row .v {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.p-row.on .v { color: var(--safelight-hi); font-weight: 600; }
+
+.p-row .chev {
+  font-size: 9px;
+  color: #4A423A;
+  margin-left: 2px;
+}
+
+/* ============================================================
+   底部命令条
+   ============================================================ */
+.cmd {
+  border-top: 1px solid var(--edge);
+  padding: 14px 16px 16px;
+  position: relative;
+  z-index: 2;
+  background: rgba(0,0,0,.24);
+}
+
+.cmd-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.cmd-field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 14px;
+  border-radius: 3px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid var(--edge-2);
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.cmd-field .caret {
+  width: 1px; height: 15px;
+  background: var(--safelight);
+  animation: blink 1.1s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0 } }
+
+/* 曝光按钮 —— 快门 */
+.expose {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 20px;
+  border-radius: 3px;
+  background: linear-gradient(178deg, #F0B455, var(--safelight) 55%, #C9822A);
+  color: #241704;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  box-shadow:
+    0 0 26px -4px rgba(232,163,61,.55),
+    inset 0 1px 0 rgba(255,255,255,.4);
+  flex: 0 0 auto;
+}
+
+/* 暗房日志 —— 取代聊天气泡 */
+.labnote {
+  margin-top: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .02em;
+  color: var(--ink-3);
+  border-top: 1px solid var(--edge);
+  padding-top: 11px;
+  overflow: hidden;
+}
+.labnote .tag { color: var(--safelight-dim); flex: 0 0 auto; }
+.labnote .txt {
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+.labnote .meta { color: #5A5145; flex: 0 0 auto; margin-left: auto; }
+
+/* ============================================================
+   细节面板
+   ============================================================ */
+.details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  margin-top: 44px;
+}
+
+.panel {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: linear-gradient(170deg, var(--room-2), #0F0D0B);
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+.panel::before {
+  content: "";
+  position: absolute;
+  top: -40%; left: -10%;
+  width: 60%; height: 90%;
+  background: radial-gradient(ellipse, var(--safelight-glow), transparent 65%);
+  pointer-events: none;
+}
+.panel > * { position: relative; z-index: 1; }
+
+.panel h3 {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #F2ECE2;
+  margin-bottom: 5px;
+}
+.panel .cap {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--safelight-dim);
+  margin-bottom: 18px;
+}
+
+/* 显影特写 */
+.dev-close {
+  width: 190px;
+  position: relative;
+}
+.dev-close .plate {
+  position: relative;
+  aspect-ratio: 1/1;
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid var(--safelight-dim);
+  box-shadow: 0 0 28px -4px rgba(232,163,61,.5),
+              inset 0 0 30px -6px rgba(232,163,61,.45);
+}
+.dev-close .plate .art {
+  position: absolute; inset: 0;
+  animation: emerge 5.4s ease-out infinite;
+}
+.dev-close .plate .liquid { animation: ripple 6.5s ease-in-out infinite alternate; }
+
+.timer {
+  margin-top: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  font-family: var(--mono);
+}
+.timer .t {
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  color: var(--safelight-hi);
+  letter-spacing: .02em;
+  text-shadow: 0 0 18px rgba(232,163,61,.5);
+}
+.timer .u { font-size: 10px; color: var(--ink-3); letter-spacing: .1em; }
+
+.tray-note {
+  margin-top: 14px;
+  font-size: 11.5px;
+  line-height: 1.8;
+  color: var(--ink-3);
+  max-width: 260px;
+}
+.tray-note b { color: var(--ink-2); font-weight: 500; }
+
+/* 未曝光空态 */
+.unexposed {
+  border: 1px dashed var(--edge-2);
+  border-radius: 3px;
+  padding: 40px 24px;
+  text-align: center;
+  background: rgba(255,255,255,.012);
+}
+.unexposed .glyph {
+  color: var(--safelight-dim);
+  margin-bottom: 16px;
+  opacity: .8;
+}
+.unexposed .t {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  margin-bottom: 7px;
+}
+.unexposed .s {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: .03em;
+  line-height: 1.8;
+}
+
+/* ============================================================
+   手机版
+   ============================================================ */
+.mobile-row {
+  margin-top: 44px;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.phone {
+  width: 340px;
+  height: 660px;
+  border-radius: 26px;
+  border: 1px solid var(--edge-2);
+  box-shadow: 0 30px 70px -20px #000, 0 0 0 7px #0B0A08;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background:
+    radial-gradient(ellipse 80% 40% at 10% -6%, var(--safelight-glow), transparent 60%),
+    linear-gradient(170deg, var(--room-2), var(--room) 60%, #0E0C0A);
+}
+.phone::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .38;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n2'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n2)' opacity='0.42'/%3E%3C/svg%3E");
+}
+.phone > * { position: relative; z-index: 1; }
+
+.m-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px 12px;
+  padding: 16px 16px 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.m-cmd {
+  border-top: 1px solid var(--edge);
+  padding: 11px 14px 14px;
+  background: rgba(0,0,0,.26);
+}
+.m-cmd .row1 {
+  display: flex; gap: 8px; align-items: stretch;
+}
+.m-cmd .fld {
+  flex: 1;
+  min-height: 40px;
+  border-radius: 3px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid var(--edge-2);
+  display: flex; align-items: center;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.m-cmd .exp {
+  width: 40px; height: 40px;
+  border-radius: 3px;
+  background: linear-gradient(178deg, #F0B455, var(--safelight) 55%, #C9822A);
+  display: grid; place-items: center;
+  color: #241704;
+  box-shadow: 0 0 20px -4px rgba(232,163,61,.6);
+  flex: 0 0 auto;
+}
+.m-note {
+  margin-top: 9px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: #5A5145;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   说明
+   ============================================================ */
+.notes {
+  margin-top: 52px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.note {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 22px;
+  background: #141210;
+}
+.note h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #F2ECE2;
+  margin-bottom: 13px;
+}
+.note ul { list-style: none; }
+.note li {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  line-height: 1.8;
+  padding-left: 15px;
+  position: relative;
+  margin-bottom: 4px;
+}
+.note li::before {
+  content: "·";
+  position: absolute; left: 3px;
+  color: var(--safelight-dim);
+  font-weight: 700;
+}
+.note li b { color: var(--ink-2); font-weight: 500; }
+
+@media (max-width: 1080px) {
+  .details, .notes, .mobile-row { grid-template-columns: 1fr; }
+  .st-body { grid-template-columns: 1fr; }
+  .rail, .params { display: none; }
+  .grid { grid-template-columns: repeat(2, 1fr); }
+  body { padding: 32px 18px 64px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page-head">
+    <div class="eyebrow">Chat Codex · 独立生图界面</div>
+    <h1>暗房</h1>
+    <p>
+      不是给聊天页换肤，是一个<b>独立界面</b>。聊天里对话是主角；生图里<b>图片才是主角</b>，
+      提示词只是脚手架。所以布局整个反过来：印样台占满画布，提示词退成底部命令条，
+      参数竖排成一条工作台。深暖黑的房间，唯一光源是琥珀安全灯 ——
+      <b>图片是画面里唯一发光的东西</b>。
+    </p>
+  </header>
+
+  <!-- ============================================================
+       主界面
+       ============================================================ -->
+  <div class="room">
+
+    <!-- 顶栏 -->
+    <div class="st-head">
+      <div class="aperture">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9.2" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M12 2.8 L12 12 M20 16.6 L12 12 M4 16.6 L12 12"
+                stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="st-title">暗房</div>
+      <div class="st-sub">mac-mini</div>
+      <div class="st-dot"></div>
+      <div class="st-sub">codex</div>
+      <div class="st-dot"></div>
+      <div class="st-sub">第 07 批</div>
+      <div class="st-spacer"></div>
+      <div class="st-model"><span class="pip"></span>gpt-image-1</div>
+      <div class="st-ico">⋯</div>
+    </div>
+
+    <!-- 三栏主体 -->
+    <div class="st-body">
+
+      <!-- 左轨：晾干的胶片条 -->
+      <div class="rail">
+        <div class="strip">
+          <div class="fr" style="background:linear-gradient(150deg,#C98A54,#4A2A1B)"></div>
+          <div class="fr" style="background:linear-gradient(150deg,#8FA8C4,#2A3A4E)"></div>
+        </div>
+        <div class="strip active">
+          <div class="fr" style="background:linear-gradient(150deg,#D9A46A,#5A3320)"></div>
+          <div class="fr" style="background:linear-gradient(150deg,#B87A4E,#3A2216)"></div>
+          <div class="fr" style="background:linear-gradient(150deg,#E0B888,#6A4028)"></div>
+        </div>
+        <div class="strip">
+          <div class="fr" style="background:linear-gradient(150deg,#7E9E8A,#22342A)"></div>
+          <div class="fr" style="background:linear-gradient(150deg,#A88C6E,#3A2C1E)"></div>
+        </div>
+        <div class="rail-add">+</div>
+      </div>
+
+      <!-- 印样台 -->
+      <div class="sheet">
+        <div class="sheet-head">
+          <div class="sheet-label">Contact Sheet · 第 07 批</div>
+          <div class="sheet-count">4 / 6 已定影</div>
+        </div>
+
+        <div class="grid">
+
+          <!-- 01 选中 -->
+          <div class="frame picked">
+            <svg class="grease" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <ellipse cx="50" cy="50" rx="47" ry="46"
+                       transform="rotate(-3 50 50)"
+                       stroke-dasharray="250 12 46 9"/>
+              <ellipse cx="50" cy="50" rx="49" ry="48"
+                       transform="rotate(2 50 50)"
+                       stroke-dasharray="40 300 60 200" opacity=".45"/>
+            </svg>
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 66% 30%, #FFE0B0 0%, transparent 40%),
+                radial-gradient(circle at 34% 70%, #C4763C 0%, transparent 55%),
+                linear-gradient(158deg, #E8A868 0%, #8A4E2A 48%, #2E1C12 100%)"></div>
+            </div>
+            <div class="no">
+              <span class="idx">01</span>
+              <span>cat_01.png</span>
+              <span class="sz">1.8M</span>
+            </div>
+          </div>
+
+          <!-- 02 -->
+          <div class="frame">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 40% 34%, #FFD9A0 0%, transparent 38%),
+                radial-gradient(circle at 72% 76%, #A85E30 0%, transparent 58%),
+                linear-gradient(140deg, #D89454 0%, #6E3A20 52%, #241610 100%)"></div>
+            </div>
+            <div class="no">
+              <span class="idx">02</span>
+              <span>cat_02.png</span>
+              <span class="sz">2.1M</span>
+            </div>
+          </div>
+
+          <!-- 03 -->
+          <div class="frame">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 60% 26%, #CFE2F0 0%, transparent 36%),
+                radial-gradient(circle at 30% 74%, #6E8CA8 0%, transparent 56%),
+                linear-gradient(150deg, #A8BFD4 0%, #46586E 50%, #161C24 100%)"></div>
+            </div>
+            <div class="no">
+              <span class="idx">03</span>
+              <span>cat_03.png</span>
+              <span class="sz">1.6M</span>
+            </div>
+          </div>
+
+          <!-- 04 显影中 -->
+          <div class="frame dev">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 52% 42%, #FFDCA8 0%, transparent 42%),
+                radial-gradient(circle at 26% 72%, #B06A38 0%, transparent 56%),
+                linear-gradient(148deg, #DC9A5C 0%, #7A4224 50%, #2A1A12 100%)"></div>
+              <div class="liquid"></div>
+            </div>
+            <div class="no">
+              <span class="idx">04</span>
+              <span class="stage">显影中</span>
+              <span class="sz">00:06</span>
+            </div>
+          </div>
+
+          <!-- 05 未曝光 -->
+          <div class="frame blank">
+            <div class="plate"><div class="ph">待曝光</div></div>
+            <div class="no">
+              <span class="idx">05</span>
+              <span>—</span>
+              <span class="sz">—</span>
+            </div>
+          </div>
+
+          <!-- 06 未曝光 -->
+          <div class="frame blank">
+            <div class="plate"><div class="ph">待曝光</div></div>
+            <div class="no">
+              <span class="idx">06</span>
+              <span>—</span>
+              <span class="sz">—</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 参数台 -->
+      <div class="params">
+        <div class="p-head">Chemistry</div>
+
+        <div class="p-row on">
+          <span class="k">尺寸</span>
+          <span class="v">1024²</span>
+          <span class="chev">▾</span>
+        </div>
+        <div class="p-row on">
+          <span class="k">比例</span>
+          <span class="v">1:1</span>
+          <span class="chev">▾</span>
+        </div>
+        <div class="p-row on">
+          <span class="k">张数</span>
+          <span class="v">6</span>
+          <span class="chev">▾</span>
+        </div>
+        <div class="p-row on">
+          <span class="k">质量</span>
+          <span class="v">精细</span>
+          <span class="chev">▾</span>
+        </div>
+        <div class="p-row">
+          <span class="k">格式</span>
+          <span class="v">PNG</span>
+          <span class="chev">▾</span>
+        </div>
+        <div class="p-row">
+          <span class="k">参考图</span>
+          <span class="v">0</span>
+          <span class="chev">▾</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 命令条 -->
+    <div class="cmd">
+      <div class="cmd-row">
+        <div class="cmd-field">
+          <span>一只坐在窗台上的橘猫，晨光，胶片质感</span>
+          <span class="caret"></span>
+        </div>
+        <div class="expose">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="4.4" fill="currentColor"/>
+            <path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3M5.4 5.4l2.1 2.1M16.5 16.5l2.1 2.1M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1"
+                  stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+          曝光
+        </div>
+      </div>
+
+      <div class="labnote">
+        <span class="tag">日志</span>
+        <span class="txt">一只坐在窗台上的橘猫，晨光，胶片质感</span>
+        <span class="meta">1024² · 1:1 · 6 张 · 精细 · 6.2s</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================================================
+       细节
+       ============================================================ -->
+  <div class="details">
+
+    <!-- 显影特写 -->
+    <div class="panel">
+      <div class="cap">Signature · 显影盘</div>
+      <h3>图片从药水里浮出来</h3>
+      <div style="display:flex; gap:26px; align-items:flex-start; margin-top:18px;">
+        <div class="dev-close">
+          <div class="plate">
+            <div class="art" style="background:
+              radial-gradient(circle at 52% 40%, #FFDCA8 0%, transparent 42%),
+              radial-gradient(circle at 28% 74%, #B06A38 0%, transparent 56%),
+              linear-gradient(148deg, #DC9A5C 0%, #7A4224 50%, #2A1A12 100%)"></div>
+            <div class="liquid"></div>
+          </div>
+          <div class="timer">
+            <span class="t">00:06</span>
+            <span class="u">ELAPSED</span>
+          </div>
+        </div>
+        <div class="tray-note">
+          正在生成的这一格<b>就在印样台上</b>，不是另起一张卡片。
+          琥珀色盘沿会随呼吸明暗，药水有极缓的涟漪。
+          计时器是暗房里的真实动作 —— 显影靠数秒。<br><br>
+          <b>对比度从 0.5 爬到 1.0</b>，饱和度从 0.1 到 1.0，
+          图像是「显出来」而不是「淡入」。
+        </div>
+      </div>
+    </div>
+
+    <!-- 空态 -->
+    <div class="panel">
+      <div class="cap">Empty · 未曝光</div>
+      <h3>还没曝光的相纸</h3>
+      <div class="unexposed" style="margin-top:18px;">
+        <div class="glyph">
+          <svg width="42" height="42" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.1"/>
+            <path d="M12 3 L12 12 M19.8 16.5 L12 12 M4.2 16.5 L12 12"
+                  stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="t">描述你想要的画面</div>
+        <div class="s">
+          相纸已就位 · 6 格待曝光<br>
+          写下第一句，然后按曝光
+        </div>
+      </div>
+      <div class="tray-note" style="max-width:none; margin-top:16px;">
+        空态不说「暂无数据」。它说的是<b>这个空间是干什么的、下一步做什么</b>。
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================================================
+       手机版
+       ============================================================ -->
+  <div class="mobile-row">
+    <div>
+      <div class="phone">
+        <div class="st-head" style="height:50px; padding:0 13px; gap:8px;">
+          <div class="aperture" style="width:22px;height:22px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9.2" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M12 2.8 L12 12 M20 16.6 L12 12 M4 16.6 L12 12"
+                    stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="st-title" style="font-size:13px;">暗房</div>
+          <div class="st-spacer"></div>
+          <div class="st-sub">第 07 批</div>
+        </div>
+
+        <div class="m-grid">
+          <div class="frame picked">
+            <svg class="grease" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <ellipse cx="50" cy="50" rx="47" ry="46"
+                       transform="rotate(-3 50 50)"
+                       stroke-dasharray="250 12 46 9"/>
+            </svg>
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 66% 30%, #FFE0B0 0%, transparent 40%),
+                radial-gradient(circle at 34% 70%, #C4763C 0%, transparent 55%),
+                linear-gradient(158deg, #E8A868 0%, #8A4E2A 48%, #2E1C12 100%)"></div>
+            </div>
+            <div class="no"><span class="idx">01</span><span class="sz">1.8M</span></div>
+          </div>
+
+          <div class="frame">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 40% 34%, #FFD9A0 0%, transparent 38%),
+                radial-gradient(circle at 72% 76%, #A85E30 0%, transparent 58%),
+                linear-gradient(140deg, #D89454 0%, #6E3A20 52%, #241610 100%)"></div>
+            </div>
+            <div class="no"><span class="idx">02</span><span class="sz">2.1M</span></div>
+          </div>
+
+          <div class="frame">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 60% 26%, #CFE2F0 0%, transparent 36%),
+                radial-gradient(circle at 30% 74%, #6E8CA8 0%, transparent 56%),
+                linear-gradient(150deg, #A8BFD4 0%, #46586E 50%, #161C24 100%)"></div>
+            </div>
+            <div class="no"><span class="idx">03</span><span class="sz">1.6M</span></div>
+          </div>
+
+          <div class="frame dev">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 52% 42%, #FFDCA8 0%, transparent 42%),
+                radial-gradient(circle at 26% 72%, #B06A38 0%, transparent 56%),
+                linear-gradient(148deg, #DC9A5C 0%, #7A4224 50%, #2A1A12 100%)"></div>
+              <div class="liquid"></div>
+            </div>
+            <div class="no">
+              <span class="idx">04</span>
+              <span class="stage">显影中</span>
+            </div>
+          </div>
+
+          <div class="frame blank">
+            <div class="plate"><div class="ph">待曝光</div></div>
+            <div class="no"><span class="idx">05</span><span>—</span></div>
+          </div>
+
+          <div class="frame blank">
+            <div class="plate"><div class="ph">待曝光</div></div>
+            <div class="no"><span class="idx">06</span><span>—</span></div>
+          </div>
+        </div>
+
+        <div class="m-cmd">
+          <div class="row1">
+            <div class="fld">一只坐在窗台上的橘猫…</div>
+            <div class="exp">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="4.4" fill="currentColor"/>
+                <path d="M12 2.6v3M12 18.4v3M2.6 12h3M18.4 12h3M5.4 5.4l2.1 2.1M16.5 16.5l2.1 2.1M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1"
+                      stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </div>
+          </div>
+          <div class="m-note">1024² · 1:1 · 6 张 · 精细 · 6.2s</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel" style="height:100%;">
+        <div class="cap">Compact · 手机</div>
+        <h3>小屏上还是同一个暗房</h3>
+        <div class="tray-note" style="max-width:none; font-size:12.5px; line-height:1.9;">
+          印样台变两列，参数台收进顶栏的一个入口，胶片条变成抽屉。
+          <b>房间的暗、安全灯的琥珀、图片的发光 —— 一样都不少。</b><br><br>
+          左轨的胶片条在手机上不消失，只是收起来。它不是装饰，
+          是<b>批次历史</b> —— 取代聊天页的会话列表。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       说明
+       ============================================================ -->
+  <div class="notes">
+    <div class="note">
+      <h3>结构上真正变了什么</h3>
+      <ul>
+        <li><b>独立路由</b>，不是聊天页的一个分支</li>
+        <li><b>印样台取代消息流</b> —— 一屏看全部批次</li>
+        <li><b>日志取代气泡</b> —— 一行等宽字，不是对话</li>
+        <li><b>参数台取代工具栏 chips</b></li>
+        <li><b>胶片条取代会话列表</b></li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h3>艺术方向从哪来</h3>
+      <ul>
+        <li>暗房<b>本来就该是暗的</b> —— 这不是暗色模式</li>
+        <li>唯一光源是<b>安全灯琥珀</b>，全屏靠光衰减做纵深</li>
+        <li>房间整体覆一层<b>胶片颗粒</b></li>
+        <li>选中 = <b>装裱到白边上</b> + 蜡笔圈选</li>
+        <li>底片号、时间码、参数全部<b>等宽字</b></li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h3>两个要你拍板的点</h3>
+      <ul>
+        <li>主按钮写<b>「曝光」</b>而不是「生成」。暗房术语，配光圈图标。
+            怕用户不懂就换回「生成」，主题不受影响。</li>
+        <li>左轨的<b>胶片条</b>要不要留。留了很像暗房，
+            但多一列信息密度。</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -61,6 +61,7 @@
           <a href="#semantic-agents" data-view="semantic"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#robot"></use></svg><span>语义 Agent</span><span class="nav-count" data-count="semantic"></span></a>
           <a href="#runtime-catalog" data-view="runtime"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#cpu"></use></svg><span>运行时环境</span><span class="nav-count" data-count="runtime"></span></a>
           <a href="#environment-presets" data-view="environment"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#sliders-horizontal"></use></svg><span>环境变量预设</span><span class="nav-count" data-count="environment"></span></a>
+          <a href="#model-prompt-presets" data-view="modelPrompts"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#faders"></use></svg><span>模型提示词预设</span><span class="nav-count" data-count="modelPrompts"></span></a>
           <p class="nav-group-label">运营管理</p>
           <a href="#operators" data-view="operators"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#users"></use></svg><span>会员管理</span><span class="nav-count" data-count="operators"></span></a>
         </nav>
@@ -511,6 +512,44 @@
             <label>
               <span>环境变量 JSON</span>
               <textarea id="envFieldVariables" rows="8" spellcheck="false" placeholder='{"HTTP_PROXY":"http://127.0.0.1:7897"}'></textarea>
+            </label>
+          </section>
+
+          <section class="form-section model-prompt-editor-section hidden">
+            <div class="section-title">
+              <h3>匹配规则与提示词</h3>
+              <span>模型提示词预设</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>预设 ID</span>
+                <input id="modelPromptFieldId" required placeholder="deepseek-default" />
+              </label>
+              <label>
+                <span>名称</span>
+                <input id="modelPromptFieldName" placeholder="DeepSeek 系列提示词" />
+              </label>
+              <label>
+                <span>供应商匹配，可留空</span>
+                <input id="modelPromptFieldProvider" placeholder="deepseek" />
+              </label>
+              <label>
+                <span>模型名匹配，可留空</span>
+                <input id="modelPromptFieldPattern" placeholder="deepseek" />
+              </label>
+              <label>
+                <span>排序，越小越优先</span>
+                <input id="modelPromptFieldSortOrder" type="number" step="1" />
+              </label>
+              <label class="switch-row">
+                <span>启用预设</span>
+                <input id="modelPromptFieldEnabled" type="checkbox" />
+              </label>
+            </div>
+            <p class="muted">供应商与模型名都是不区分大小写的包含匹配，两项同时填写时取交集；命中后按排序取第一条。</p>
+            <label>
+              <span>模型提示词</span>
+              <textarea id="modelPromptFieldPrompt" rows="10" spellcheck="false" placeholder="针对该模型系列的专属系统提示词"></textarea>
             </label>
           </section>
 

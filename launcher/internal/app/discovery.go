@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"launcher/internal/config"
 	"launcher/internal/model"
@@ -384,27 +385,58 @@ func (s *service) CreateDirectoryUpload(req model.DirectoryFileRequest) (model.P
 }
 
 func (s *service) WriteDirectoryUploadChunk(req model.DirectoryFileRequest) (model.ProjectFile, error) {
+	// 埋点必须在取锁之前开始，才能量出等待 directoryFilesMu 的时间——
+	// 该值接近总耗时就说明并发发块被这把全局锁串行化了。
+	diag := newUploadChunkDiag(req.UploadID, req.ChunkIndex, req.Offset, len(req.Content))
+	lockStart := time.Now()
 	s.directoryFilesMu.Lock()
 	defer s.directoryFilesMu.Unlock()
+	if diag != nil {
+		diag.lockWait = time.Since(lockStart)
+	}
+	file, err := s.writeDirectoryUploadChunkLocked(req, diag)
+	if diag != nil {
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		diag.finish(errText)
+	}
+	return file, err
+}
+
+// writeDirectoryUploadChunkLocked 在已持有 directoryFilesMu 的前提下写入分块。
+func (s *service) writeDirectoryUploadChunkLocked(req model.DirectoryFileRequest, diag *uploadChunkDiag) (model.ProjectFile, error) {
+	dirStart := time.Now()
 	full, err := directoryMutationPath(s.cfg, req.Path, req.AllowAll, false)
+	if diag != nil {
+		diag.dirResolveTim = time.Since(dirStart)
+	}
 	if err != nil {
 		return model.ProjectFile{}, err
 	}
 	if req.Offset < 0 || req.ChunkIndex < 0 {
 		return model.ProjectFile{}, errors.New("分块位置不合法")
 	}
-	if encoding := strings.TrimSpace(req.Encoding); encoding != "" && encoding != "base64" {
-		return model.ProjectFile{}, errors.New("仅支持 base64 编码")
+	decodeStart := time.Now()
+	data, err := decodeChunkContent(req.Encoding, req.Content, req.RawContent)
+	if diag != nil {
+		diag.decodeTime = time.Since(decodeStart)
+		diag.decodedBytes = len(data)
 	}
-	data, err := base64.StdEncoding.DecodeString(req.Content)
 	if err != nil {
-		return model.ProjectFile{}, errors.New("文件分块不是有效 base64")
+		return model.ProjectFile{}, err
 	}
 	expectedSHA256, err := requireSHA256(req.SHA256)
 	if err != nil {
 		return model.ProjectFile{}, err
 	}
-	if !strings.EqualFold(expectedSHA256, sha256Hex(data)) {
+	shaStart := time.Now()
+	actualSHA256 := sha256Hex(data)
+	if diag != nil {
+		diag.sha256Time = time.Since(shaStart)
+	}
+	if !strings.EqualFold(expectedSHA256, actualSHA256) {
 		return model.ProjectFile{}, errors.New("文件分块校验失败")
 	}
 	tempPath, err := directoryUploadTempPath(full, req.UploadID)
@@ -422,6 +454,7 @@ func (s *service) WriteDirectoryUploadChunk(req model.DirectoryFileRequest) (mod
 	if err != nil {
 		return model.ProjectFile{}, err
 	}
+	writeStart := time.Now()
 	if _, err := file.WriteAt(data, req.Offset); err != nil {
 		_ = file.Close()
 		return model.ProjectFile{}, err
@@ -429,7 +462,15 @@ func (s *service) WriteDirectoryUploadChunk(req model.DirectoryFileRequest) (mod
 	if err := file.Close(); err != nil {
 		return model.ProjectFile{}, err
 	}
-	if err := recordUploadChunk(tempPath, info.Size(), req.TotalChunks, req.ChunkIndex); err != nil {
+	if diag != nil {
+		diag.writeTime = time.Since(writeStart)
+	}
+	manifestStart := time.Now()
+	err = recordUploadChunk(tempPath, info.Size(), req.TotalChunks, req.ChunkIndex)
+	if diag != nil {
+		diag.manifestTime = time.Since(manifestStart)
+	}
+	if err != nil {
 		return model.ProjectFile{}, err
 	}
 	return model.ProjectFile{Path: full, Name: filepath.Base(full), Kind: "文件", Size: int64(len(data))}, nil
@@ -462,24 +503,75 @@ func (s *service) CompleteDirectoryUpload(req model.DirectoryFileRequest) (model
 	if err != nil {
 		return model.ProjectFile{}, err
 	}
+	summary := newUploadSummaryDiag(req.UploadID, req.Size, req.TotalChunks, receivedChunkCount(tempPath))
+	finishSummary := func(err error) error {
+		if summary == nil {
+			return err
+		}
+		errText := ""
+		if err != nil {
+			errText = err.Error()
+		}
+		summary.finish(errText)
+		return err
+	}
+	shaStart := time.Now()
 	sum, err := fileSHA256Hex(tempPath)
+	if summary != nil {
+		summary.sha256Time = time.Since(shaStart)
+	}
 	if err != nil {
-		return model.ProjectFile{}, err
+		return model.ProjectFile{}, finishSummary(err)
 	}
 	if !strings.EqualFold(expectedSHA256, sum) {
-		return model.ProjectFile{}, errors.New("文件整体校验失败")
+		return model.ProjectFile{}, finishSummary(errors.New("文件整体校验失败"))
 	}
+	publishStart := time.Now()
 	if err := publishDirectoryUpload(tempPath, full); err != nil {
-		return model.ProjectFile{}, err
+		return model.ProjectFile{}, finishSummary(err)
+	}
+	if summary != nil {
+		summary.publishTime = time.Since(publishStart)
 	}
 	removeUploadManifest(tempPath)
 	_ = os.Remove(filepath.Dir(tempPath))
 	_ = os.Remove(filepath.Dir(filepath.Dir(tempPath)))
 	finalInfo, err := os.Stat(full)
 	if err != nil {
-		return model.ProjectFile{}, friendlyPathError(full, err)
+		return model.ProjectFile{}, finishSummary(friendlyPathError(full, err))
 	}
+	finishSummary(nil)
 	return directoryFileResult(full, finalInfo), nil
+}
+
+// receivedChunkCount 读取清单中已记录的分块数量，仅用于诊断日志。
+func receivedChunkCount(tempPath string) int {
+	manifest, ok := loadUploadManifest(tempPath)
+	if !ok {
+		return 0
+	}
+	return len(manifest.Received)
+}
+
+// decodeChunkContent 取出分块原始字节。
+//
+// 二进制帧（Encoding=="binary"）直接用帧尾携带的原始字节，零解码开销；
+// 旧协议走 base64 文本字段，保持向后兼容。
+func decodeChunkContent(encoding, content string, raw []byte) ([]byte, error) {
+	if strings.EqualFold(strings.TrimSpace(encoding), "binary") {
+		if len(raw) == 0 {
+			return nil, errors.New("二进制分块内容为空")
+		}
+		return raw, nil
+	}
+	if encoding != "" && !strings.EqualFold(encoding, "base64") {
+		return nil, errors.New("仅支持 base64 或 binary 编码")
+	}
+	data, err := base64.StdEncoding.DecodeString(content)
+	if err != nil {
+		return nil, errors.New("文件分块不是有效 base64")
+	}
+	return data, nil
 }
 
 func (s *service) CreateDirectoryFile(req model.DirectoryFileRequest) (model.ProjectFile, error) {
@@ -865,51 +957,114 @@ func (s *service) CreateProjectUpload(req model.ProjectFilesRequest) (model.Proj
 }
 
 func (s *service) WriteProjectUploadChunk(req model.ProjectFilesRequest) (model.ProjectFile, error) {
+	// 项目上传路径没有全局锁保护，分块天然并行；埋点用于量出各阶段耗时，
+	// 区分「CPU 受限（base64 解码/哈希）」与「带宽受限」。
+	diag := newUploadChunkDiag(req.UploadID, req.ChunkIndex, req.Offset, len(req.Content))
+	dirStart := time.Now()
 	root, err := s.projectRoot(req.AgentID)
+	if diag != nil {
+		diag.dirResolveTim = time.Since(dirStart)
+	}
 	if err != nil {
+		if diag != nil {
+			diag.finish(err.Error())
+		}
 		return model.ProjectFile{}, err
 	}
 	full, relative, err := projectFilePath(root, req.Path)
 	if err != nil {
+		if diag != nil {
+			diag.finish(err.Error())
+		}
 		return model.ProjectFile{}, err
 	}
 	if relative == "" {
-		return model.ProjectFile{}, errors.New("文件路径不能为空")
+		err := errors.New("文件路径不能为空")
+		if diag != nil {
+			diag.finish(err.Error())
+		}
+		return model.ProjectFile{}, err
 	}
 	if req.Offset < 0 || req.ChunkIndex < 0 {
-		return model.ProjectFile{}, errors.New("分块位置不合法")
+		err := errors.New("分块位置不合法")
+		if diag != nil {
+			diag.finish(err.Error())
+		}
+		return model.ProjectFile{}, err
 	}
 	encoding := strings.TrimSpace(req.Encoding)
 	if encoding == "" {
 		encoding = "base64"
 	}
-	if encoding != "base64" {
-		return model.ProjectFile{}, errors.New("仅支持 base64 编码")
+	decodeStart := time.Now()
+	data, err := decodeChunkContent(req.Encoding, req.Content, req.RawContent)
+	if diag != nil {
+		diag.decodeTime = time.Since(decodeStart)
+		diag.decodedBytes = len(data)
 	}
-	data, err := base64.StdEncoding.DecodeString(req.Content)
 	if err != nil {
-		return model.ProjectFile{}, errors.New("文件分块不是有效 base64")
+		if diag != nil {
+			diag.finish(err.Error())
+		}
+		return model.ProjectFile{}, err
 	}
-	if req.SHA256 != "" && !strings.EqualFold(req.SHA256, sha256Hex(data)) {
-		return model.ProjectFile{}, errors.New("文件分块校验失败")
+	if req.SHA256 != "" {
+		shaStart := time.Now()
+		actual := sha256Hex(data)
+		if diag != nil {
+			diag.sha256Time = time.Since(shaStart)
+		}
+		if !strings.EqualFold(req.SHA256, actual) {
+			if diag != nil {
+				diag.finish("文件分块校验失败")
+			}
+			return model.ProjectFile{}, errors.New("文件分块校验失败")
+		}
 	}
 	tempPath, err := projectUploadTempPath(root, req.UploadID)
 	if err != nil {
+		if diag != nil {
+			diag.finish(err.Error())
+		}
 		return model.ProjectFile{}, err
 	}
 	file, err := os.OpenFile(tempPath, os.O_WRONLY, 0o600)
 	if err != nil {
+		if diag != nil {
+			diag.finish(err.Error())
+		}
 		return model.ProjectFile{}, err
 	}
+	writeStart := time.Now()
 	if _, err := file.WriteAt(data, req.Offset); err != nil {
 		_ = file.Close()
+		if diag != nil {
+			diag.finish(err.Error())
+		}
 		return model.ProjectFile{}, err
 	}
 	if err := file.Close(); err != nil {
+		if diag != nil {
+			diag.finish(err.Error())
+		}
 		return model.ProjectFile{}, err
 	}
-	if err := recordUploadChunk(tempPath, int64(req.Size), req.TotalChunks, req.ChunkIndex); err != nil {
+	if diag != nil {
+		diag.writeTime = time.Since(writeStart)
+	}
+	manifestStart := time.Now()
+	err = recordUploadChunk(tempPath, int64(req.Size), req.TotalChunks, req.ChunkIndex)
+	if diag != nil {
+		diag.manifestTime = time.Since(manifestStart)
+	}
+	if err != nil {
+		if diag != nil {
+			diag.finish(err.Error())
+		}
 		return model.ProjectFile{}, err
+	}
+	if diag != nil {
+		diag.finish("")
 	}
 	return model.ProjectFile{
 		Path:  relative,
@@ -943,25 +1098,45 @@ func (s *service) CompleteProjectUpload(req model.ProjectFilesRequest) (model.Pr
 	if req.Size >= 0 && info.Size() != req.Size {
 		return model.ProjectFile{}, errors.New("文件大小校验失败")
 	}
-	if req.SHA256 != "" {
-		sum, err := fileSHA256Hex(tempPath)
+	summary := newUploadSummaryDiag(req.UploadID, req.Size, req.TotalChunks, receivedChunkCount(tempPath))
+	finishSummary := func(err error) error {
+		if summary == nil {
+			return err
+		}
+		errText := ""
 		if err != nil {
-			return model.ProjectFile{}, err
+			errText = err.Error()
+		}
+		summary.finish(errText)
+		return err
+	}
+	if req.SHA256 != "" {
+		shaStart := time.Now()
+		sum, err := fileSHA256Hex(tempPath)
+		if summary != nil {
+			summary.sha256Time = time.Since(shaStart)
+		}
+		if err != nil {
+			return model.ProjectFile{}, finishSummary(err)
 		}
 		if !strings.EqualFold(req.SHA256, sum) {
-			return model.ProjectFile{}, errors.New("文件整体校验失败")
+			return model.ProjectFile{}, finishSummary(errors.New("文件整体校验失败"))
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return model.ProjectFile{}, err
+		return model.ProjectFile{}, finishSummary(err)
 	}
+	publishStart := time.Now()
 	backupPath, restore, err := backupExistingProjectFile(full)
 	if err != nil {
-		return model.ProjectFile{}, err
+		return model.ProjectFile{}, finishSummary(err)
 	}
 	if err := os.Rename(tempPath, full); err != nil {
 		restore()
-		return model.ProjectFile{}, err
+		return model.ProjectFile{}, finishSummary(err)
+	}
+	if summary != nil {
+		summary.publishTime = time.Since(publishStart)
 	}
 	if backupPath != "" {
 		_ = os.Remove(backupPath)
@@ -970,8 +1145,9 @@ func (s *service) CompleteProjectUpload(req model.ProjectFilesRequest) (model.Pr
 	_ = os.RemoveAll(filepath.Dir(tempPath))
 	finalInfo, err := os.Stat(full)
 	if err != nil {
-		return model.ProjectFile{}, friendlyPathError(full, err)
+		return model.ProjectFile{}, finishSummary(friendlyPathError(full, err))
 	}
+	finishSummary(nil)
 	return model.ProjectFile{
 		Path:  relative,
 		Name:  filepath.Base(full),

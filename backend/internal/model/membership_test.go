@@ -40,9 +40,7 @@ func TestUploadPolicyForTier(t *testing.T) {
 	if plus.Concurrency < 2 {
 		t.Fatalf("会员并发应大于 1，实际 %d", plus.Concurrency)
 	}
-	if plus.TargetBytesPerSec != 5*1024*1024 {
-		t.Fatalf("会员目标速率应为 5MB/s，实际 %d", plus.TargetBytesPerSec)
-	}
+	// 不再校验目标速率：该字段从未用于限速，已从策略中移除。
 
 	pro := UploadPolicyForTier(MembershipTierPro)
 	if !pro.IsMember || pro.Concurrency <= plus.Concurrency {

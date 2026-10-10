@@ -16,6 +16,9 @@ import (
 	"launcher/internal/model"
 )
 
+// catalogRefreshInterval 是两次联网刷新目录之间的最小间隔。
+const catalogRefreshInterval = 5 * time.Minute
+
 // OpenCode reads this same models.dev schema. Runtime metadata is preferred:
 // it also contains ProviderTransform's current reasoning variants.
 type catalogProvider struct {
@@ -53,12 +56,57 @@ var catalogCache struct {
 // a relay's models. A timeout or bad response keeps the last valid snapshot.
 func SyncOpenCodeModelCatalog() { loadOpenCodeCatalog(true) }
 
-func loadOpenCodeCatalog(refresh bool) []RuntimeProviderMetadataItem {
+// EnsureOpenCodeModelCatalog 立即返回当前目录，并在快照过期时后台刷新。
+//
+// 对话页拉取模型列表与 AI 配置页读取配置都走设备 RPC，它们只需要模型 ID
+// 与名称；目录只提供可选的预设元数据（上下文窗口、模态、思考档位）。因此
+// 联网刷新绝不能挡在请求路径上：models.dev 慢或不可达时，请求必须立刻拿到
+// 上一次的有效快照，而不是等满 10 秒超时。
+func EnsureOpenCodeModelCatalog() []RuntimeProviderMetadataItem {
+	paths := resolveCatalogPaths()
+	providers, claimed := catalogSnapshotAndClaim(paths, true)
+	if claimed {
+		go fetchAndApplyCatalog(paths, providers)
+	}
+	return providers
+}
+
+type catalogPaths struct {
+	// source 是目录来源地址，可用 OPENCODE_MODELS_URL 覆盖。
+	source string
+	// openCodePath 是 OpenCode 自身的缓存文件，也是缓存作用域的一部分。
+	openCodePath string
+	// launcherPath 是本 launcher 写回的目录快照，避免与 OpenCode 争用跨进程锁。
+	launcherPath string
+	// readPaths 是按优先级读取的候选路径。
+	readPaths []string
+}
+
+func resolveCatalogPaths() catalogPaths {
 	source := strings.TrimRight(firstNonEmpty(os.Getenv("OPENCODE_MODELS_URL"), "https://models.dev"), "/")
 	home, _ := os.UserHomeDir()
 	cacheRoot := firstNonEmpty(os.Getenv("XDG_CACHE_HOME"), filepath.Join(home, ".cache"))
-	path := firstNonEmpty(os.Getenv("OPENCODE_MODELS_PATH"), filepath.Join(cacheRoot, "opencode", "models.json"))
-	key := source + "|" + path
+	openCodePath := firstNonEmpty(os.Getenv("OPENCODE_MODELS_PATH"), filepath.Join(cacheRoot, "opencode", "models.json"))
+	launcherPath := filepath.Join(cacheRoot, "chat-codex", "model-catalog.json")
+	readPaths := []string{openCodePath}
+	// 显式指定 OPENCODE_MODELS_PATH 时只认它，与 OpenCode 的语义保持一致。
+	if os.Getenv("OPENCODE_MODELS_PATH") == "" {
+		readPaths = append(readPaths, launcherPath)
+	}
+	return catalogPaths{
+		source:       source,
+		openCodePath: openCodePath,
+		launcherPath: launcherPath,
+		readPaths:    readPaths,
+	}
+}
+
+// catalogSnapshotAndClaim 在锁内载入磁盘快照，并在需要时认领一次联网刷新。
+//
+// 返回当前可用目录，以及本次调用是否获得了刷新资格。认领即把 checked 提前
+// 置位，因此并发的调用方不会重复抓取；真正的网络请求由调用方在锁外执行。
+func catalogSnapshotAndClaim(paths catalogPaths, refresh bool) ([]RuntimeProviderMetadataItem, bool) {
+	key := paths.source + "|" + paths.openCodePath
 	catalogCache.Lock()
 	defer catalogCache.Unlock()
 	if catalogCache.key != key {
@@ -68,13 +116,8 @@ func loadOpenCodeCatalog(refresh bool) []RuntimeProviderMetadataItem {
 		catalogCache.fileUpdated = time.Time{}
 		catalogCache.providers = nil
 	}
-	launcherPath := filepath.Join(cacheRoot, "chat-codex", "model-catalog.json")
-	readPaths := []string{path}
-	if os.Getenv("OPENCODE_MODELS_PATH") == "" {
-		readPaths = append(readPaths, launcherPath)
-	}
 	var snapshots []catalogSnapshot
-	for _, readPath := range readPaths {
+	for _, readPath := range paths.readPaths {
 		if stat, err := os.Stat(readPath); err == nil {
 			snapshots = append(snapshots, catalogSnapshot{readPath, stat.ModTime()})
 		}
@@ -95,38 +138,48 @@ func loadOpenCodeCatalog(refresh bool) []RuntimeProviderMetadataItem {
 			}
 		}
 	}
-	if !refresh || os.Getenv("OPENCODE_DISABLE_MODELS_FETCH") != "" || os.Getenv("OPENCODE_MODELS_PATH") != "" || time.Since(catalogCache.checked) < 5*time.Minute {
-		return catalogCache.providers
+	if !refresh ||
+		os.Getenv("OPENCODE_DISABLE_MODELS_FETCH") != "" ||
+		os.Getenv("OPENCODE_MODELS_PATH") != "" ||
+		time.Since(catalogCache.checked) < catalogRefreshInterval {
+		return catalogCache.providers, false
 	}
 	catalogCache.checked = time.Now()
+	return catalogCache.providers, true
+}
+
+// fetchAndApplyCatalog 在锁外抓取目录；成功后写回内存与磁盘，失败则沿用快照。
+func fetchAndApplyCatalog(paths catalogPaths, fallback []RuntimeProviderMetadataItem) []RuntimeProviderMetadataItem {
 	client := &http.Client{Timeout: 10 * time.Second}
-	response, err := client.Get(source + "/api.json")
+	response, err := client.Get(paths.source + "/api.json")
 	if err != nil {
-		return catalogCache.providers
+		return fallback
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return catalogCache.providers
+		return fallback
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 16<<20))
 	if err != nil {
-		return catalogCache.providers
+		return fallback
 	}
 	providers := decodeOpenCodeCatalog(data)
 	if len(providers) == 0 {
-		return catalogCache.providers
+		return fallback
 	}
+	catalogCache.Lock()
+	defer catalogCache.Unlock()
 	catalogCache.providers = providers
 	// Use our own file; never race OpenCode's cross-process cache lock.
-	if os.MkdirAll(filepath.Dir(launcherPath), 0700) == nil {
-		if tmp, err := os.CreateTemp(filepath.Dir(launcherPath), "catalog-*"); err == nil {
+	if os.MkdirAll(filepath.Dir(paths.launcherPath), 0700) == nil {
+		if tmp, err := os.CreateTemp(filepath.Dir(paths.launcherPath), "catalog-*"); err == nil {
 			name := tmp.Name()
 			_, err = tmp.Write(data)
 			closeErr := tmp.Close()
 			if err == nil && closeErr == nil {
-				if os.Rename(name, launcherPath) == nil {
-					if stat, err := os.Stat(launcherPath); err == nil {
-						catalogCache.filePath = launcherPath
+				if os.Rename(name, paths.launcherPath) == nil {
+					if stat, err := os.Stat(paths.launcherPath); err == nil {
+						catalogCache.filePath = paths.launcherPath
 						catalogCache.fileUpdated = stat.ModTime()
 					}
 				}
@@ -135,6 +188,15 @@ func loadOpenCodeCatalog(refresh bool) []RuntimeProviderMetadataItem {
 		}
 	}
 	return providers
+}
+
+func loadOpenCodeCatalog(refresh bool) []RuntimeProviderMetadataItem {
+	paths := resolveCatalogPaths()
+	providers, claimed := catalogSnapshotAndClaim(paths, refresh)
+	if !claimed {
+		return providers
+	}
+	return fetchAndApplyCatalog(paths, providers)
 }
 
 func decodeOpenCodeCatalog(data []byte) []RuntimeProviderMetadataItem {
@@ -376,7 +438,7 @@ func EnrichWithOpenCodeCatalog(info *model.DeviceAIConfigInfo, metadata RuntimeP
 	if info == nil {
 		return nil
 	}
-	providers := loadOpenCodeCatalog(len(metadata.All) == 0)
+	providers := EnsureOpenCodeModelCatalog()
 	// Runtime versions win for identical provider/model pairs. All native
 	// providers are considered, including ones without a configured API key.
 	byKey := map[string]catalogCandidate{}

@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat Codex · 三模式艺术风格预览</title>
+<style>
+/* ============================================================
+   基础
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --sp-1: 4px;
+  --sp-4: 16px;
+  --sp-9: 36px;
+
+  --page-bg: #12141a;
+  --page-fg: #e8eaee;
+  --page-dim: #8b93a3;
+  --page-line: #262a34;
+
+  --font-cn: -apple-system, BlinkMacSystemFont, "PingFang SC",
+             "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+body {
+  background: var(--page-bg);
+  color: var(--page-fg);
+  font-family: var(--font-cn);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 56px 40px 96px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1360px; margin: 0 auto; }
+
+/* ============================================================
+   页头
+   ============================================================ */
+.page-head { margin-bottom: 48px; max-width: 720px; }
+
+.page-head .eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--page-dim);
+  margin-bottom: 12px;
+}
+
+.page-head h1 {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  margin-bottom: 14px;
+}
+
+.page-head p {
+  color: var(--page-dim);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* ============================================================
+   色板对比
+   ============================================================ */
+.tokens {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin-bottom: 56px;
+}
+
+.token-card {
+  border: 1px solid var(--page-line);
+  border-radius: 12px;
+  padding: 20px;
+  background: #171a21;
+}
+
+.token-card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.token-card .sub {
+  font-size: 11px;
+  color: var(--page-dim);
+  margin-bottom: 16px;
+}
+
+.swatches { display: flex; gap: 6px; margin-bottom: 14px; }
+
+.sw {
+  height: 44px;
+  flex: 1;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+.sw-labels {
+  display: flex;
+  gap: 6px;
+  font-size: 9px;
+  color: var(--page-dim);
+  font-family: var(--font-mono);
+  text-align: center;
+}
+.sw-labels span { flex: 1; }
+
+.spec {
+  font-size: 11px;
+  color: var(--page-dim);
+  line-height: 1.9;
+  border-top: 1px solid var(--page-line);
+  padding-top: 12px;
+  margin-top: 14px;
+}
+.spec b { color: var(--page-fg); font-weight: 500; }
+
+/* ============================================================
+   三屏并排
+   ============================================================ */
+.screens {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.screen-col > .caption {
+  margin-bottom: 14px;
+}
+.screen-col > .caption .name {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.screen-col > .caption .desc {
+  font-size: 12px;
+  color: var(--page-dim);
+  line-height: 1.6;
+}
+
+/* 手机框 */
+.phone {
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.09);
+  box-shadow: 0 24px 60px -12px rgba(0,0,0,.7), 0 0 0 6px #0b0d11;
+  display: flex;
+  flex-direction: column;
+  height: 700px;
+  background: var(--surface);
+  position: relative;
+}
+
+/* ============================================================
+   模式皮肤变量 —— 全部差异集中在这里
+   ============================================================ */
+
+/* 对话 · 工作室（冷调，现状精修） */
+.mode-chat {
+  --canvas-a: #EFF4FB;
+  --canvas-b: #F7FAFF;
+  --surface: #FFFFFF;
+  --surface-elev: #FAFCFF;
+  --border: #D0DDEF;
+  --border-light: #E8EFF8;
+  --accent: #2563EB;
+  --accent-deep: #1D4ED8;
+  --accent-light: #EFF6FF;
+  --accent-muted: #BFD7FF;
+  --text-1: #0F1729;
+  --text-2: #4A5D7A;
+  --text-3: #8FA3BF;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --bubble-tail: 3px;
+  --shadow: 0 1px 3px rgba(26,58,106,.05);
+  --font-ui: var(--font-cn);
+}
+
+/* 生图 · 暗房 / 颜料（暖纸） */
+.mode-image {
+  --canvas-a: #F7F1E8;
+  --canvas-b: #FDFAF5;
+  --surface: #FFFDFA;
+  --surface-elev: #FBF6EF;
+  --border: #E7DACB;
+  --border-light: #F2E9DE;
+  --accent: #A8492A;
+  --accent-deep: #8A381B;
+  --accent-light: #F9EBE3;
+  --accent-muted: #E3C0AE;
+  --text-1: #201914;
+  --text-2: #5D5147;
+  --text-3: #9D9086;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --bubble-tail: 4px;
+  --shadow: 0 2px 8px rgba(88,58,34,.07);
+  --font-ui: var(--font-cn);
+}
+
+/* 生视频 · 剪辑台（中性石墨，单色） */
+.mode-video {
+  --canvas-a: #EDEEF0;
+  --canvas-b: #F7F8F9;
+  --surface: #FFFFFF;
+  --surface-elev: #F4F5F6;
+  --border: #D4D7DB;
+  --border-light: #E8EAEC;
+  --accent: #1C1E21;
+  --accent-deep: #101215;
+  --accent-light: #EDEEF0;
+  --accent-muted: #C9CDD1;
+  --text-1: #14161A;
+  --text-2: #4E5359;
+  --text-3: #8B9198;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --bubble-tail: 2px;
+  --shadow: 0 1px 3px rgba(16,20,28,.06);
+  --font-ui: var(--font-cn);
+}
+
+/* ============================================================
+   聊天外壳
+   ============================================================ */
+.canvas {
+  flex: 1;
+  background: linear-gradient(150deg, var(--canvas-a), var(--canvas-b));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 顶栏 */
+.ctx-bar {
+  height: 52px;
+  flex: 0 0 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 4px;
+  font-family: var(--font-ui);
+}
+
+.ctx-bar .ico {
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  color: var(--text-2);
+  font-size: 13px;
+  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+}
+.ctx-bar .ico.dim { color: var(--text-3); }
+
+.ctx-div {
+  width: 1px; height: 18px;
+  background: var(--border);
+  margin: 0 6px;
+  flex: 0 0 auto;
+}
+
+.ctx-chips {
+  display: flex; gap: 5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--r-sm);
+  background: var(--surface-elev);
+  border: 1px solid var(--border-light);
+  font-size: 10px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.ctx-chip.hot {
+  background: var(--accent-light);
+  border-color: var(--accent-muted);
+  color: var(--accent-deep);
+}
+
+/* 模式徽章 —— 这是「我在哪个模式」的主信号 */
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--r-sm);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  background: var(--accent);
+  color: #fff;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.mode-video .mode-badge { letter-spacing: .04em; }
+
+/* 消息区 */
+.msgs {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family: var(--font-ui);
+}
+
+.row { display: flex; }
+.row.me { justify-content: flex-end; }
+
+.bubble {
+  max-width: 78%;
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.bubble.me {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: var(--bubble-tail);
+}
+.mode-video .bubble.me { background: var(--accent); }
+
+.bubble.bot {
+  background: var(--surface);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: var(--bubble-tail);
+  box-shadow: var(--shadow);
+}
+
+/* 工具卡（对话模式专属，保持克制） */
+.tool-card {
+  margin-top: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  font-size: 11px;
+}
+.tool-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 9px;
+  background: var(--surface-elev);
+  color: var(--text-2);
+}
+.tool-head .dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: #16A34A;
+}
+.tool-body {
+  padding: 7px 9px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+/* ============================================================
+   生图模式签名时刻 —— 显影
+   ============================================================ */
+.develop {
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface-elev);
+  box-shadow: var(--shadow);
+}
+
+.develop-stage {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  /* 暖纸，不是暗房的黑 —— 画面从纸里显出来 */
+  background: #F0E6D9;
+  overflow: hidden;
+}
+
+.develop-art {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 68% 34%, #F3C9A4 0%, transparent 42%),
+    radial-gradient(circle at 30% 72%, #8E4A2C 0%, transparent 55%),
+    radial-gradient(circle at 80% 80%, #4A2C1E 0%, transparent 50%),
+    linear-gradient(160deg, #C87A4E 0%, #6B3A24 45%, #33211A 100%);
+  animation: develop 4.2s ease-out infinite;
+}
+
+@keyframes develop {
+  0%   { filter: blur(14px) saturate(.12) contrast(.55); opacity: .18; }
+  45%  { filter: blur(6px)  saturate(.5)  contrast(.8);  opacity: .72; }
+  100% { filter: blur(0)    saturate(1)   contrast(1);   opacity: 1; }
+}
+
+/* 安全灯扫光 */
+.safelight {
+  position: absolute; inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(214,138,86,.22) 50%,
+    transparent 70%
+  );
+  animation: sweep 4.2s linear infinite;
+}
+@keyframes sweep {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(110%); }
+}
+
+.develop-meta {
+  padding: 10px 12px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.spinner {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-muted);
+  border-top-color: var(--accent);
+  animation: spin .9s linear infinite;
+  flex: 0 0 auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.develop-meta .stage {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.develop-meta .time {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   冲印照片 —— 生图产物的处理方式
+   ============================================================ */
+.print {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 3px;
+  padding: 8px 8px 0;
+  box-shadow: 0 4px 16px -4px rgba(88,58,34,.18);
+}
+.print-img {
+  aspect-ratio: 4 / 3;
+  border-radius: 1px;
+  background:
+    radial-gradient(circle at 70% 30%, #F5D2AE 0%, transparent 40%),
+    radial-gradient(circle at 25% 75%, #94502F 0%, transparent 52%),
+    linear-gradient(155deg, #D08A5C 0%, #6E3B26 50%, #2E1E17 100%);
+}
+.print-cap {
+  padding: 7px 2px 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.print-cap .fn {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.print-cap .sz { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   生视频模式签名时刻 —— 时间轴
+   ============================================================ */
+.timeline-card {
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface-elev);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+/* letterbox 画框 */
+.lb-frame {
+  position: relative;
+  background: #0B0C0E;
+  padding: 14px 0;
+}
+.lb-inner {
+  aspect-ratio: 21 / 9;
+  background:
+    radial-gradient(circle at 60% 40%, #FFC98A 0%, transparent 30%),
+    linear-gradient(120deg, #1B2A3D 0%, #2E4256 40%, #16202C 100%);
+  position: relative;
+  overflow: hidden;
+}
+/* 车流拖影 */
+.lb-inner::after {
+  content: "";
+  position: absolute;
+  left: -10%; right: -10%; bottom: 26%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #FFD9A0, transparent);
+  box-shadow: 0 6px 0 -0.5px rgba(255,217,160,.55),
+              0 12px 0 -1px rgba(255,217,160,.3);
+  animation: traffic 2.6s ease-in-out infinite alternate;
+}
+@keyframes traffic {
+  from { transform: translateX(-14%); opacity: .55; }
+  to   { transform: translateX(14%);  opacity: 1; }
+}
+
+.tc {
+  position: absolute;
+  bottom: 7px; right: 9px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #F0F2F4;
+  background: rgba(0,0,0,.42);
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: .04em;
+}
+
+.tl-meta { padding: 10px 12px 12px; }
+
+.tl-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.tl-row .stage {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.tl-row .time {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  letter-spacing: .02em;
+}
+
+/* scrubber */
+.scrub {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent-muted);
+  position: relative;
+  overflow: visible;
+}
+.scrub-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: scrub 8s linear infinite;
+}
+@keyframes scrub {
+  0%   { width: 4%; }
+  100% { width: 100%; }
+}
+.scrub-head {
+  position: absolute;
+  top: 50%;
+  width: 9px; height: 9px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  animation: head 8s linear infinite;
+}
+@keyframes head {
+  0%   { left: 4%; }
+  100% { left: 100%; }
+}
+
+/* 刻度 */
+.ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  letter-spacing: .02em;
+}
+
+/* ============================================================
+   输入区
+   ============================================================ */
+.composer {
+  flex: 0 0 auto;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 8px 10px 10px;
+  font-family: var(--font-ui);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.tbtn {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface-elev);
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.chip {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border-radius: var(--r-sm);
+  background: var(--surface-elev);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.chip .k { color: var(--text-3); font-size: 10.5px; }
+.chip .v { font-weight: 500; }
+.chip.on {
+  background: var(--accent-light);
+  border-color: var(--accent-muted);
+}
+.chip.on .k { color: var(--accent-deep); opacity: .75; }
+.chip.on .v { color: var(--accent-deep); font-weight: 600; }
+.mode-video .chip .v { font-variant-numeric: tabular-nums; }
+
+.input-row { display: flex; align-items: flex-end; gap: 8px; }
+
+.field {
+  flex: 1;
+  min-height: 44px;
+  border-radius: var(--r-md);
+  background: var(--surface-elev);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+}
+
+.send {
+  width: 44px; height: 44px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #fff;
+  font-size: 15px;
+}
+.mode-video .send { border-radius: var(--r-sm); }
+
+/* ============================================================
+   说明
+   ============================================================ */
+.notes {
+  margin-top: 64px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+.note {
+  border: 1px solid var(--page-line);
+  border-radius: 12px;
+  padding: 22px;
+  background: #171a21;
+}
+.note h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.note ul { list-style: none; }
+.note li {
+  font-size: 12.5px;
+  color: var(--page-dim);
+  line-height: 1.75;
+  padding-left: 16px;
+  position: relative;
+}
+.note li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: #3a404d;
+}
+.note li b { color: var(--page-fg); font-weight: 500; }
+
+@media (max-width: 1100px) {
+  .screens, .tokens, .notes { grid-template-columns: 1fr; }
+  body { padding: 32px 20px 64px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page-head">
+    <div class="eyebrow">Chat Codex · 设计预览</div>
+    <h1>同一套布局，三种艺术方向</h1>
+    <p>
+      布局、间距、字体、交互状态三个模式完全一致 —— 肌肉记忆不变。
+      差异只落在四个轴上：<b>画布温度</b>、<b>主色</b>、<b>圆角几何</b>、<b>一个签名时刻</b>。
+      日常内容保持克制，每个模式的「生成中」那一刻才完全做自己。
+    </p>
+  </header>
+
+  <!-- ================= 色板 ================= -->
+  <section class="tokens">
+    <div class="token-card">
+      <h3>对话 · 工作室</h3>
+      <div class="sub">冷调蓝白 · 基线</div>
+      <div class="swatches">
+        <div class="sw" style="background:#EFF4FB"></div>
+        <div class="sw" style="background:#FFFFFF"></div>
+        <div class="sw" style="background:#2563EB"></div>
+        <div class="sw" style="background:#BFD7FF"></div>
+        <div class="sw" style="background:#0F1729"></div>
+      </div>
+      <div class="sw-labels">
+        <span>canvas</span><span>surface</span><span>accent</span>
+        <span>muted</span><span>text</span>
+      </div>
+      <div class="spec">
+        圆角 <b>6 / 10 / 14</b><br>
+        主色 <b>#2563EB</b>（沿用现状）<br>
+        签名 <b>无</b> —— 它是基线，任务是消失
+      </div>
+    </div>
+
+    <div class="token-card">
+      <h3>生图 · 暗房 / 颜料</h3>
+      <div class="sub">暖纸 · 赭石</div>
+      <div class="swatches">
+        <div class="sw" style="background:#F7F1E8"></div>
+        <div class="sw" style="background:#FFFDFA"></div>
+        <div class="sw" style="background:#A8492A"></div>
+        <div class="sw" style="background:#E3C0AE"></div>
+        <div class="sw" style="background:#201914"></div>
+      </div>
+      <div class="sw-labels">
+        <span>canvas</span><span>surface</span><span>accent</span>
+        <span>muted</span><span>text</span>
+      </div>
+      <div class="spec">
+        圆角 <b>8 / 12 / 16</b>（更软）<br>
+        主色 <b>#A8492A</b> 赭石 · 文字用 <b>#8A381B</b><br>
+        签名 <b>显影</b> —— 模糊 → 锐化 + 安全灯扫光
+      </div>
+    </div>
+
+    <div class="token-card">
+      <h3>生视频 · 剪辑台</h3>
+      <div class="sub">中性石墨 · 单色</div>
+      <div class="swatches">
+        <div class="sw" style="background:#EDEEF0"></div>
+        <div class="sw" style="background:#FFFFFF"></div>
+        <div class="sw" style="background:#1C1E21"></div>
+        <div class="sw" style="background:#C9CDD1"></div>
+        <div class="sw" style="background:#14161A"></div>
+      </div>
+      <div class="sw-labels">
+        <span>canvas</span><span>surface</span><span>accent</span>
+        <span>muted</span><span>text</span>
+      </div>
+      <div class="spec">
+        圆角 <b>4 / 6 / 8</b>（更硬）<br>
+        主色 <b>#1C1E21</b> 墨 —— 靠明暗对比，不靠色相<br>
+        签名 <b>时间轴</b> —— letterbox 画框 + 等宽时间码
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 三屏 ================= -->
+  <section class="screens">
+
+    <!-- ---------- 对话 ---------- -->
+    <div class="screen-col">
+      <div class="caption">
+        <div class="name">对话模式 · 工作室</div>
+        <div class="desc">基线。保持现有冷调，甚至再安静一点。</div>
+      </div>
+
+      <div class="phone mode-chat">
+        <div class="canvas">
+          <div class="ctx-bar">
+            <div class="ico">‹</div>
+            <div class="ico">☰</div>
+            <div class="ctx-div"></div>
+            <div class="ctx-chips">
+              <div class="ctx-chip">◧ mac-mini</div>
+              <div class="ctx-chip">◈ codex</div>
+              <div class="ctx-chip hot">▸ a1b2…9f3c</div>
+            </div>
+            <div class="mode-badge">对话</div>
+          </div>
+
+          <div class="msgs">
+            <div class="row me">
+              <div class="bubble me">看一下 launcher 的 relay 并发配置</div>
+            </div>
+
+            <div class="row">
+              <div class="bubble bot">
+                我查一下 relay 的并发上限定义。
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <span class="dot"></span>
+                    <span>读取 launcher/internal/relay/config.go</span>
+                  </div>
+                  <div class="tool-body">
+                    MaxConcurrent: 8<br>
+                    QueueDepth:&nbsp;&nbsp;&nbsp;64
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="bubble bot">
+                并发上限是 <b>8</b>，队列深度 64。超过后请求排队而不是拒绝。
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="toolbar">
+              <div class="tbtn">⌘ 附件</div>
+              <div class="tbtn">◈ codex</div>
+            </div>
+            <div class="input-row">
+              <div class="field">输入消息</div>
+              <div class="send">➤</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- 生图 ---------- -->
+    <div class="screen-col">
+      <div class="caption">
+        <div class="name">生图模式 · 暗房 / 颜料</div>
+        <div class="desc">暖纸画布、赭石主色、产物按冲印照片处理。</div>
+      </div>
+
+      <div class="phone mode-image">
+        <div class="canvas">
+          <div class="ctx-bar">
+            <div class="ico">‹</div>
+            <div class="ico">☰</div>
+            <div class="ctx-div"></div>
+            <div class="ctx-chips">
+              <div class="ctx-chip">◧ mac-mini</div>
+              <div class="ctx-chip">◈ codex</div>
+            </div>
+            <div class="mode-badge">生图</div>
+          </div>
+
+          <div class="msgs">
+            <div class="row me">
+              <div class="bubble me">一只坐在窗台上的橘猫，晨光，胶片质感</div>
+            </div>
+
+            <!-- 签名时刻：显影 -->
+            <div class="develop">
+              <div class="develop-stage">
+                <div class="develop-art"></div>
+                <div class="safelight"></div>
+              </div>
+              <div class="develop-meta">
+                <div class="spinner"></div>
+                <div class="stage">正在生成图片</div>
+                <div class="time">6s</div>
+              </div>
+            </div>
+
+            <!-- 冲印照片 -->
+            <div class="print">
+              <div class="print-img"></div>
+              <div class="print-cap">
+                <span class="fn">cat_1024.png</span>
+                <span class="sz">1.8 MB</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="toolbar">
+              <div class="tbtn">⌘ 附件</div>
+              <div class="chip on"><span class="k">比例</span><span class="v">1:1</span></div>
+              <div class="chip"><span class="k">尺寸</span><span class="v">默认</span></div>
+              <div class="chip"><span class="k">张数</span><span class="v">1</span></div>
+              <div class="tbtn">◈ gpt-image</div>
+            </div>
+            <div class="input-row">
+              <div class="field">描述你想要的画面</div>
+              <div class="send">➤</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ---------- 生视频 ---------- -->
+    <div class="screen-col">
+      <div class="caption">
+        <div class="name">生视频模式 · 剪辑台</div>
+        <div class="desc">中性石墨、锐角、单色 —— 让视频画面自己发光。</div>
+      </div>
+
+      <div class="phone mode-video">
+        <div class="canvas">
+          <div class="ctx-bar">
+            <div class="ico">‹</div>
+            <div class="ico">☰</div>
+            <div class="ctx-div"></div>
+            <div class="ctx-chips">
+              <div class="ctx-chip">◧ mac-mini</div>
+              <div class="ctx-chip">◈ codex</div>
+            </div>
+            <div class="mode-badge">生视频</div>
+          </div>
+
+          <div class="msgs">
+            <div class="row me">
+              <div class="bubble me">城市夜景延时，车流拖影，8 秒</div>
+            </div>
+
+            <!-- 签名时刻：时间轴 -->
+            <div class="timeline-card">
+              <div class="lb-frame">
+                <div class="lb-inner">
+                  <div class="tc">00:05 / 00:08</div>
+                </div>
+              </div>
+              <div class="tl-meta">
+                <div class="tl-row">
+                  <div class="spinner"></div>
+                  <div class="stage">正在生成视频</div>
+                  <div class="time">00:05</div>
+                </div>
+                <div class="scrub">
+                  <div class="scrub-fill"></div>
+                  <div class="scrub-head"></div>
+                </div>
+                <div class="ticks">
+                  <span>00:00</span><span>00:04</span><span>00:08</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="toolbar">
+              <div class="tbtn">⌘ 附件</div>
+              <div class="chip on"><span class="k">时长</span><span class="v">8s</span></div>
+              <div class="chip"><span class="k">比例</span><span class="v">16:9</span></div>
+              <div class="chip"><span class="k">分辨率</span><span class="v">720P</span></div>
+              <div class="tbtn">◈ grok-video</div>
+            </div>
+            <div class="input-row">
+              <div class="field">描述你想要的镜头</div>
+              <div class="send">➤</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ================= 说明 ================= -->
+  <section class="notes">
+    <div class="note">
+      <h3>变的只有这六处</h3>
+      <ul>
+        <li><b>画布</b> —— 冷白 / 暖纸 / 中性石墨</li>
+        <li><b>顶栏</b> —— 增加模式徽章，唯一的模式主信号</li>
+        <li><b>空态</b> —— 各模式自己的文案与图标</li>
+        <li><b>工具栏 chips</b> —— 同一套控件，换主色与圆角</li>
+        <li><b>发送按钮</b> —— 赭石 / 墨 / 蓝</li>
+        <li><b>生成中卡片</b> —— 三个模式各自的签名时刻</li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h3>刻意不做的</h3>
+      <ul>
+        <li>不给生图配<b>紫粉渐变</b>、给生视频配<b>青蓝渐变</b> —— 那是反射，不是设计</li>
+        <li>不把皮肤套到<b>侧边栏与全局 chrome</b> —— 切模型不该让整个 App 变脸</li>
+        <li>不动<b>布局、间距、字体、交互状态</b> —— 三个模式肌肉记忆一致</li>
+        <li>不让画布<b>变深</b> —— 你选了保持浅色，生视频靠明暗对比与几何取胜</li>
+        <li>不让颜色<b>独自承载状态</b> —— 模式徽章有文字，进度有形状</li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h3>一处需要你拍板的例外</h3>
+      <ul>
+        <li>生视频的 <b>letterbox 画框内部是深的</b> —— 那是视频视口，不是工作区画布。
+            所有真实播放器都这么做，浅灰会让画面发灰像坏了。</li>
+        <li>如果你要连这个也保持浅色，我就把画框改成<b>细边框 + 浅底</b>，
+            代价是画面冲击力明显下降。</li>
+        <li>工作区画布、气泡、输入区<b>仍然全部是浅色</b> —— 这条没有例外。</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

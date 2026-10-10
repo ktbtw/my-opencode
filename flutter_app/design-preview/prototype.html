@@ -1,0 +1,1489 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生图工作台 · 蓝晒 · 交互原型</title>
+<style>
+/* ============================================================
+   生图工作台 —— 蓝晒
+   主色完全取自 AppColors，不新增色相
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* ===== 照搬 AppColors ===== */
+  --bg-start:#EFF4FB; --bg-end:#F7FAFF; --bg:#F2F6FC;
+  --surface:#FFFFFF; --surface-el:#FAFCFF;
+  --border:#D0DDEF; --border-lt:#E8EFF8; --divider:#E4ECF5;
+  --input-bg:#F8FAFD;
+  --primary:#2563EB; --primary-hov:#1D4ED8;
+  --primary-lt:#EFF6FF; --primary-mut:#BFD7FF;
+  --text-1:#0F1729; --text-2:#4A5D7A; --text-3:#8FA3BF;
+
+  /* 蓝晒：由 primary 压深，不是新色相 */
+  --cyan-ink:#1B3A6B; --cyan-deep:#142C52; --cyan-wash:#DCE7F5;
+
+  /* 动效时长 —— 全站统一 */
+  --t-fast:90ms; --t-base:160ms; --t-slow:260ms;
+  --ease-out:cubic-bezier(.22,.7,.3,1);
+  --ease-in:cubic-bezier(.4,0,1,1);
+
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+}
+
+body {
+  background:var(--bg); color:var(--text-1);
+  font-family:var(--sans); font-size:14px; line-height:1.5;
+  padding:44px 32px 80px; -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width:1240px; margin:0 auto; }
+
+/* ---------- 页头 ---------- */
+.page-head { margin-bottom:26px; max-width:730px; }
+.page-head .eyebrow {
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--primary); margin-bottom:12px;
+}
+.page-head h1 { font-size:30px; font-weight:700; letter-spacing:-.03em; line-height:1.22; margin-bottom:12px; }
+.page-head p { color:var(--text-2); font-size:13.5px; line-height:1.75; }
+.page-head p b { color:var(--text-1); font-weight:600; }
+
+.hintbar {
+  display:flex; gap:8px; flex-wrap:wrap; margin-bottom:22px;
+}
+.hintbar .h {
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.02em;
+  color:var(--text-2); background:var(--surface);
+  border:1px solid var(--border); border-radius:99px;
+  padding:5px 11px; display:inline-flex; align-items:center; gap:6px;
+}
+.hintbar .h i { width:5px; height:5px; border-radius:50%; background:var(--primary); }
+
+/* ============================================================
+   工作台
+   ============================================================ */
+.studio {
+  border-radius:14px; overflow:hidden;
+  border:1px solid var(--border);
+  background:linear-gradient(150deg,var(--bg-start),var(--bg-end));
+  box-shadow:0 24px 60px -26px rgba(15,23,41,.22);
+  position:relative;
+}
+.studio::after {
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+  background-image:radial-gradient(circle,rgba(27,58,107,.05) 1px,transparent 1.1px);
+  background-size:5px 5px; z-index:0;
+}
+.studio > * { position:relative; z-index:1; }
+
+/* ---------- 顶栏 ---------- */
+.st-head {
+  height:56px; display:flex; align-items:center; gap:10px;
+  padding:0 20px; background:var(--surface); border-bottom:1px solid var(--border);
+}
+.mark { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+.mark .stack { position:relative; width:22px; height:22px; flex:0 0 auto; }
+.mark .stack i {
+  position:absolute; width:15px; height:15px; border-radius:50%;
+  mix-blend-mode:multiply;
+}
+.mark .stack i:nth-child(1){ background:#7FA8E8; top:0; left:0; }
+.mark .stack i:nth-child(2){ background:#2563EB; top:2px; left:5px; }
+.mark .stack i:nth-child(3){ background:#1B3A6B; top:6px; left:2px; }
+
+.st-title { font-size:16px; font-weight:700; letter-spacing:-.02em; flex:0 0 auto; }
+.st-sub { font-family:var(--mono); font-size:10.5px; color:var(--text-3); letter-spacing:.03em; flex:0 0 auto; }
+.st-dot { width:3px; height:3px; border-radius:50%; background:var(--border); flex:0 0 auto; }
+.st-spacer { flex:1; }
+
+.st-model {
+  display:inline-flex; align-items:center; gap:7px; height:30px; padding:0 11px;
+  border-radius:8px; border:1px solid var(--primary-mut); background:var(--primary-lt);
+  font-family:var(--mono); font-size:11px; color:var(--primary-hov); flex:0 0 auto;
+}
+.st-model .pip { width:6px; height:6px; border-radius:50%; background:var(--primary); }
+
+.st-ico {
+  width:30px; height:30px; display:grid; place-items:center;
+  border-radius:8px; color:var(--text-2); font-size:15px; flex:0 0 auto;
+  transition:background var(--t-base) var(--ease-out);
+}
+.st-ico:hover { background:var(--input-bg); }
+
+/* ---------- 三栏 ---------- */
+.st-body { display:grid; grid-template-columns:72px 1fr 244px; min-height:0; }
+
+/* ============================================================
+   左轨 —— 生成档案
+   ============================================================ */
+.rail {
+  border-right:1px solid var(--border); padding:16px 0;
+  display:flex; flex-direction:column; align-items:center; gap:13px;
+  background:rgba(255,255,255,.45);
+}
+.run { width:42px; display:flex; flex-direction:column; align-items:center; gap:5px; cursor:pointer; }
+.run .stack { width:38px; height:30px; position:relative; }
+.run .stack i {
+  position:absolute; left:0; right:0; height:22px; border-radius:3px;
+  border:1px solid rgba(27,58,107,.16);
+}
+.run .stack i:nth-child(1){ top:8px; left:3px; right:3px; opacity:.45; }
+.run .stack i:nth-child(2){ top:4px; left:1.5px; right:1.5px; opacity:.72; }
+.run .stack i:nth-child(3){ top:0; }
+.run .no { font-family:var(--mono); font-size:9px; color:var(--text-3); letter-spacing:.06em; }
+.run.active .no { color:var(--primary); font-weight:700; }
+.run.active .stack { filter:drop-shadow(0 3px 6px rgba(15,23,41,.2)); }
+.run .stack::after {
+  content:""; position:absolute; inset:-5px -3px -3px -3px;
+  border:1.5px solid var(--primary); border-radius:6px;
+  opacity:0; transform:scale(.94);
+  transition:opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out);
+}
+.run.active .stack::after { opacity:1; transform:scale(1); }
+
+.rail-add {
+  width:38px; height:30px; border:1.5px dashed var(--border); border-radius:5px;
+  display:grid; place-items:center; color:var(--text-3); font-size:14px;
+  transition:border-color var(--t-base) var(--ease-out), color var(--t-base) var(--ease-out);
+  cursor:pointer;
+}
+.rail-add:hover { border-color:var(--primary-mut); color:var(--primary); }
+
+/* ============================================================
+   图片墙
+   ============================================================ */
+.wall { padding:20px 22px 24px; min-height:0; }
+
+.wall-head {
+  display:flex; align-items:baseline; gap:10px; margin-bottom:16px;
+  padding-bottom:10px; border-bottom:1px solid var(--divider);
+}
+.wall-label {
+  font-family:var(--mono); font-size:10px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--text-2);
+}
+.wall-count { font-family:var(--mono); font-size:10px; color:var(--primary); margin-left:auto; letter-spacing:.03em; }
+
+.grid { display:grid; grid-template-columns:repeat(4,1fr); gap:20px 15px; }
+
+/* ---------- 单格 ---------- */
+.sheet { position:relative; }
+
+/* 新格入场：3 拍心跳 */
+.sheet.enter { animation:beat var(--t-slow) var(--ease-out); }
+@keyframes beat {
+  0%   { opacity:0; transform:scale(.95); }
+  60%  { opacity:.85; transform:scale(1.02); }
+  100% { opacity:1; transform:scale(1); }
+}
+
+.sheet .plate {
+  position:relative; aspect-ratio:1/1; overflow:hidden;
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  box-shadow:0 2px 8px -3px rgba(15,23,41,.14);
+  transition:border-color var(--t-base) var(--ease-out),
+             box-shadow var(--t-base) var(--ease-out),
+             transform var(--t-base) var(--ease-out);
+}
+.sheet .plate .art { position:absolute; inset:0; background-size:cover; background-position:center; background-repeat:no-repeat; }
+.sheet .plate .cyanowash { position:absolute; inset:0; background:var(--cyan-ink); mix-blend-mode:color; opacity:0; }
+.sheet .plate .cyanopaper { position:absolute; inset:0; background:var(--cyan-wash); opacity:0; }
+.sheet .plate .rinse {
+  position:absolute; inset:0; opacity:0;
+  background:linear-gradient(100deg,transparent 34%,rgba(255,255,255,.5) 50%,transparent 66%);
+}
+
+/* 已完成 / 待曝光 */
+.sheet[data-s="done"] .plate { cursor:zoom-in; }
+.sheet[data-s="done"]:hover .plate { transform:translateY(-2px); box-shadow:0 10px 22px -8px rgba(15,23,41,.28); }
+
+.sheet[data-s="blank"] .plate {
+  border:1.5px dashed var(--border); background:rgba(255,255,255,.55);
+  display:grid; place-items:center; box-shadow:none;
+}
+.sheet[data-s="blank"] .plate .ph {
+  font-family:var(--mono); font-size:9px; letter-spacing:.14em;
+  color:var(--text-3); text-transform:uppercase;
+}
+
+/* ---------- 选中 ---------- */
+.sheet.picked .plate {
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px var(--surface), 0 0 0 4.5px var(--primary),
+             0 10px 24px -8px rgba(37,99,235,.45);
+}
+.sheet.picked .meta .idx { color:var(--primary); }
+
+/* ---------- 悬停动作 ---------- */
+.acts {
+  position:absolute; right:7px; top:7px; display:flex; gap:4px;
+  opacity:0; transform:translateY(-4px);
+  transition:opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out);
+  pointer-events:none; z-index:4;
+}
+.sheet[data-s="done"]:hover .acts { opacity:1; transform:translateY(0); pointer-events:auto; }
+.acts .a {
+  width:26px; height:26px; border-radius:6px;
+  background:rgba(255,255,255,.94); border:1px solid var(--border);
+  display:grid; place-items:center; color:var(--text-2); font-size:12px;
+  cursor:pointer; backdrop-filter:blur(6px);
+  transition:background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+.acts .a:hover { background:var(--primary); color:#fff; border-color:var(--primary); }
+.acts .a.danger:hover { background:#DC2626; border-color:#DC2626; }
+
+/* ---------- 显影三段 ---------- */
+.sheet .plate .art {
+  opacity:0;
+  filter:blur(16px) saturate(0) contrast(.3) brightness(1.6);
+  transition:opacity 1.5s var(--ease-out), filter 1.8s var(--ease-out);
+}
+.sheet[data-s="expose"] .plate .art {
+  opacity:.92;
+  filter:blur(4px) saturate(.08) contrast(.72) brightness(1.22);
+}
+.sheet[data-s="rinse"] .plate .art,
+.sheet[data-s="fix"] .plate .art,
+.sheet[data-s="done"] .plate .art { opacity:1; filter:none; }
+
+.sheet .plate .cyanowash { transition:opacity 1.6s var(--ease-out); }
+.sheet[data-s="expose"] .plate .cyanowash { opacity:1; }
+.sheet[data-s="rinse"] .plate .cyanowash { opacity:.34; }
+.sheet[data-s="fix"] .plate .cyanowash { opacity:.1; }
+.sheet[data-s="done"] .plate .cyanowash { opacity:0; }
+
+.sheet .plate .cyanopaper { transition:opacity .5s var(--ease-out); }
+.sheet[data-s="expose"] .plate .cyanopaper,
+.sheet[data-s="rinse"] .plate .cyanopaper { opacity:1; }
+
+/* 水洗扫过：只在水洗阶段跑一次 */
+.sheet[data-s="rinse"] .plate .rinse { animation:rinse 1.5s var(--ease-out) forwards; }
+@keyframes rinse {
+  0%   { opacity:0; transform:translateX(-70%); }
+  25%  { opacity:1; }
+  100% { opacity:0; transform:translateX(70%); }
+}
+
+/* 生成中的格：呼吸边 */
+.sheet[data-s="expose"] .plate,
+.sheet[data-s="rinse"] .plate {
+  border-color:var(--primary);
+  animation:breathe 2.4s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%,100% { box-shadow:0 0 0 1px rgba(37,99,235,.28), 0 6px 16px -6px rgba(37,99,235,.32); }
+  50%     { box-shadow:0 0 0 1px rgba(37,99,235,.5),  0 10px 24px -6px rgba(37,99,235,.5); }
+}
+
+/* ---------- 底部信息行 ---------- */
+.sheet .meta {
+  display:flex; align-items:baseline; gap:7px; margin-top:7px;
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; color:var(--text-3);
+}
+.sheet .meta .idx { color:var(--text-2); font-weight:700; }
+.sheet .meta .sz { margin-left:auto; }
+.sheet .meta .stage { color:var(--primary); font-weight:700; }
+
+/* 阶段灯 */
+.stages { display:flex; gap:3px; margin-left:auto; }
+.stages i { width:5px; height:5px; border-radius:50%; background:var(--border); transition:background var(--t-slow) var(--ease-out); }
+.sheet[data-s="expose"] .stages i:nth-child(1),
+.sheet[data-s="rinse"]  .stages i:nth-child(1),
+.sheet[data-s="rinse"]  .stages i:nth-child(2),
+.sheet[data-s="fix"]    .stages i:nth-child(1),
+.sheet[data-s="fix"]    .stages i:nth-child(2),
+.sheet[data-s="fix"]    .stages i:nth-child(3) { background:var(--primary); }
+
+/* 阶段文案 */
+.sheet .meta .stage { display:none; }
+.sheet[data-s="expose"] .meta .stage[data-k="expose"],
+.sheet[data-s="rinse"]  .meta .stage[data-k="rinse"],
+.sheet[data-s="fix"]    .meta .stage[data-k="fix"] { display:inline; }
+.sheet[data-s="expose"] .meta .sz,
+.sheet[data-s="rinse"]  .meta .sz,
+.sheet[data-s="fix"]    .meta .sz { display:none; }
+
+/* ============================================================
+   空态
+   ============================================================ */
+.empty {
+  grid-column:1 / -1; padding:56px 24px; text-align:center;
+  border:1.5px dashed var(--border); border-radius:10px;
+  background:var(--input-bg);
+  animation:beat var(--t-slow) var(--ease-out);
+}
+.empty .glyph { margin-bottom:15px; }
+.empty .t { font-size:14px; font-weight:600; margin-bottom:7px; }
+.empty .s { font-family:var(--mono); font-size:10.5px; color:var(--text-3); letter-spacing:.02em; line-height:1.9; }
+
+/* ============================================================
+   参数台
+   ============================================================ */
+.params {
+  border-left:1px solid var(--border); background:rgba(255,255,255,.55);
+  padding:18px 0 16px; display:flex; flex-direction:column;
+}
+.p-head {
+  display:flex; align-items:baseline;
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--text-2);
+  padding:0 18px 12px; border-bottom:1px solid var(--divider); margin-bottom:4px;
+}
+.p-head .hint { margin-left:auto; font-size:9px; color:var(--text-3); letter-spacing:.02em; text-transform:none; }
+
+/* 参数行 */
+.p-row {
+  padding:10px 18px; display:flex; align-items:center; gap:8px;
+  border-left:3px solid transparent; cursor:pointer;
+  transition:background var(--t-base) var(--ease-out), border-color var(--t-base) var(--ease-out);
+}
+.p-row:hover { background:rgba(255,255,255,.85); }
+.p-row.on { border-left-color:var(--primary); background:var(--primary-lt); }
+.p-row.open { background:var(--primary-lt); border-left-color:var(--primary); }
+.p-row .k { font-size:12px; color:var(--text-2); flex:0 0 auto; }
+.p-row .v { margin-left:auto; font-size:12.5px; font-variant-numeric:tabular-nums; color:var(--text-3); }
+.p-row.on .v { color:var(--primary-hov); font-weight:700; }
+.p-row .chev {
+  font-size:9px; color:var(--text-3); margin-left:1px; flex:0 0 auto;
+  transition:transform var(--t-base) var(--ease-out);
+}
+.p-row.open .chev { transform:rotate(180deg); }
+
+/* 就地展开：grid-template-rows 0fr → 1fr */
+.p-wrap { display:grid; grid-template-rows:0fr; transition:grid-template-rows var(--t-slow) var(--ease-out); }
+.p-wrap.open { grid-template-rows:1fr; }
+.p-wrap > .inner { overflow:hidden; }
+.p-expand { padding:2px 18px 10px 21px; background:var(--primary-lt); border-left:3px solid var(--primary); }
+
+.opt {
+  display:flex; align-items:center; gap:8px; padding:6px 9px; border-radius:6px;
+  font-size:12px; color:var(--text-2); cursor:pointer;
+  transition:background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+.opt:hover { background:rgba(255,255,255,.9); }
+.opt.cur { background:var(--surface); border:1px solid var(--primary-mut); color:var(--primary-hov); font-weight:600; }
+.opt .sub { color:var(--text-3); font-size:10.5px; font-family:var(--mono); }
+.opt .chk { margin-left:auto; color:var(--primary); font-size:11px; }
+
+/* 张数步进器 */
+.stepper { display:flex; align-items:center; margin-left:auto; }
+.stepper .btn {
+  width:22px; height:22px; border-radius:5px;
+  border:1px solid var(--primary-mut); background:var(--surface); color:var(--primary);
+  display:grid; place-items:center; font-size:13px; line-height:1; cursor:pointer;
+  transition:background var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+  user-select:none;
+}
+.stepper .btn:hover { background:var(--primary-lt); }
+.stepper .btn:active { transform:scale(.9); }
+.stepper .btn.off { opacity:.35; cursor:not-allowed; }
+.stepper .n {
+  font-family:var(--mono); font-size:12.5px; font-weight:700; color:var(--primary-hov);
+  font-variant-numeric:tabular-nums; min-width:24px; text-align:center;
+}
+.stepper .n.tick { animation:tick var(--t-base) var(--ease-out); }
+@keyframes tick {
+  0%   { opacity:0; transform:translateY(-5px); }
+  100% { opacity:1; transform:translateY(0); }
+}
+
+.p-sep { height:1px; background:var(--divider); margin:8px 18px; }
+
+/* 配方摘要 */
+.recipe {
+  margin:auto 18px 0; padding:12px 13px; border-radius:8px;
+  background:var(--surface); border:1px solid var(--primary-mut);
+}
+.recipe .cap {
+  font-family:var(--mono); font-size:9px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--primary); margin-bottom:8px;
+}
+.recipe .line { font-family:var(--mono); font-size:10.5px; color:var(--text-2); line-height:1.85; letter-spacing:.02em; }
+.recipe .line b { color:var(--text-1); font-weight:700; }
+
+/* ============================================================
+   命令条
+   ============================================================ */
+.cmd { border-top:1px solid var(--border); padding:14px 20px 16px; background:var(--surface); }
+.cmd-row { display:flex; align-items:stretch; gap:10px; }
+
+.cmd-field {
+  flex:1; display:flex; align-items:center; gap:10px; min-height:48px; padding:0 15px;
+  border-radius:10px; background:var(--input-bg); border:1px solid var(--border);
+  transition:border-color var(--t-base) var(--ease-out), background var(--t-base) var(--ease-out);
+}
+.cmd-field.focus { border-color:var(--primary); background:var(--surface); }
+.cmd-field input {
+  flex:1; border:0; outline:0; background:transparent;
+  font-family:var(--sans); font-size:13.5px; color:var(--text-1);
+}
+.cmd-field input::placeholder { color:var(--text-3); }
+.caret { width:2px; height:16px; background:var(--primary); animation:blink 1.1s step-end infinite; }
+.cmd-field.filled .caret { display:none; }
+@keyframes blink { 50% { opacity:0 } }
+
+/* 曝光按钮 */
+.press-btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:9px;
+  min-width:126px; padding:0 24px; border-radius:10px;
+  background:var(--primary); color:#fff;
+  font-size:14px; font-weight:600; letter-spacing:.02em;
+  flex:0 0 auto; cursor:pointer; border:0;
+  box-shadow:0 4px 12px -3px rgba(37,99,235,.5);
+  transition:background var(--t-base) var(--ease-out),
+             transform var(--t-fast) var(--ease-out),
+             box-shadow var(--t-base) var(--ease-out);
+  font-family:var(--sans);
+}
+.press-btn:hover { background:var(--primary-hov); }
+.press-btn:active { transform:scale(.97); }
+.press-btn.stop { background:#DC2626; box-shadow:0 4px 12px -3px rgba(220,38,38,.45); }
+.press-btn.stop:hover { background:#B91C1C; }
+.press-btn .lbl { display:inline-flex; align-items:center; gap:9px; }
+.press-btn svg { flex:0 0 auto; }
+/* 进度环 */
+.press-btn .ring { transform:rotate(-90deg); }
+.press-btn .ring circle { transition:stroke-dashoffset .3s linear; }
+
+/* 日志 */
+.log {
+  margin-top:12px; display:flex; align-items:baseline; gap:10px;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.02em;
+  border-top:1px solid var(--divider); padding-top:11px; overflow:hidden;
+}
+.log .tag { color:var(--primary); flex:0 0 auto; font-weight:700; }
+.log .txt { color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; }
+.log .meta { color:var(--text-3); flex:0 0 auto; margin-left:auto; font-variant-numeric:tabular-nums; }
+
+/* ============================================================
+   放大查看
+   ============================================================ */
+.viewer {
+  position:fixed; inset:0; z-index:60;
+  background:rgba(15,23,41,.82); backdrop-filter:blur(10px);
+  display:grid; place-items:center; padding:48px;
+  opacity:0; pointer-events:none;
+  transition:opacity var(--t-slow) var(--ease-out);
+}
+.viewer.on { opacity:1; pointer-events:auto; }
+.viewer .box {
+  width:min(660px,84vw); position:relative;
+  transform:scale(.94); transition:transform var(--t-slow) var(--ease-out);
+}
+.viewer.on .box { transform:scale(1); }
+.viewer .box .frame {
+  aspect-ratio:1/1; border-radius:10px; overflow:hidden;
+  border:1px solid rgba(255,255,255,.22);
+  box-shadow:0 40px 90px -30px #000;
+  background:#fff; position:relative;
+}
+.viewer .box .frame .art { position:absolute; inset:0; }
+.viewer .cap {
+  margin-top:14px; display:flex; align-items:baseline; gap:10px;
+  font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.72); letter-spacing:.03em;
+}
+.viewer .cap .sz { margin-left:auto; }
+.viewer .nav {
+  position:absolute; top:50%; transform:translateY(-50%);
+  width:40px; height:40px; border-radius:50%;
+  background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.24);
+  display:grid; place-items:center; color:#fff; font-size:16px; cursor:pointer;
+  transition:background var(--t-base) var(--ease-out);
+}
+.viewer .nav:hover { background:rgba(255,255,255,.28); }
+.viewer .nav.prev { left:-56px; }
+.viewer .nav.next { right:-56px; }
+.viewer .close {
+  position:absolute; top:-44px; right:0;
+  font-family:var(--mono); font-size:11px; letter-spacing:.1em;
+  color:rgba(255,255,255,.6); cursor:pointer; text-transform:uppercase;
+}
+.viewer .close:hover { color:#fff; }
+
+/* ============================================================
+   Toast
+   ============================================================ */
+.toast {
+  position:fixed; left:50%; bottom:34px; transform:translate(-50%,16px);
+  background:var(--text-1); color:#fff; font-size:12.5px;
+  padding:10px 18px; border-radius:99px; z-index:80;
+  opacity:0; pointer-events:none;
+  transition:opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out);
+  box-shadow:0 12px 30px -10px rgba(15,23,41,.6);
+}
+.toast.on { opacity:1; transform:translate(-50%,0); }
+
+/* ============================================================
+   规格说明
+   ============================================================ */
+.specs { margin-top:40px; display:grid; grid-template-columns:repeat(3,1fr); gap:18px; }
+.spec {
+  border:1px solid var(--border); border-radius:12px; padding:22px; background:var(--surface);
+}
+.spec h3 { font-size:13px; font-weight:700; margin-bottom:4px; }
+.spec .cap {
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--primary); margin-bottom:16px;
+}
+.spec table { width:100%; border-collapse:collapse; }
+.spec td {
+  font-size:11.5px; padding:6px 0; vertical-align:top;
+  border-bottom:1px solid var(--divider); color:var(--text-2); line-height:1.6;
+}
+.spec tr:last-child td { border-bottom:0; }
+.spec td:first-child { color:var(--text-1); font-weight:600; width:38%; padding-right:10px; }
+.spec code {
+  font-family:var(--mono); font-size:10px; color:var(--primary-hov);
+  background:var(--primary-lt); padding:1px 4px; border-radius:3px;
+}
+
+/* ============================================================
+   手机版
+   ============================================================ */
+.mobile-row { margin-top:36px; display:grid; grid-template-columns:340px 1fr; gap:30px; align-items:start; }
+.phone {
+  width:340px; height:640px; border-radius:26px; overflow:hidden;
+  border:1px solid var(--border); box-shadow:0 26px 60px -22px rgba(15,23,41,.3), 0 0 0 7px #fff;
+  display:flex; flex-direction:column; position:relative;
+  background:linear-gradient(150deg,var(--bg-start),var(--bg-end));
+}
+.phone::after {
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.45;
+  background-image:radial-gradient(circle,rgba(27,58,107,.05) 1px,transparent 1.1px);
+  background-size:5px 5px;
+}
+.phone > * { position:relative; z-index:1; }
+.m-grid {
+  display:grid; grid-template-columns:repeat(2,1fr); gap:15px 12px;
+  padding:16px 15px 8px; flex:1; min-height:0; overflow:hidden;
+}
+.m-summary {
+  display:flex; align-items:center; gap:8px;
+  padding:9px 13px; border-top:1px solid var(--divider);
+  font-family:var(--mono); font-size:10px; color:var(--text-2); letter-spacing:.02em;
+  background:var(--surface-el); cursor:pointer;
+}
+.m-summary .v { color:var(--primary-hov); font-weight:700; }
+.m-summary .chev { margin-left:auto; color:var(--text-3); font-size:9px; }
+.m-cmd { border-top:1px solid var(--border); padding:11px 13px 14px; background:var(--surface); }
+.m-cmd .row1 { display:flex; gap:8px; align-items:stretch; }
+.m-cmd .fld {
+  flex:1; min-height:42px; border-radius:10px; background:var(--input-bg);
+  border:1px solid var(--border); display:flex; align-items:center; padding:0 13px;
+  font-size:12px; color:var(--text-3);
+}
+.m-cmd .exp {
+  width:42px; height:42px; border-radius:10px; background:var(--primary);
+  display:grid; place-items:center; color:#fff; flex:0 0 auto;
+  box-shadow:0 4px 12px -3px rgba(37,99,235,.5);
+}
+
+@media (prefers-reduced-motion:reduce) {
+  *, *::before, *::after { animation-duration:.01ms !important; transition-duration:.01ms !important; }
+}
+@media (max-width:1080px) {
+  .specs, .mobile-row { grid-template-columns:1fr; }
+  .st-body { grid-template-columns:1fr; }
+  .rail, .params { display:none; }
+  .grid { grid-template-columns:repeat(2,1fr); }
+  body { padding:28px 16px 60px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page-head">
+    <div class="eyebrow">Chat Codex · 交互原型</div>
+    <h1>生图工作台 · 蓝晒</h1>
+    <p>
+      主色<b>完全取自 AppColors</b>，未新增色相。这一版是<b>能真跑的交互原型</b> ——
+      点选、悬停、放大、曝光全流程、停止、参数就地展开、张数步进器、空态、日志计时，
+      以及三段显影动画。蓝色圆圈已去掉。
+    </p>
+  </header>
+
+  <div class="hintbar">
+    <span class="h"><i></i>点格子选中</span>
+    <span class="h"><i></i>悬停看操作</span>
+    <span class="h"><i></i>点已生成的格子放大</span>
+    <span class="h"><i></i>点参数行就地展开</span>
+    <span class="h"><i></i>张数用 − / + 改，格子会实时增减</span>
+    <span class="h"><i></i>按「曝光」跑完整生成</span>
+  </div>
+
+  <!-- ============================================================
+       工作台
+       ============================================================ -->
+  <div class="studio" id="studio">
+
+    <div class="st-head">
+      <div class="mark">
+        <div class="stack"><i></i><i></i><i></i></div>
+        <div class="st-title">生图工作台</div>
+      </div>
+      <div class="st-sub">mac-mini</div>
+      <div class="st-dot"></div>
+      <div class="st-sub">codex</div>
+      <div class="st-dot"></div>
+      <div class="st-sub" id="runLabel">第 07 次生成</div>
+      <div class="st-spacer"></div>
+      <div class="st-model"><span class="pip"></span>gpt-image-1</div>
+      <div class="st-ico">⋯</div>
+    </div>
+
+    <div class="st-body">
+
+      <!-- 生成档案 -->
+      <div class="rail">
+        <div class="run"><div class="stack">
+          <i style="background:linear-gradient(140deg,#C6D6EA,#8FA8C4)"></i>
+          <i style="background:linear-gradient(140deg,#9FB8D6,#5E7BA0)"></i>
+          <i style="background:linear-gradient(140deg,#C9D9EC,#94AECB)"></i>
+        </div><div class="no">05</div></div>
+        <div class="run"><div class="stack">
+          <i style="background:linear-gradient(140deg,#B8CDE6,#7E9CBE)"></i>
+          <i style="background:linear-gradient(140deg,#D2E0F0,#9DB5D2)"></i>
+          <i style="background:linear-gradient(140deg,#A8C2DE,#6E8EB4)"></i>
+        </div><div class="no">06</div></div>
+        <div class="run active"><div class="stack">
+          <i style="background:linear-gradient(140deg,#7FA8E8,#2563EB)"></i>
+          <i style="background:linear-gradient(140deg,#4A7BD8,#1D4ED8)"></i>
+          <i style="background:linear-gradient(140deg,#9DB8E0,#3B6BC4)"></i>
+        </div><div class="no">07</div></div>
+        <div class="rail-add">+</div>
+      </div>
+
+      <!-- 图片墙 -->
+      <div class="wall">
+        <div class="wall-head">
+          <div class="wall-label">Proof Wall · 第 07 次</div>
+          <div class="wall-count" id="wallCount">0 / 6 已定影</div>
+        </div>
+        <div class="grid" id="grid"></div>
+      </div>
+
+      <!-- 参数台 -->
+      <div class="params">
+        <div class="p-head">参数<span class="hint">随模型能力变化</span></div>
+        <div id="paramRows"></div>
+        <div class="recipe">
+          <div class="cap">本次配方</div>
+          <div class="line" id="recipeLine"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 命令条 -->
+    <div class="cmd">
+      <div class="cmd-row">
+        <div class="cmd-field" id="field">
+          <input id="prompt" placeholder="描述你想要的画面" autocomplete="off">
+          <span class="caret" id="caret"></span>
+        </div>
+        <button class="press-btn" id="press">
+          <span class="lbl" id="pressLbl">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/>
+              <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            曝光
+          </span>
+        </button>
+      </div>
+      <div class="log">
+        <span class="tag" id="logTag">印次 07</span>
+        <span class="txt" id="logTxt">等待输入</span>
+        <span class="meta" id="logMeta">—</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================================================
+       放大查看
+       ============================================================ -->
+  <div class="viewer" id="viewer">
+    <div class="box">
+      <div class="close" id="viewerClose">ESC 关闭</div>
+      <div class="frame"><div class="art" id="viewerArt"></div></div>
+      <div class="cap">
+        <span id="viewerIdx">01</span>
+        <span id="viewerName">cat_01.png</span>
+        <span class="sz" id="viewerSz">1.8 MB</span>
+      </div>
+      <div class="nav prev" id="viewerPrev">‹</div>
+      <div class="nav next" id="viewerNext">›</div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- ============================================================
+       交互规格
+       ============================================================ -->
+  <div class="specs">
+
+    <div class="spec">
+      <h3>显影三段</h3>
+      <div class="cap">Signature Animation</div>
+      <table>
+        <tr><td>曝光</td><td>1.8s<br>蓝色单色 · <code>blur 16→4px</code><br><code>saturate 0→.08</code></td></tr>
+        <tr><td>水洗</td><td>1.7s<br>水波扫过 · 真彩还原<br><code>color</code> 蒙版 1→.34</td></tr>
+        <tr><td>定影</td><td>.9s<br>落定 · 蒙版退到 0</td></tr>
+      </table>
+    </div>
+
+    <div class="spec">
+      <h3>组件状态</h3>
+      <div class="cap">Components</div>
+      <table>
+        <tr><td>格子</td><td>待曝光 / 曝光 / 水洗 / 定影 / 已完成 / 选中</td></tr>
+        <tr><td>悬停</td><td>上浮 2px + 阴影加深 + 操作浮出</td></tr>
+        <tr><td>主按钮</td><td>曝光 → 进度环 → 停止</td></tr>
+        <tr><td>参数行</td><td>默认 / 已设 / 展开</td></tr>
+        <tr><td>步进器</td><td>常态 / 按下缩放 / 到达上限</td></tr>
+      </table>
+    </div>
+
+    <div class="spec">
+      <h3>动效参数</h3>
+      <div class="cap">Motion Tokens</div>
+      <table>
+        <tr><td>快</td><td><code>90ms</code> 按下、悬停换色</td></tr>
+        <tr><td>标准</td><td><code>160ms</code> 选中、浮层、Toast</td></tr>
+        <tr><td>慢</td><td><code>260ms</code> 入场、展开、放大</td></tr>
+        <tr><td>缓动</td><td><code>cubic-bezier(.22,.7,.3,1)</code></td></tr>
+        <tr><td>入场</td><td>3 拍：.95 → 1.02 → 1</td></tr>
+      </table>
+    </div>
+
+  </div>
+
+  <!-- ============================================================
+       手机版
+       ============================================================ -->
+  <div class="mobile-row">
+    <div>
+      <div class="phone">
+        <div class="st-head" style="height:50px;padding:0 14px;gap:8px;">
+          <div class="mark">
+            <div class="stack" style="width:18px;height:18px;">
+              <i style="width:12px;height:12px;background:#7FA8E8;"></i>
+              <i style="width:12px;height:12px;background:#2563EB;top:2px;left:4px;"></i>
+              <i style="width:12px;height:12px;background:#1B3A6B;top:5px;left:1.5px;"></i>
+            </div>
+            <div class="st-title" style="font-size:14px;">生图工作台</div>
+          </div>
+          <div class="st-spacer"></div>
+          <div class="st-sub">第 07 次</div>
+        </div>
+
+        <div class="m-grid" id="mGrid"></div>
+
+        <div class="m-summary">
+          <span class="v" id="mSummary">1:1 · 6 张 · 精细</span>
+          <span class="chev">▾</span>
+        </div>
+
+        <div class="m-cmd">
+          <div class="row1">
+            <div class="fld">一只坐在窗台上的橘猫…</div>
+            <div class="exp">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="spec" style="height:100%;">
+        <h3>手机上的差异</h3>
+        <div class="cap">Compact</div>
+        <table>
+          <tr><td>图片墙</td><td>4 列 → 2 列</td></tr>
+          <tr><td>参数台</td><td>右侧常驻 → 命令条上方一行摘要，点开底部抽屉</td></tr>
+          <tr><td>生成档案</td><td>左轨 → 顶栏抽屉</td></tr>
+          <tr><td>摘要行</td><td><b>始终可见</b>，收起不等于隐藏</td></tr>
+          <tr><td>悬停操作</td><td>触屏无悬停 → 长按出菜单</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   图样池 —— 内联 SVG，有真实结构，才能看出显影
+   注意：返回裸 data URI，由 JS 赋给 style.backgroundImage，
+   不能塞进 HTML 的 style="" 属性里（SVG 内含双引号会截断属性）
+   ============================================================ */
+const svg = (s) => `data:image/svg+xml,${encodeURIComponent(s)}`;
+const artURL = (uri) => `url("${uri}")`;
+
+const ART = [
+  /* 01 窗台上的猫 · 暖晨光 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <linearGradient id='sky' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#FFE9C8'/><stop offset='55%' stop-color='#F0C08A'/><stop offset='100%' stop-color='#C98A55'/>
+      </linearGradient>
+      <linearGradient id='cat' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#D9853F'/><stop offset='100%' stop-color='#8A4A1E'/>
+      </linearGradient>
+      <radialGradient id='sun' cx='72%' cy='24%' r='52%'>
+        <stop offset='0' stop-color='#FFF6DE' stop-opacity='.95'/><stop offset='1' stop-color='#FFF6DE' stop-opacity='0'/>
+      </radialGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#sky)'/>
+    <rect width='400' height='400' fill='url(#sun)'/>
+    <rect x='30' y='40' width='150' height='190' fill='#FFF3DC' opacity='.55'/>
+    <rect x='30' y='40' width='150' height='190' fill='none' stroke='#8A5A32' stroke-width='5'/>
+    <line x1='105' y1='40' x2='105' y2='230' stroke='#8A5A32' stroke-width='4'/>
+    <line x1='30' y1='135' x2='180' y2='135' stroke='#8A5A32' stroke-width='4'/>
+    <rect x='0' y='250' width='400' height='150' fill='#A9713F'/>
+    <rect x='0' y='250' width='400' height='10' fill='#7E5028'/>
+    <ellipse cx='245' cy='258' rx='78' ry='62' fill='url(#cat)'/>
+    <path d='M196 214 L182 168 L214 196 Z' fill='#C2752F'/>
+    <path d='M292 212 L308 166 L276 196 Z' fill='#C2752F'/>
+    <circle cx='243' cy='206' r='46' fill='#E0954C'/>
+    <circle cx='228' cy='200' r='5.5' fill='#3A2414'/>
+    <circle cx='258' cy='200' r='5.5' fill='#3A2414'/>
+    <path d='M236 220 q7 7 14 0' stroke='#3A2414' stroke-width='2.6' fill='none' stroke-linecap='round'/>
+    <path d='M320 250 q40 -22 42 -62' stroke='#B0642C' stroke-width='14' fill='none' stroke-linecap='round'/>
+    <rect x='0' y='250' width='400' height='150' fill='#000' opacity='.06'/>
+  </svg>`),
+
+  /* 02 山脊 · 逆光 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <linearGradient id='s2' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#FFD9A8'/><stop offset='48%' stop-color='#E8A070'/><stop offset='100%' stop-color='#7A4A34'/>
+      </linearGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#s2)'/>
+    <circle cx='290' cy='128' r='44' fill='#FFF2D8' opacity='.9'/>
+    <path d='M0 262 L96 178 L162 232 L246 148 L318 214 L400 168 L400 400 L0 400 Z' fill='#8A5236' opacity='.85'/>
+    <path d='M0 312 L88 246 L178 300 L268 226 L400 292 L400 400 L0 400 Z' fill='#5E3524'/>
+    <path d='M0 356 L120 306 L232 352 L340 302 L400 330 L400 400 L0 400 Z' fill='#33200F'/>
+  </svg>`),
+
+  /* 03 雪原 · 冷调 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <linearGradient id='s3' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#DCEAF8'/><stop offset='60%' stop-color='#A8C4DE'/><stop offset='100%' stop-color='#5E7EA0'/>
+      </linearGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#s3)'/>
+    <circle cx='116' cy='104' r='34' fill='#FFFFFF' opacity='.8'/>
+    <path d='M0 232 L120 160 L212 224 L318 150 L400 206 L400 400 L0 400 Z' fill='#8FAEC8'/>
+    <path d='M0 268 L120 196 L212 260 L318 186 L400 242 L400 400 L0 400 Z' fill='#E8F0F8'/>
+    <path d='M0 322 L150 274 L262 326 L400 282 L400 400 L0 400 Z' fill='#FFFFFF'/>
+  </svg>`),
+
+  /* 04 静物 · 陶罐与果 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <linearGradient id='bg4' x1='0' y1='0' x2='1' y2='1'>
+        <stop offset='0' stop-color='#F0DCB8'/><stop offset='100%' stop-color='#B0824E'/>
+      </linearGradient>
+      <linearGradient id='jar' x1='0' y1='0' x2='1' y2='0'>
+        <stop offset='0' stop-color='#C97A44'/><stop offset='45%' stop-color='#E8A868'/><stop offset='100%' stop-color='#8A4A24'/>
+      </linearGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#bg4)'/>
+    <rect x='0' y='296' width='400' height='104' fill='#8A5C34'/>
+    <ellipse cx='200' cy='300' rx='150' ry='20' fill='#000' opacity='.14'/>
+    <path d='M152 296 L152 168 q0 -30 48 -30 q48 0 48 30 L248 296 Z' fill='url(#jar)'/>
+    <ellipse cx='200' cy='140' rx='34' ry='11' fill='#7A4020'/>
+    <circle cx='300' cy='276' r='26' fill='#C83A32'/>
+    <circle cx='292' cy='268' r='8' fill='#E87068' opacity='.6'/>
+    <circle cx='106' cy='282' r='21' fill='#E0A030'/>
+    <circle cx='100' cy='276' r='6' fill='#F5C860' opacity='.7'/>
+  </svg>`),
+
+  /* 05 竹林 · 绿 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <linearGradient id='bg5' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#E4F0D4'/><stop offset='100%' stop-color='#7E9A62'/>
+      </linearGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#bg5)'/>
+    <g stroke='#4E6A38' stroke-width='13' stroke-linecap='round'>
+      <line x1='70' y1='400' x2='70' y2='40'/>
+      <line x1='168' y1='400' x2='168' y2='0'/>
+      <line x1='268' y1='400' x2='268' y2='60'/>
+      <line x1='348' y1='400' x2='348' y2='20'/>
+    </g>
+    <g stroke='#2E4224' stroke-width='3'>
+      <line x1='64' y1='120' x2='76' y2='120'/><line x1='64' y1='220' x2='76' y2='220'/>
+      <line x1='162' y1='90' x2='174' y2='90'/><line x1='162' y1='200' x2='174' y2='200'/>
+      <line x1='262' y1='150' x2='274' y2='150'/><line x1='342' y1='110' x2='354' y2='110'/>
+    </g>
+    <path d='M168 140 q-54 -26 -86 -6 q40 22 86 6 Z' fill='#5E8442'/>
+    <path d='M268 210 q58 -24 88 -2 q-42 22 -88 2 Z' fill='#5E8442'/>
+    <path d='M70 260 q-46 -22 -62 -4 q34 20 62 4 Z' fill='#4E7038'/>
+  </svg>`),
+
+  /* 06 雾中花 · 粉 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <radialGradient id='bg6' cx='50%' cy='42%' r='72%'>
+        <stop offset='0' stop-color='#F8E4EE'/><stop offset='100%' stop-color='#A87094'/>
+      </radialGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#bg6)'/>
+    <g stroke='#5E7A4E' stroke-width='6' fill='none' stroke-linecap='round'>
+      <path d='M200 400 L200 214'/><path d='M200 300 q-52 -18 -66 -58'/><path d='M200 268 q54 -20 70 -60'/>
+    </g>
+    <g>
+      <circle cx='200' cy='176' r='30' fill='#F2A8C8'/><circle cx='176' cy='200' r='28' fill='#E88CB4'/>
+      <circle cx='224' cy='200' r='28' fill='#E88CB4'/><circle cx='186' cy='150' r='26' fill='#F8C4DA'/>
+      <circle cx='216' cy='150' r='26' fill='#F8C4DA'/><circle cx='200' cy='188' r='15' fill='#F5D86A'/>
+    </g>
+    <circle cx='128' cy='250' r='22' fill='#E88CB4'/><circle cx='128' cy='250' r='9' fill='#F5D86A'/>
+    <circle cx='276' cy='220' r='19' fill='#F2A8C8'/><circle cx='276' cy='220' r='8' fill='#F5D86A'/>
+  </svg>`),
+
+  /* 07 沙丘 · 金 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <linearGradient id='bg7' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#FFF0D0'/><stop offset='100%' stop-color='#C89A4E'/>
+      </linearGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#bg7)'/>
+    <circle cx='300' cy='92' r='38' fill='#FFF8E0' opacity='.85'/>
+    <path d='M0 250 q100 -56 200 -18 q100 38 200 -14 L400 400 L0 400 Z' fill='#D8AE64'/>
+    <path d='M0 306 q120 -48 216 -12 q96 36 184 -18 L400 400 L0 400 Z' fill='#B08A42'/>
+    <path d='M0 358 q130 -40 230 -6 q100 34 170 -12 L400 400 L0 400 Z' fill='#7E5E2A'/>
+  </svg>`),
+
+  /* 08 夜航 · 深蓝 */
+  svg(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
+    <defs>
+      <linearGradient id='bg8' x1='0' y1='0' x2='0' y2='1'>
+        <stop offset='0' stop-color='#1E3350'/><stop offset='55%' stop-color='#3C5E86'/><stop offset='100%' stop-color='#7E9EC0'/>
+      </linearGradient>
+    </defs>
+    <rect width='400' height='400' fill='url(#bg8)'/>
+    <circle cx='308' cy='86' r='30' fill='#F0F4F8'/>
+    <circle cx='298' cy='80' r='30' fill='#2A4468'/>
+    <g fill='#FFFFFF' opacity='.8'>
+      <circle cx='64' cy='60' r='2.4'/><circle cx='132' cy='104' r='1.8'/><circle cx='212' cy='52' r='2.2'/>
+      <circle cx='268' cy='152' r='1.6'/><circle cx='96' cy='168' r='2'/><circle cx='350' cy='188' r='1.8'/>
+    </g>
+    <path d='M0 292 q80 -30 160 0 q80 30 160 -6 q40 -18 80 -4 L400 400 L0 400 Z' fill='#16263C'/>
+    <path d='M0 336 q100 -26 190 4 q90 30 210 -10 L400 400 L0 400 Z' fill='#0E1A2A'/>
+    <path d='M176 264 L200 234 L224 264 Z' fill='#F0F4F8' opacity='.9'/>
+  </svg>`),
+];
+
+/* ============================================================
+   参数定义 —— 真实场景下由 image_capabilities 决定
+   ============================================================ */
+const P = {
+  aspect:  { label:'画幅',   values:['1:1','2:3','3:2','16:9','9:16'], def:'1:1' },
+  count:   { label:'张数',   stepper:true, def:6 },
+  quality: { label:'精细度', values:['快速','标准','精细','高清'],      def:'标准' },
+  format:  { label:'格式',   values:['PNG','JPEG','WEBP'],              def:'PNG' },
+  refs:    { label:'参考图', values:['0 张','1 张','2 张','3 张'],      def:'0 张' },
+};
+
+/* ============================================================
+   状态
+   ============================================================ */
+const S = {
+  count: 6,
+  tiles: [],           // { status, art, size }
+  picked: null,
+  params: { aspect:'1:1', count:6, quality:'精细', format:'PNG', refs:'0 张' },
+  set:    { aspect:true, count:true, quality:true },   // 哪些被用户显式设过
+  generating: false,
+  startedAt: 0,
+  timers: [],
+  tickTimer: null,
+  progress: 0,
+};
+
+const $  = (s) => document.querySelector(s);
+const grid = $('#grid');
+
+/* ============================================================
+   初始化格子
+   ============================================================ */
+function blankTile(i) {
+  return { status:'blank', art: ART[i % ART.length], size:'—', name:`cat_${String(i+1).padStart(2,'0')}` };
+}
+
+function buildTiles(preserve = true) {
+  const old = S.tiles;
+  const next = [];
+  for (let i = 0; i < S.count; i++) {
+    if (preserve && old[i] && old[i].status !== 'blank') next.push(old[i]);
+    else next.push(blankTile(i));
+  }
+  S.tiles = next;
+  renderGrid(true);
+}
+
+/* ============================================================
+   渲染
+   ============================================================ */
+function renderGrid(animate = false) {
+  const wasEmpty = grid.querySelector('.empty');
+  grid.innerHTML = '';
+
+  const allBlank = S.tiles.every(t => t.status === 'blank');
+  if (allBlank) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.innerHTML = `
+      <div class="glyph">
+        <svg width="46" height="46" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="7.5" stroke="#8FA3BF" stroke-width="1"/>
+          <path d="M12 .5v9M12 14.5v9M.5 12h9M14.5 12h9" stroke="#8FA3BF" stroke-width="1"/>
+        </svg>
+      </div>
+      <div class="t">描述你想要的画面</div>
+      <div class="s">相纸已就位 · ${S.count} 格待曝光<br>写下第一句，然后按曝光</div>`;
+    grid.appendChild(e);
+    renderMobile();
+    updateWallCount();
+    return;
+  }
+
+  S.tiles.forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'sheet';
+    el.dataset.s = t.status;
+    el.dataset.i = i;
+    if (S.picked === i) el.classList.add('picked');
+    if (animate) el.classList.add('enter');
+
+    el.innerHTML = `
+      <div class="plate">
+        <div class="cyanopaper"></div>
+        <div class="art"></div>
+        <div class="cyanowash"></div>
+        <div class="rinse"></div>
+      </div>
+      <div class="acts">
+        <div class="a" data-act="open" title="放大">⤢</div>
+        <div class="a" data-act="down" title="下载">↓</div>
+        <div class="a danger" data-act="del" title="删除">✕</div>
+      </div>
+      <div class="meta">
+        <span class="idx">${String(i+1).padStart(2,'0')}</span>
+        <span>${t.name}</span>
+        <span class="stage" data-k="expose">曝光中</span>
+        <span class="stage" data-k="rinse">水洗中</span>
+        <span class="stage" data-k="fix">定影中</span>
+        <span class="sz">${t.size}</span>
+        <span class="stages"><i></i><i></i><i></i></span>
+      </div>`;
+
+    el.querySelector('.art').style.backgroundImage = artURL(t.art);
+
+    if (t.status === 'blank') {
+      el.querySelector('.meta').innerHTML =
+        `<span class="idx">${String(i+1).padStart(2,'0')}</span><span>—</span>`;
+      el.querySelector('.plate').innerHTML = `<div class="ph">待曝光</div>`;
+    }
+
+    el.addEventListener('click', (ev) => {
+      const act = ev.target.closest('.a');
+      if (act) { doAction(act.dataset.act, i); return; }
+      if (t.status === 'done') { S.picked = (S.picked === i ? null : i); renderGrid(); openViewer(i); }
+      else if (t.status !== 'blank') { /* 生成中不可选 */ }
+      else { S.picked = (S.picked === i ? null : i); renderGrid(); }
+    });
+
+    grid.appendChild(el);
+  });
+
+  renderMobile();
+  updateWallCount();
+}
+
+/* ============================================================
+   手机版同步
+   ============================================================ */
+function renderMobile() {
+  const m = $('#mGrid');
+  m.innerHTML = '';
+  S.tiles.slice(0, 4).forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'sheet';
+    el.dataset.s = t.status;
+    if (t.status === 'blank') {
+      el.innerHTML = `<div class="plate"><div class="ph">待曝光</div></div>
+        <div class="meta"><span class="idx">${String(i+1).padStart(2,'0')}</span><span>—</span></div>`;
+    } else {
+      el.innerHTML = `
+        <div class="plate">
+          <div class="cyanopaper"></div>
+          <div class="art"></div>
+          <div class="cyanowash"></div>
+          <div class="rinse"></div>
+        </div>
+        <div class="meta"><span class="idx">${String(i+1).padStart(2,'0')}</span><span class="sz">${t.size}</span></div>`;
+      el.querySelector('.art').style.backgroundImage = artURL(t.art);
+    }
+    m.appendChild(el);
+  });
+}
+
+/* ============================================================
+   参数台
+   ============================================================ */
+function renderParams() {
+  const box = $('#paramRows');
+  box.innerHTML = '';
+
+  Object.keys(P).forEach((key) => {
+    const def = P[key];
+    const isSet = S.set[key];
+    const val = key === 'count' ? S.count : S.params[key];
+
+    const row = document.createElement('div');
+    row.className = 'p-row' + (isSet ? ' on' : '');
+    row.dataset.key = key;
+
+    if (def.stepper) {
+      row.innerHTML = `
+        <span class="k">${def.label}</span>
+        <span class="stepper">
+          <span class="btn${S.count <= 1 ? ' off' : ''}" data-step="-1">−</span>
+          <span class="n" id="countN">${S.count}</span>
+          <span class="btn${S.count >= 10 ? ' off' : ''}" data-step="1">+</span>
+        </span>`;
+      row.querySelectorAll('.btn').forEach(b => {
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const d = parseInt(b.dataset.step, 10);
+          const next = Math.min(10, Math.max(1, S.count + d));
+          if (next === S.count) return;
+          S.count = next;
+          S.params.count = next;
+          S.set.count = true;
+          const n = $('#countN');
+          n.classList.remove('tick'); void n.offsetWidth; n.classList.add('tick');
+          n.textContent = next;
+          renderParams();
+          buildTiles();
+          toast(`张数改为 ${next}`);
+        });
+      });
+      box.appendChild(row);
+      return;
+    }
+
+    row.innerHTML = `
+      <span class="k">${def.label}</span>
+      <span class="v">${val}</span>
+      <span class="chev">▾</span>`;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'p-wrap';
+    const inner = document.createElement('div');
+    inner.className = 'inner';
+    const exp = document.createElement('div');
+    exp.className = 'p-expand';
+    def.values.forEach(v => {
+      const o = document.createElement('div');
+      o.className = 'opt' + (v === val ? ' cur' : '');
+      o.innerHTML = `<span>${v}</span>${v === def.def ? '<span class="sub">默认</span>' : ''}` +
+                    (v === val ? '<span class="chk">✓</span>' : '');
+      o.addEventListener('click', (e) => {
+        e.stopPropagation();
+        S.params[key] = v;
+        S.set[key] = (v !== def.def);
+        renderParams();
+        updateRecipe();
+        toast(`${def.label}：${v}`);
+      });
+      exp.appendChild(o);
+    });
+    inner.appendChild(exp);
+    wrap.appendChild(inner);
+
+    row.addEventListener('click', () => {
+      const isOpen = wrap.classList.contains('open');
+      document.querySelectorAll('.p-wrap.open').forEach(w => w.classList.remove('open'));
+      document.querySelectorAll('.p-row.open').forEach(r => r.classList.remove('open'));
+      if (!isOpen) { wrap.classList.add('open'); row.classList.add('open'); }
+    });
+
+    box.appendChild(row);
+    box.appendChild(wrap);
+  });
+
+  updateRecipe();
+}
+
+function updateRecipe() {
+  $('#recipeLine').innerHTML =
+    `<b>1024²</b> · <b>${S.params.aspect}</b> · <b>${S.count} 张</b><br>` +
+    `${S.params.quality} · ${S.params.format} · ${S.params.refs === '0 张' ? '无参考图' : S.params.refs}`;
+  $('#mSummary').textContent = `${S.params.aspect} · ${S.count} 张 · ${S.params.quality}`;
+}
+
+function updateWallCount() {
+  const done = S.tiles.filter(t => t.status === 'done').length;
+  $('#wallCount').textContent = `${done} / ${S.count} 已定影`;
+}
+
+/* ============================================================
+   曝光 —— 完整生成流程
+   ============================================================ */
+function expose() {
+  if (S.generating) return stop();
+
+  const text = $('#prompt').value.trim();
+  if (!text) { $('#prompt').focus(); toast('先写下你想要的画面'); return; }
+
+  const blanks = S.tiles.map((t, i) => t.status === 'blank' ? i : -1).filter(i => i >= 0);
+  if (!blanks.length) { toast('全部已定影，先增加张数或删除几格'); return; }
+
+  S.generating = true;
+  S.startedAt = Date.now();
+  S.progress = 0;
+  $('#logTxt').textContent = text;
+  setButtonGenerating();
+
+  const PER_TILE = 900;
+  const total = blanks.length * PER_TILE + 4400;
+
+  blanks.forEach((idx, n) => {
+    push(() => runTile(idx), n * PER_TILE);
+  });
+  push(() => finishGeneration(), total);
+  startTick(total);
+}
+
+function runTile(idx) {
+  const t = S.tiles[idx];
+  if (!t) return;
+
+  // 曝光
+  t.status = 'expose';
+  patch(idx);
+  push(() => { t.status = 'rinse'; patch(idx); }, 1800);
+  push(() => { t.status = 'fix';   patch(idx); }, 3500);
+  push(() => {
+    t.status = 'done';
+    t.size = (1.2 + Math.random() * 1.4).toFixed(1) + 'M';
+    patch(idx);
+    updateWallCount();
+  }, 4400);
+}
+
+/* 只改 class，不重建 DOM —— 动画不被打断。
+   但从「待曝光」进入显影时，plate 里只有占位符，
+   必须先把三层动画层装回去，否则签名动画根本不会播。 */
+function patch(idx) {
+  const t = S.tiles[idx];
+  const el = grid.querySelector(`.sheet[data-i="${idx}"]`);
+  if (!el) return;
+
+  if (!el.querySelector('.art')) {
+    const plate = el.querySelector('.plate');
+    plate.innerHTML = `
+      <div class="cyanopaper"></div>
+      <div class="art"></div>
+      <div class="cyanowash"></div>
+      <div class="rinse"></div>`;
+    plate.querySelector('.art').style.backgroundImage = artURL(t.art);
+
+    el.querySelector('.meta').innerHTML = `
+      <span class="idx">${String(idx + 1).padStart(2, '0')}</span>
+      <span>${t.name}</span>
+      <span class="stage" data-k="expose">曝光中</span>
+      <span class="stage" data-k="rinse">水洗中</span>
+      <span class="stage" data-k="fix">定影中</span>
+      <span class="sz">${t.size}</span>
+      <span class="stages"><i></i><i></i><i></i></span>`;
+
+    // 强制回流：让元素先以「未显影」的基础态渲染一帧，
+    // 之后设置 data-s 才会触发 transition，而不是直接跳到终态。
+    void plate.offsetWidth;
+  }
+
+  el.dataset.s = t.status;
+  const sz = el.querySelector('.sz');
+  if (sz && t.size !== '—') sz.textContent = t.size;
+}
+
+function finishGeneration() {
+  S.generating = false;
+  stopTick();
+  setButtonIdle();
+  const done = S.tiles.filter(t => t.status === 'done').length;
+  toast(`第 07 次生成完成 · ${done} 张已定影`);
+  $('#logMeta').textContent =
+    `1024² · ${S.params.aspect} · ${done} 张 · ${S.params.quality} · ${((Date.now()-S.startedAt)/1000).toFixed(1)}s`;
+}
+
+function stop() {
+  S.timers.forEach(clearTimeout);
+  S.timers = [];
+  stopTick();
+  // 收尾：正在显影的直接落定
+  S.tiles.forEach((t, i) => {
+    if (t.status === 'expose' || t.status === 'rinse' || t.status === 'fix') {
+      t.status = 'done';
+      t.size = (1.2 + Math.random() * 1.4).toFixed(1) + 'M';
+      patch(i);
+    }
+  });
+  S.generating = false;
+  setButtonIdle();
+  updateWallCount();
+  toast('已停止，进行中的已落定');
+}
+
+function push(fn, delay) { S.timers.push(setTimeout(fn, delay)); }
+
+/* ============================================================
+   按钮状态
+   ============================================================ */
+function setButtonGenerating() {
+  const b = $('#press');
+  b.classList.add('stop');
+  b.innerHTML = `<span class="lbl">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
+      </svg>
+      停止
+    </span>`;
+}
+
+function setButtonIdle() {
+  const b = $('#press');
+  b.classList.remove('stop');
+  b.innerHTML = `<span class="lbl">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/>
+        <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      曝光
+    </span>`;
+}
+
+/* 日志计时 */
+function startTick(total) {
+  stopTick();
+  S.tickTimer = setInterval(() => {
+    const el = (Date.now() - S.startedAt) / 1000;
+    const done = S.tiles.filter(t => t.status === 'done').length;
+    $('#logMeta').textContent =
+      `${done} / ${S.count} · ${S.params.aspect} · ${S.params.quality} · ${el.toFixed(1)}s`;
+  }, 100);
+}
+function stopTick() { if (S.tickTimer) { clearInterval(S.tickTimer); S.tickTimer = null; } }
+
+/* ============================================================
+   放大查看
+   ============================================================ */
+let viewerIdx = 0;
+function openViewer(i) {
+  const t = S.tiles[i];
+  if (!t || t.status !== 'done') return;
+  viewerIdx = i;
+  $('#viewerArt').style.backgroundImage = artURL(t.art);
+  $('#viewerIdx').textContent = String(i+1).padStart(2,'0');
+  $('#viewerName').textContent = `${t.name}.png`;
+  $('#viewerSz').textContent = t.size;
+  $('#viewer').classList.add('on');
+}
+function closeViewer() { $('#viewer').classList.remove('on'); }
+function stepViewer(d) {
+  const doneIdx = S.tiles.map((t,i)=>t.status==='done'?i:-1).filter(i=>i>=0);
+  if (!doneIdx.length) return;
+  const at = doneIdx.indexOf(viewerIdx);
+  const next = doneIdx[(at + d + doneIdx.length) % doneIdx.length];
+  openViewer(next);
+  S.picked = next;
+  renderGrid();
+}
+$('#viewerClose').addEventListener('click', closeViewer);
+$('#viewerPrev').addEventListener('click', (e) => { e.stopPropagation(); stepViewer(-1); });
+$('#viewerNext').addEventListener('click', (e) => { e.stopPropagation(); stepViewer(1); });
+$('#viewer').addEventListener('click', (e) => { if (e.target.id === 'viewer') closeViewer(); });
+document.addEventListener('keydown', (e) => {
+  if (!$('#viewer').classList.contains('on')) return;
+  if (e.key === 'Escape') closeViewer();
+  if (e.key === 'ArrowLeft') stepViewer(-1);
+  if (e.key === 'ArrowRight') stepViewer(1);
+});
+
+/* ============================================================
+   格子操作
+   ============================================================ */
+function doAction(act, i) {
+  const t = S.tiles[i];
+  if (act === 'open') { openViewer(i); return; }
+  if (act === 'down') { toast(`已保存 ${t.name}.png`); return; }
+  if (act === 'del') {
+    S.tiles[i] = blankTile(i);
+    if (S.picked === i) S.picked = null;
+    renderGrid();
+    toast('已清空该格');
+  }
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+let toastTimer = null;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('on'), 1900);
+}
+
+/* ============================================================
+   绑定
+   ============================================================ */
+$('#press').addEventListener('click', expose);
+$('#prompt').addEventListener('input', (e) => {
+  $('#field').classList.toggle('filled', e.target.value.length > 0);
+});
+$('#prompt').addEventListener('focus', () => $('#field').classList.add('focus'));
+$('#prompt').addEventListener('blur',  () => $('#field').classList.remove('focus'));
+$('#prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter') expose(); });
+
+/* ============================================================
+   启动 —— 预置 4 张已定影，和第 07 次生成的样子一致
+   ============================================================ */
+S.tiles = [0,1,2,3,4,5].map(i => ({
+  status: i < 4 ? 'done' : 'blank',
+  art: ART[i % ART.length],
+  size: ['1.8M','2.1M','1.6M','1.9M'][i] || '—',
+  name: `cat_${String(i+1).padStart(2,'0')}`,
+}));
+renderGrid();
+renderParams();
+$('#prompt').value = '一只坐在窗台上的橘猫，晨光，胶片质感';
+$('#field').classList.add('filled');
+$('#logTxt').textContent = '一只坐在窗台上的橘猫，晨光，胶片质感';
+$('#logMeta').textContent = '1024² · 1:1 · 4 张 · 精细 · 6.2s';
+</script>
+</body>
+</html>

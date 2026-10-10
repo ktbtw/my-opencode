@@ -3,7 +3,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-const root=fileURLToPath(new URL('../',import.meta.url));
+const root=path.resolve(fileURLToPath(new URL('../',import.meta.url)));
 const created='2026-10-07T03:00:00Z';
 const resources={
  'mcp-catalog':[
@@ -14,6 +14,7 @@ const resources={
  'semantic-agents':[{id:'agent-fixture',name:'代码助手',description:'完成代码修改与测试',enabled:true,built_in:true,prompt:'检查目标后修改代码并验证。',skills:['skill-fixture'],recommended_mcp_servers:['fixture-a'],runtime_requirements:[],updated_at:created}],
  'runtime-catalog':[{id:'node-fixture',name:'Node.js',description:'JavaScript 运行环境',kind:'runtime',install_strategy:'archive',enabled:true,tags:['开发'],versions:[],mirrors:[],artifacts:[],updated_at:created}],
  'environment-presets':[{id:'env-fixture',name:'开发环境',category:'开发',description:'本地构建变量',enabled:true,variables:{MODE:'fixture'},updated_at:created}],
+ 'semantic-model-prompts':[{id:'prompt-fixture',name:'Codex 提示词',provider:'openai',model_pattern:'codex',prompt:'面向 Codex 的专属提示词。',enabled:true,sort_order:10,updated_at:created}],
  operators:[{id:1,username:'admin',name:'管理员',membership_tier:'pro',upload_policy:{chunk_size:4194304,concurrency:4,target_bytes_per_second:20971520}},{id:2,username:'fixture-member',name:'测试用户',membership_tier:'free',upload_policy:{chunk_size:524288,concurrency:1,target_bytes_per_second:1048576}}],
 };
 const control={fail:'',delay:'',delayMs:0,pending:0};

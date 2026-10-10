@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -311,5 +313,142 @@ func TestCatalogReasoningPresetSubsets(t *testing.T) {
 		if len(variants) != tc.count || thinking.Protocol != tc.protocol {
 			t.Fatalf("%s: %+v %+v", tc.id, variants, thinking)
 		}
+	}
+}
+
+// waitForCatalogContext 等待后台刷新把指定上下文窗口写进缓存，避免用例之间
+// 争用全局缓存。
+func waitForCatalogContext(t *testing.T, context int64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		catalogCache.Lock()
+		ok := len(catalogCache.providers) == 1 && catalogCache.providers[0].Models["gpt-5.4"].Limit.Context == context
+		catalogCache.Unlock()
+		if ok {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("catalogue refresh did not settle on context=%d", context)
+}
+
+// catalogCallResult 承载一次 EnsureOpenCodeModelCatalog 的返回值，让用例可以在
+// 超时后判定失败，而不是永久挂起（阻塞回归会表现为死等网络）。
+type catalogCallResult struct {
+	providers []RuntimeProviderMetadataItem
+	elapsed   time.Duration
+}
+
+func ensureCatalogWithin(t *testing.T, limit time.Duration) catalogCallResult {
+	t.Helper()
+	done := make(chan catalogCallResult, 1)
+	go func() {
+		started := time.Now()
+		providers := EnsureOpenCodeModelCatalog()
+		done <- catalogCallResult{providers: providers, elapsed: time.Since(started)}
+	}()
+	select {
+	case result := <-done:
+		return result
+	case <-time.After(limit):
+		t.Fatalf("EnsureOpenCodeModelCatalog 在 %v 内未返回；目录刷新又回到阻塞请求路径上了", limit)
+		return catalogCallResult{}
+	}
+}
+
+// slowCatalogServer 提供一个永不主动完成的目录响应，用于验证请求路径不会
+// 等待网络。release 用于放行响应；server 的关闭顺序已安排好，因此即使用例
+// 提前失败也不会卡在 Close 上。
+func slowCatalogServer(t *testing.T, body string) (url string, release func()) {
+	t.Helper()
+	gate := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-gate
+		_, _ = w.Write([]byte(body))
+	}))
+	// LIFO：先放行挂起的 handler，再关闭 server，避免 Close 无限等待。
+	t.Cleanup(server.Close)
+	t.Cleanup(release)
+	return server.URL, release
+}
+
+func TestEnsureCatalogReturnsSnapshotWithoutWaitingForSlowRefresh(t *testing.T) {
+	catalogFixture(t)
+	t.Setenv("OPENCODE_MODELS_PATH", "")
+	t.Setenv("OPENCODE_DISABLE_MODELS_FETCH", "")
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	// 准备一份有效快照：慢刷新期间请求必须立刻拿到它，而不是等网络。
+	launcherPath := filepath.Join(os.Getenv("XDG_CACHE_HOME"), "chat-codex", "model-catalog.json")
+	if err := os.MkdirAll(filepath.Dir(launcherPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := `{"openai":{"models":{"gpt-5.4":{"limit":{"context":1050000,"output":128000}}}}}`
+	if err := os.WriteFile(launcherPath, []byte(snapshot), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	url, release := slowCatalogServer(t, `{"openai":{"models":{"gpt-5.4":{"limit":{"context":1000000,"output":128000}}}}}`)
+	t.Setenv("OPENCODE_MODELS_URL", url)
+
+	result := ensureCatalogWithin(t, time.Second)
+	if len(result.providers) != 1 || result.providers[0].Models["gpt-5.4"].Limit.Context != 1050000 {
+		t.Fatalf("慢刷新期间未返回上一次的有效快照: %+v", result.providers)
+	}
+
+	// 放行后台刷新，并等它落定，避免影响后续用例。
+	release()
+	waitForCatalogContext(t, 1000000)
+}
+
+func TestEnsureCatalogDoesNotBlockWhenNoSnapshotExists(t *testing.T) {
+	catalogFixture(t)
+	t.Setenv("OPENCODE_MODELS_PATH", "")
+	t.Setenv("OPENCODE_DISABLE_MODELS_FETCH", "")
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	url, release := slowCatalogServer(t, `{"openai":{"models":{"gpt-5.4":{"limit":{"context":1000000}}}}}`)
+	t.Setenv("OPENCODE_MODELS_URL", url)
+
+	// 缓存为空时也必须立即返回，绝不能让首屏等待 models.dev。
+	result := ensureCatalogWithin(t, time.Second)
+	if len(result.providers) != 0 {
+		t.Fatalf("空缓存时应返回空目录，而不是等待网络: %+v", result.providers)
+	}
+
+	release()
+	waitForCatalogContext(t, 1000000)
+}
+
+func TestEnsureCatalogClaimsRefreshOnlyOnce(t *testing.T) {
+	catalogFixture(t)
+	t.Setenv("OPENCODE_MODELS_PATH", "")
+	t.Setenv("OPENCODE_DISABLE_MODELS_FETCH", "")
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		_, _ = w.Write([]byte(`{"openai":{"models":{"gpt-5.4":{"limit":{"context":1000000}}}}}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENCODE_MODELS_URL", server.URL)
+
+	// 并发调用只应触发一次联网刷新：认领后 checked 已推进。
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			EnsureOpenCodeModelCatalog()
+		}()
+	}
+	wg.Wait()
+	waitForCatalogContext(t, 1000000)
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("并发调用触发了 %d 次刷新，应为 1 次", got)
 	}
 }

@@ -1,0 +1,1312 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>印坊 · 独立生图界面</title>
+<style>
+/* ============================================================
+   印坊 —— 独立生图界面
+   纸白画布，荧光粉当唯一重音，分色叠印当签名
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* 纸 */
+  --paper:     #F1EBE0;
+  --paper-2:   #F8F4EC;
+  --paper-3:   #FDFBF7;
+  --paper-edge:#DED5C6;
+
+  /* 墨 */
+  --ink:       #231F20;
+  --ink-2:     #5A544E;
+  --ink-3:     #8E857B;
+
+  /* 三块印版 */
+  --plate-c:   #0091D5;
+  --plate-m:   #FF3D8B;
+  --plate-y:   #F5C518;
+
+  /* 重音 —— 荧光粉，只用在开印与生成态 */
+  --hot:       #FF3D8B;
+  --hot-deep:  #D11E68;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+          "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  background: #E8E1D4;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 52px 32px 96px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 1240px; margin: 0 auto; }
+
+/* ============================================================
+   页头
+   ============================================================ */
+.page-head { margin-bottom: 36px; max-width: 700px; }
+.page-head .eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--hot-deep);
+  margin-bottom: 14px;
+}
+.page-head h1 {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  margin-bottom: 14px;
+  color: var(--ink);
+}
+.page-head p { color: var(--ink-2); font-size: 13.5px; line-height: 1.75; }
+.page-head p b { color: var(--ink); font-weight: 600; }
+
+/* ============================================================
+   三色墨条
+   ============================================================ */
+.inks {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 30px;
+}
+
+.ink {
+  border: 1px solid var(--paper-edge);
+  border-radius: 6px;
+  background: var(--paper-3);
+  padding: 16px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.ink .well {
+  width: 46px; height: 62px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 2px 6px rgba(0,0,0,.22);
+}
+.ink .well::after {
+  content: "";
+  position: absolute; inset: 0;
+  opacity: .3;
+  background-image: radial-gradient(circle, #000 1px, transparent 1.1px);
+  background-size: 4px 4px;
+}
+
+.ink .nm {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 3px;
+  letter-spacing: -0.01em;
+}
+.ink .cd {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: .04em;
+  margin-bottom: 8px;
+}
+.ink .role {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+.ink .role b { color: var(--hot-deep); font-weight: 600; }
+
+/* ============================================================
+   印坊主体
+   ============================================================ */
+.studio {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--paper-edge);
+  background: linear-gradient(170deg, var(--paper-2), var(--paper) 60%, #ECE5D9);
+  box-shadow: 0 30px 70px -28px rgba(60,48,32,.4);
+  position: relative;
+}
+
+/* 纸纹 —— 全幅细网点 */
+.studio::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .55;
+  background-image: radial-gradient(circle, rgba(35,31,32,.055) 1px, transparent 1.1px);
+  background-size: 5px 5px;
+  z-index: 0;
+}
+.studio > * { position: relative; z-index: 1; }
+
+/* ---------- 套准标记 ---------- */
+.regmark {
+  position: absolute;
+  width: 18px; height: 18px;
+  opacity: .38;
+  pointer-events: none;
+  z-index: 2;
+}
+.regmark.tl { top: 9px;  left: 9px; }
+.regmark.tr { top: 9px;  right: 9px; }
+.regmark.bl { bottom: 9px; left: 9px; }
+.regmark.br { bottom: 9px; right: 9px; }
+
+/* ---------- 顶栏 ---------- */
+.st-head {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.mark {
+  display: flex; align-items: center; gap: 9px;
+  flex: 0 0 auto;
+}
+.mark .plate-stack {
+  position: relative;
+  width: 22px; height: 22px;
+  flex: 0 0 auto;
+}
+.mark .plate-stack i {
+  position: absolute;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  mix-blend-mode: multiply;
+}
+.mark .plate-stack i:nth-child(1) { background: var(--plate-c); top: 0; left: 0; }
+.mark .plate-stack i:nth-child(2) { background: var(--plate-m); top: 2px; left: 5px; }
+.mark .plate-stack i:nth-child(3) { background: var(--plate-y); top: 6px; left: 2px; }
+
+.st-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  flex: 0 0 auto;
+}
+
+.st-sub {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: .04em;
+  flex: 0 0 auto;
+}
+.st-dot {
+  width: 3px; height: 3px; border-radius: 50%;
+  background: var(--paper-edge); flex: 0 0 auto;
+}
+.st-spacer { flex: 1; }
+
+.st-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 3px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-3);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+.st-model .pip {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--plate-c);
+}
+
+.st-ico {
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  border-radius: 3px;
+  color: var(--ink-2);
+  font-size: 15px;
+  flex: 0 0 auto;
+}
+
+/* ---------- 三栏 ---------- */
+.st-body {
+  display: grid;
+  grid-template-columns: 76px 1fr 200px;
+  min-height: 0;
+}
+
+/* ============================================================
+   左轨 —— 印次历史（每一印次一叠纸）
+   ============================================================ */
+.rail {
+  border-right: 1.5px solid var(--ink);
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255,255,255,.35);
+}
+
+.run {
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.run .stack {
+  width: 38px; height: 30px;
+  position: relative;
+}
+.run .stack i {
+  position: absolute;
+  left: 0; right: 0;
+  height: 22px;
+  border-radius: 1px;
+  border: 1px solid rgba(35,31,32,.22);
+}
+.run .stack i:nth-child(1) { top: 8px; left: 3px; right: 3px; opacity: .5; }
+.run .stack i:nth-child(2) { top: 4px; left: 1.5px; right: 1.5px; opacity: .75; }
+.run .stack i:nth-child(3) { top: 0; }
+
+.run .no {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--ink-3);
+  letter-spacing: .06em;
+}
+.run.active .no { color: var(--ink); font-weight: 700; }
+.run.active .stack { filter: drop-shadow(0 3px 5px rgba(60,48,32,.28)); }
+.run.active .stack::after {
+  content: "";
+  position: absolute;
+  inset: -5px -3px -3px -3px;
+  border: 1.5px solid var(--hot);
+  border-radius: 3px;
+}
+
+.rail-add {
+  width: 38px; height: 30px;
+  border: 1.5px dashed var(--paper-edge);
+  border-radius: 2px;
+  display: grid; place-items: center;
+  color: var(--ink-3);
+  font-size: 14px;
+}
+
+/* ============================================================
+   打样墙
+   ============================================================ */
+.wall {
+  padding: 22px 24px 26px;
+  min-height: 0;
+}
+
+.wall-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--paper-edge);
+}
+.wall-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.wall-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--hot-deep);
+  margin-left: auto;
+  letter-spacing: .04em;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 22px 16px;
+}
+
+/* ---------- 单张打样 ---------- */
+.sheet { position: relative; }
+
+.sheet .plate {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: var(--paper-3);
+  border: 1px solid rgba(35,31,32,.2);
+  box-shadow: 0 3px 10px -3px rgba(60,48,32,.28);
+}
+/* 印刷网点 */
+.sheet .plate::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .5;
+  background-image: radial-gradient(circle, rgba(35,31,32,.13) 1px, transparent 1.1px);
+  background-size: 4px 4px;
+}
+.sheet .plate .art { position: absolute; inset: 0; }
+
+/* 底片信息 */
+.sheet .meta {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .05em;
+  color: var(--ink-3);
+}
+.sheet .meta .idx { color: var(--ink-2); font-weight: 700; }
+.sheet .meta .sz { margin-left: auto; }
+
+/* ---------- 选中：套印加粗 + 荧光粉圈 ---------- */
+.sheet.picked .plate {
+  border-color: var(--ink);
+  box-shadow:
+    3px 3px 0 var(--plate-c),
+    -3px -3px 0 var(--plate-y),
+    0 6px 18px -4px rgba(60,48,32,.4);
+}
+.sheet.picked .meta .idx { color: var(--hot-deep); }
+
+.circle {
+  position: absolute;
+  top: -13px; left: -14px;
+  width: calc(100% + 28px);
+  height: calc(100% + 24px);
+  pointer-events: none;
+  overflow: visible;
+  z-index: 3;
+}
+.circle ellipse {
+  fill: none;
+  stroke: var(--hot);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: .9;
+}
+
+/* ---------- 生成中：分色叠印 ---------- */
+.sheet.live .plate {
+  border-color: var(--hot);
+  box-shadow:
+    0 0 0 1px rgba(255,61,139,.35),
+    0 8px 22px -6px rgba(209,30,104,.45);
+}
+
+/* 三块印版依次落版 —— 淡色油墨 multiply 叠在画面上，
+   不是把画面遮成网点。网点来自 plate::after 的纹理层。 */
+.plate .pass {
+  position: absolute;
+  inset: 0;
+  mix-blend-mode: multiply;
+  opacity: 0;
+}
+.plate .pass.c {
+  background: #B3E3F7;
+  animation: pass-c 5.6s cubic-bezier(.22,.7,.3,1) infinite;
+}
+.plate .pass.m {
+  background: #FFCCE3;
+  animation: pass-m 5.6s cubic-bezier(.22,.7,.3,1) infinite;
+}
+.plate .pass.y {
+  background: #FFF4CC;
+  animation: pass-y 5.6s cubic-bezier(.22,.7,.3,1) infinite;
+}
+
+/* 每块版落版时墨色最重，随后收干成一层极淡的印痕 ——
+   终态是「真图 + 一点油墨味」，不是被油墨糊住。 */
+@keyframes pass-c {
+  0%   { opacity: 0; transform: translate(-7px, -2px); }
+  12%  { opacity: 1; transform: translate(0, 0); }
+  100% { opacity: .12; transform: translate(0, 0); }
+}
+@keyframes pass-m {
+  0%, 22% { opacity: 0; transform: translate(7px, 1px); }
+  36%     { opacity: 1; transform: translate(0, 0); }
+  100%    { opacity: .1; transform: translate(0, 0); }
+}
+@keyframes pass-y {
+  0%, 46% { opacity: 0; transform: translate(0, 7px); }
+  60%     { opacity: 1; transform: translate(0, 0); }
+  100%    { opacity: .1; transform: translate(0, 0); }
+}
+
+.sheet.live .meta .stage {
+  color: var(--hot-deep);
+  font-weight: 700;
+  animation: blink-soft 1.8s ease-in-out infinite;
+}
+@keyframes blink-soft { 0%,100%{opacity:.55} 50%{opacity:1} }
+
+/* 落版指示灯 */
+.passes {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+.passes i {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--paper-edge);
+}
+.passes i.c { animation: dot-c 5.6s infinite; }
+.passes i.m { animation: dot-m 5.6s infinite; }
+.passes i.y { animation: dot-y 5.6s infinite; }
+@keyframes dot-c { 0%,10%{background:var(--paper-edge)} 12%,100%{background:var(--plate-c)} }
+@keyframes dot-m { 0%,34%{background:var(--paper-edge)} 36%,100%{background:var(--plate-m)} }
+@keyframes dot-y { 0%,58%{background:var(--paper-edge)} 60%,100%{background:var(--plate-y)} }
+
+/* ---------- 未开印 ---------- */
+.sheet.blank .plate {
+  border: 1.5px dashed var(--paper-edge);
+  background: rgba(255,255,255,.4);
+  display: grid;
+  place-items: center;
+  box-shadow: none;
+}
+.sheet.blank .plate .ph {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .16em;
+  color: #B5AC9F;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   制版台
+   ============================================================ */
+.plates {
+  border-left: 1.5px solid var(--ink);
+  background: rgba(255,255,255,.4);
+  padding: 20px 0;
+}
+
+.p-head {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 0 18px 14px;
+  border-bottom: 1px solid var(--paper-edge);
+  margin-bottom: 6px;
+}
+
+.p-row {
+  padding: 11px 18px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border-left: 3px solid transparent;
+}
+.p-row.on { border-left-color: var(--hot); }
+
+.p-row .k {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: .04em;
+  flex: 0 0 auto;
+}
+.p-row .v {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.p-row.on .v { color: var(--ink); font-weight: 700; }
+.p-row .chev { font-size: 9px; color: #B5AC9F; margin-left: 2px; }
+
+/* ============================================================
+   命令条
+   ============================================================ */
+.cmd {
+  border-top: 1.5px solid var(--ink);
+  padding: 15px 20px 17px;
+  background: rgba(255,255,255,.5);
+}
+
+.cmd-row { display: flex; align-items: stretch; gap: 11px; }
+
+.cmd-field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 15px;
+  border-radius: 3px;
+  background: var(--paper-3);
+  border: 1.5px solid var(--ink);
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.cmd-field .caret {
+  width: 2px; height: 16px;
+  background: var(--hot);
+  animation: blink 1.1s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0 } }
+
+/* 开印 —— 荧光粉，黑字 */
+.press-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 24px;
+  border-radius: 3px;
+  background: var(--hot);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  border: 1.5px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  flex: 0 0 auto;
+}
+
+/* 印次日志 —— 取代聊天气泡 */
+.log {
+  margin-top: 13px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .02em;
+  border-top: 1px solid var(--paper-edge);
+  padding-top: 12px;
+  overflow: hidden;
+}
+.log .tag { color: var(--hot-deep); flex: 0 0 auto; font-weight: 700; }
+.log .txt {
+  color: var(--ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+.log .meta { color: var(--ink-3); flex: 0 0 auto; margin-left: auto; }
+
+/* ============================================================
+   细节面板
+   ============================================================ */
+.details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+  margin-top: 40px;
+}
+
+.panel {
+  border: 1px solid var(--paper-edge);
+  border-radius: 8px;
+  background: var(--paper-3);
+  padding: 26px;
+}
+.panel h3 {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 5px;
+}
+.panel .cap {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--hot-deep);
+  margin-bottom: 18px;
+}
+
+.split { display: flex; gap: 26px; align-items: flex-start; }
+
+/* 落版特写 */
+.live-close { width: 200px; flex: 0 0 auto; }
+.live-close .plate {
+  position: relative;
+  aspect-ratio: 1/1;
+  overflow: hidden;
+  background: var(--paper-3);
+  border: 1.5px solid var(--hot);
+  box-shadow: 0 8px 22px -6px rgba(209,30,104,.4);
+}
+.live-close .plate::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .5;
+  background-image: radial-gradient(circle, rgba(35,31,32,.13) 1px, transparent 1.1px);
+  background-size: 4px 4px;
+}
+
+.legend { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.legend .li {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px;
+  color: var(--ink-2); letter-spacing: .03em;
+}
+.legend .li i {
+  width: 9px; height: 9px; border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.body-copy {
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--ink-2);
+  max-width: 280px;
+}
+.body-copy b { color: var(--ink); font-weight: 600; }
+
+/* 未开印空态 */
+.unprinted {
+  border: 1.5px dashed var(--paper-edge);
+  border-radius: 4px;
+  padding: 38px 24px;
+  text-align: center;
+  background: rgba(255,255,255,.45);
+}
+.unprinted .glyph { margin-bottom: 16px; }
+.unprinted .t {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 7px;
+}
+.unprinted .s {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: .03em;
+  line-height: 1.9;
+}
+
+/* ============================================================
+   手机版
+   ============================================================ */
+.mobile-row {
+  margin-top: 40px;
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 32px;
+  align-items: start;
+}
+
+.phone {
+  width: 340px;
+  height: 660px;
+  border-radius: 26px;
+  border: 1px solid var(--paper-edge);
+  box-shadow: 0 26px 60px -22px rgba(60,48,32,.45), 0 0 0 7px #F3EEE4;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: linear-gradient(170deg, var(--paper-2), var(--paper) 60%, #ECE5D9);
+}
+.phone::after {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: .5;
+  background-image: radial-gradient(circle, rgba(35,31,32,.055) 1px, transparent 1.1px);
+  background-size: 5px 5px;
+}
+.phone > * { position: relative; z-index: 1; }
+
+.m-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 13px;
+  padding: 18px 16px 8px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.m-cmd {
+  border-top: 1.5px solid var(--ink);
+  padding: 12px 14px 15px;
+  background: rgba(255,255,255,.5);
+}
+.m-cmd .row1 { display: flex; gap: 9px; align-items: stretch; }
+.m-cmd .fld {
+  flex: 1;
+  min-height: 42px;
+  border-radius: 3px;
+  background: var(--paper-3);
+  border: 1.5px solid var(--ink);
+  display: flex; align-items: center;
+  padding: 0 13px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.m-cmd .exp {
+  width: 42px; height: 42px;
+  border-radius: 3px;
+  background: var(--hot);
+  border: 1.5px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  display: grid; place-items: center;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+.m-note {
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  letter-spacing: .02em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ============================================================
+   说明
+   ============================================================ */
+.notes {
+  margin-top: 48px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+.note {
+  border: 1px solid var(--paper-edge);
+  border-radius: 8px;
+  padding: 24px;
+  background: var(--paper-3);
+}
+.note h3 {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 13px;
+}
+.note ul { list-style: none; }
+.note li {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.8;
+  padding-left: 15px;
+  position: relative;
+  margin-bottom: 4px;
+}
+.note li::before {
+  content: "▪";
+  position: absolute; left: 1px;
+  color: var(--hot);
+  font-size: 9px;
+  top: 1px;
+}
+.note li b { color: var(--ink); font-weight: 600; }
+
+@media (max-width: 1080px) {
+  .details, .notes, .mobile-row, .inks { grid-template-columns: 1fr; }
+  .st-body { grid-template-columns: 1fr; }
+  .rail, .plates { display: none; }
+  .grid { grid-template-columns: repeat(2, 1fr); }
+  body { padding: 32px 18px 64px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page-head">
+    <div class="eyebrow">Chat Codex · 独立生图界面</div>
+    <h1>印坊</h1>
+    <p>
+      不是给聊天页换肤，是一个<b>独立界面</b>。聊天里对话是主角；生图里<b>图片才是主角</b>。
+      纸白画布、浓墨结构、荧光粉当唯一重音 —— 图片由
+      <b>青 / 品红 / 黄三块印版依次落版、偏移套印</b>叠出来。这是真实的丝网印刷美学，
+      天生就是浅色、纸张、浓墨。
+    </p>
+  </header>
+
+  <!-- ============================================================
+       三色墨
+       ============================================================ -->
+  <div class="inks">
+    <div class="ink">
+      <div class="well" style="background:var(--plate-c)"></div>
+      <div>
+        <div class="nm">青版</div>
+        <div class="cd">#0091D5</div>
+        <div class="role">第一落版。承载结构与暗部，<b>最先到位</b>。</div>
+      </div>
+    </div>
+    <div class="ink">
+      <div class="well" style="background:var(--plate-m)"></div>
+      <div>
+        <div class="nm">品红版</div>
+        <div class="cd">#FF3D8B</div>
+        <div class="role">第二落版。<b>全屏唯一重音</b> —— 开印按钮与生成态用它，别处不用。</div>
+      </div>
+    </div>
+    <div class="ink">
+      <div class="well" style="background:var(--plate-y)"></div>
+      <div>
+        <div class="nm">黄版</div>
+        <div class="cd">#F5C518</div>
+        <div class="role">第三落版。压亮部与温度，<b>收尾</b>。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       印坊
+       ============================================================ -->
+  <div class="studio">
+
+    <!-- 套准标记 -->
+    <svg class="regmark tl" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="7.5" stroke="#231F20" stroke-width="1"/>
+      <path d="M12 0.5v9M12 14.5v9M0.5 12h9M14.5 12h9" stroke="#231F20" stroke-width="1"/>
+    </svg>
+    <svg class="regmark tr" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="7.5" stroke="#231F20" stroke-width="1"/>
+      <path d="M12 0.5v9M12 14.5v9M0.5 12h9M14.5 12h9" stroke="#231F20" stroke-width="1"/>
+    </svg>
+    <svg class="regmark bl" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="7.5" stroke="#231F20" stroke-width="1"/>
+      <path d="M12 0.5v9M12 14.5v9M0.5 12h9M14.5 12h9" stroke="#231F20" stroke-width="1"/>
+    </svg>
+    <svg class="regmark br" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="7.5" stroke="#231F20" stroke-width="1"/>
+      <path d="M12 0.5v9M12 14.5v9M0.5 12h9M14.5 12h9" stroke="#231F20" stroke-width="1"/>
+    </svg>
+
+    <!-- 顶栏 -->
+    <div class="st-head">
+      <div class="mark">
+        <div class="plate-stack"><i></i><i></i><i></i></div>
+        <div class="st-title">印坊</div>
+      </div>
+      <div class="st-sub">mac-mini</div>
+      <div class="st-dot"></div>
+      <div class="st-sub">codex</div>
+      <div class="st-dot"></div>
+      <div class="st-sub">第 07 印次</div>
+      <div class="st-spacer"></div>
+      <div class="st-model"><span class="pip"></span>gpt-image-1</div>
+      <div class="st-ico">⋯</div>
+    </div>
+
+    <!-- 三栏 -->
+    <div class="st-body">
+
+      <!-- 印次历史 -->
+      <div class="rail">
+        <div class="run">
+          <div class="stack">
+            <i style="background:linear-gradient(140deg,#C97F5A,#5A3520)"></i>
+            <i style="background:linear-gradient(140deg,#9FB4C9,#33465C)"></i>
+            <i style="background:linear-gradient(140deg,#D8A46E,#6B4028)"></i>
+          </div>
+          <div class="no">05</div>
+        </div>
+        <div class="run">
+          <div class="stack">
+            <i style="background:linear-gradient(140deg,#8FA98F,#2C3E2C)"></i>
+            <i style="background:linear-gradient(140deg,#B98A62,#4A2E1C)"></i>
+            <i style="background:linear-gradient(140deg,#E0B98A,#7A4A2C)"></i>
+          </div>
+          <div class="no">06</div>
+        </div>
+        <div class="run active">
+          <div class="stack">
+            <i style="background:linear-gradient(140deg,#E8A868,#8A4E2A)"></i>
+            <i style="background:linear-gradient(140deg,#D89454,#6E3A20)"></i>
+            <i style="background:linear-gradient(140deg,#A8BFD4,#46586E)"></i>
+          </div>
+          <div class="no">07</div>
+        </div>
+        <div class="rail-add">+</div>
+      </div>
+
+      <!-- 打样墙 -->
+      <div class="wall">
+        <div class="wall-head">
+          <div class="wall-label">Proof Wall · 第 07 印次</div>
+          <div class="wall-count">4 / 6 已落版</div>
+        </div>
+
+        <div class="grid">
+
+          <!-- 01 选中 -->
+          <div class="sheet picked">
+            <svg class="circle" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <ellipse cx="50" cy="50" rx="47" ry="46" transform="rotate(-3 50 50)"
+                       stroke-dasharray="250 12 46 9"/>
+              <ellipse cx="50" cy="50" rx="49" ry="48" transform="rotate(2 50 50)"
+                       stroke-dasharray="40 300 60 200" opacity=".4"/>
+            </svg>
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 66% 30%, #FFE7C4 0%, transparent 42%),
+                radial-gradient(circle at 34% 70%, #D08A50 0%, transparent 56%),
+                linear-gradient(158deg, #EFA96A 0%, #94522C 48%, #33200F 100%)"></div>
+            </div>
+            <div class="meta">
+              <span class="idx">01</span>
+              <span>cat_01</span>
+              <span class="sz">1.8M</span>
+            </div>
+          </div>
+
+          <!-- 02 -->
+          <div class="sheet">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 40% 34%, #FFE0B0 0%, transparent 40%),
+                radial-gradient(circle at 72% 76%, #B8683A 0%, transparent 58%),
+                linear-gradient(140deg, #DE9A5A 0%, #7A4024 52%, #2A1910 100%)"></div>
+            </div>
+            <div class="meta">
+              <span class="idx">02</span>
+              <span>cat_02</span>
+              <span class="sz">2.1M</span>
+            </div>
+          </div>
+
+          <!-- 03 -->
+          <div class="sheet">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 60% 26%, #DCEAF4 0%, transparent 38%),
+                radial-gradient(circle at 30% 74%, #7A96AE 0%, transparent 58%),
+                linear-gradient(150deg, #B2C8DA 0%, #4E6076 50%, #1C2430 100%)"></div>
+            </div>
+            <div class="meta">
+              <span class="idx">03</span>
+              <span>cat_03</span>
+              <span class="sz">1.6M</span>
+            </div>
+          </div>
+
+          <!-- 04 落版中 -->
+          <div class="sheet live">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 52% 42%, #FFE3B4 0%, transparent 44%),
+                radial-gradient(circle at 26% 72%, #C47840 0%, transparent 58%),
+                linear-gradient(148deg, #E4A466 0%, #8A4A28 50%, #33200F 100%)"></div>
+              <div class="pass c"></div>
+              <div class="pass m"></div>
+              <div class="pass y"></div>
+            </div>
+            <div class="meta">
+              <span class="idx">04</span>
+              <span class="stage">落版中</span>
+              <span class="passes"><i class="c"></i><i class="m"></i><i class="y"></i></span>
+            </div>
+          </div>
+
+          <!-- 05 -->
+          <div class="sheet blank">
+            <div class="plate"><div class="ph">待开印</div></div>
+            <div class="meta"><span class="idx">05</span><span>—</span></div>
+          </div>
+
+          <!-- 06 -->
+          <div class="sheet blank">
+            <div class="plate"><div class="ph">待开印</div></div>
+            <div class="meta"><span class="idx">06</span><span>—</span></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 制版台 -->
+      <div class="plates">
+        <div class="p-head">Plate Setup</div>
+
+        <div class="p-row on">
+          <span class="k">尺寸</span><span class="v">1024²</span><span class="chev">▾</span>
+        </div>
+        <div class="p-row on">
+          <span class="k">比例</span><span class="v">1:1</span><span class="chev">▾</span>
+        </div>
+        <div class="p-row on">
+          <span class="k">印数</span><span class="v">6</span><span class="chev">▾</span>
+        </div>
+        <div class="p-row on">
+          <span class="k">套准</span><span class="v">精细</span><span class="chev">▾</span>
+        </div>
+        <div class="p-row">
+          <span class="k">网点</span><span class="v">4.4px</span><span class="chev">▾</span>
+        </div>
+        <div class="p-row">
+          <span class="k">参考图</span><span class="v">0</span><span class="chev">▾</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 命令条 -->
+    <div class="cmd">
+      <div class="cmd-row">
+        <div class="cmd-field">
+          <span>一只坐在窗台上的橘猫，晨光，胶片质感</span>
+          <span class="caret"></span>
+        </div>
+        <div class="press-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="5.2" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          开印
+        </div>
+      </div>
+
+      <div class="log">
+        <span class="tag">印次 07</span>
+        <span class="txt">一只坐在窗台上的橘猫，晨光，胶片质感</span>
+        <span class="meta">1024² · 1:1 · 6 张 · 精细 · 6.2s</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================================================
+       细节
+       ============================================================ -->
+  <div class="details">
+
+    <!-- 落版特写 -->
+    <div class="panel">
+      <div class="cap">Signature · 分色叠印</div>
+      <h3>图片由三块印版依次叠出来</h3>
+
+      <div class="split" style="margin-top:18px;">
+        <div class="live-close">
+          <div class="plate">
+            <div class="art" style="background:
+              radial-gradient(circle at 52% 40%, #FFE3B4 0%, transparent 44%),
+              radial-gradient(circle at 28% 74%, #C47840 0%, transparent 58%),
+              linear-gradient(148deg, #E4A466 0%, #8A4A28 50%, #33200F 100%)"></div>
+            <div class="pass c"></div>
+            <div class="pass m"></div>
+            <div class="pass y"></div>
+          </div>
+          <div class="legend">
+            <div class="li"><i style="background:var(--plate-c)"></i>青版 · 已落</div>
+            <div class="li"><i style="background:var(--plate-m)"></i>品红版 · 已落</div>
+            <div class="li"><i style="background:var(--plate-y)"></i>黄版 · 落版中</div>
+          </div>
+        </div>
+
+        <div class="body-copy">
+          每一版都是<b>同一张图的网点分离</b>，用
+          <b>multiply 叠印</b> —— 真实的油墨叠色方式，
+          不是透明度淡入。<br><br>
+          三版各有<b>1–2px 偏移</b>，这是套印误差，
+          在丝网印刷里是标志性的美，不是 bug。<br><br>
+          落版顺序<b>青 → 品红 → 黄</b>，
+          正是分色印刷的真实顺序。
+        </div>
+      </div>
+    </div>
+
+    <!-- 空态 -->
+    <div class="panel">
+      <div class="cap">Empty · 待开印</div>
+      <h3>白纸，还没上墨</h3>
+
+      <div class="unprinted" style="margin-top:18px;">
+        <div class="glyph">
+          <svg width="46" height="46" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="7.5" stroke="#B5AC9F" stroke-width="1"/>
+            <path d="M12 0.5v9M12 14.5v9M0.5 12h9M14.5 12h9"
+                  stroke="#B5AC9F" stroke-width="1"/>
+          </svg>
+        </div>
+        <div class="t">描述你想要的画面</div>
+        <div class="s">
+          纸已上机 · 6 格待开印<br>
+          写下第一句，然后按开印
+        </div>
+      </div>
+
+      <div class="body-copy" style="max-width:none; margin-top:16px;">
+        空态不说「暂无数据」。它说的是<b>这个空间是干什么的、下一步做什么</b>。
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============================================================
+       手机版
+       ============================================================ -->
+  <div class="mobile-row">
+    <div>
+      <div class="phone">
+        <div class="st-head" style="height:50px; padding:0 14px; gap:8px; border-bottom-width:1.5px;">
+          <div class="mark">
+            <div class="plate-stack" style="width:18px;height:18px;">
+              <i style="width:12px;height:12px;"></i>
+              <i style="width:12px;height:12px;top:2px;left:4px;"></i>
+              <i style="width:12px;height:12px;top:5px;left:1.5px;"></i>
+            </div>
+            <div class="st-title" style="font-size:14px;">印坊</div>
+          </div>
+          <div class="st-spacer"></div>
+          <div class="st-sub">第 07 印次</div>
+        </div>
+
+        <div class="m-grid">
+          <div class="sheet picked">
+            <svg class="circle" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <ellipse cx="50" cy="50" rx="47" ry="46" transform="rotate(-3 50 50)"
+                       stroke-dasharray="250 12 46 9"/>
+            </svg>
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 66% 30%, #FFE7C4 0%, transparent 42%),
+                radial-gradient(circle at 34% 70%, #D08A50 0%, transparent 56%),
+                linear-gradient(158deg, #EFA96A 0%, #94522C 48%, #33200F 100%)"></div>
+            </div>
+            <div class="meta"><span class="idx">01</span><span class="sz">1.8M</span></div>
+          </div>
+
+          <div class="sheet">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 40% 34%, #FFE0B0 0%, transparent 40%),
+                radial-gradient(circle at 72% 76%, #B8683A 0%, transparent 58%),
+                linear-gradient(140deg, #DE9A5A 0%, #7A4024 52%, #2A1910 100%)"></div>
+            </div>
+            <div class="meta"><span class="idx">02</span><span class="sz">2.1M</span></div>
+          </div>
+
+          <div class="sheet">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 60% 26%, #DCEAF4 0%, transparent 38%),
+                radial-gradient(circle at 30% 74%, #7A96AE 0%, transparent 58%),
+                linear-gradient(150deg, #B2C8DA 0%, #4E6076 50%, #1C2430 100%)"></div>
+            </div>
+            <div class="meta"><span class="idx">03</span><span class="sz">1.6M</span></div>
+          </div>
+
+          <div class="sheet live">
+            <div class="plate">
+              <div class="art" style="background:
+                radial-gradient(circle at 52% 42%, #FFE3B4 0%, transparent 44%),
+                radial-gradient(circle at 26% 72%, #C47840 0%, transparent 58%),
+                linear-gradient(148deg, #E4A466 0%, #8A4A28 50%, #33200F 100%)"></div>
+              <div class="pass c"></div>
+              <div class="pass m"></div>
+              <div class="pass y"></div>
+            </div>
+            <div class="meta">
+              <span class="idx">04</span>
+              <span class="stage">落版中</span>
+              <span class="passes"><i class="c"></i><i class="m"></i><i class="y"></i></span>
+            </div>
+          </div>
+
+          <div class="sheet blank">
+            <div class="plate"><div class="ph">待开印</div></div>
+            <div class="meta"><span class="idx">05</span><span>—</span></div>
+          </div>
+
+          <div class="sheet blank">
+            <div class="plate"><div class="ph">待开印</div></div>
+            <div class="meta"><span class="idx">06</span><span>—</span></div>
+          </div>
+        </div>
+
+        <div class="m-cmd">
+          <div class="row1">
+            <div class="fld">一只坐在窗台上的橘猫…</div>
+            <div class="exp">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="5.2" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+          </div>
+          <div class="m-note">1024² · 1:1 · 6 张 · 精细 · 6.2s</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel" style="height:100%;">
+        <div class="cap">Compact · 手机</div>
+        <h3>小屏上还是同一个印坊</h3>
+        <div class="body-copy" style="max-width:none; font-size:12.5px; line-height:1.9;">
+          打样墙变两列，制版台收进顶栏一个入口，印次历史变成抽屉。
+          <b>纸的白、墨的黑、荧光粉的重音、落版的顺序 —— 一样都不少。</b><br><br>
+          左轨的印次历史在手机上不消失，只是收起来。它不是装饰，
+          是<b>印次档案</b> —— 取代聊天页的会话列表。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       说明
+       ============================================================ -->
+  <div class="notes">
+    <div class="note">
+      <h3>结构上真正变了什么</h3>
+      <ul>
+        <li><b>独立路由</b>，不是聊天页的一个分支</li>
+        <li><b>打样墙取代消息流</b> —— 一屏看完整印次</li>
+        <li><b>印次日志取代气泡</b> —— 一行等宽字，不是对话</li>
+        <li><b>制版台取代工具栏 chips</b></li>
+        <li><b>印次档案取代会话列表</b></li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h3>艺术方向从哪来</h3>
+      <ul>
+        <li>丝网印刷<b>天生是浅色</b> —— 纸、墨、套印误差</li>
+        <li>荧光粉是<b>唯一重音</b>，只出现在开印与落版中</li>
+        <li>三色<b>multiply 叠印</b>，真实的油墨叠色</li>
+        <li>网点、套准标记、印次号 —— 全是<b>真实印刷构件</b></li>
+        <li>选中 = <b>套印加粗</b> + 荧光粉蜡笔圈</li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <h3>两个要你拍板的点</h3>
+      <ul>
+        <li>主按钮写<b>「开印」</b>而不是「生成」。印刷术语。
+            怕用户不懂就换回「生成」，主题不受影响。</li>
+        <li>荧光粉<b>够不够胆</b>。要更收敛就换成墨黑按钮，
+            但那就失去这个方向最锋利的一笔。</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

@@ -1277,15 +1277,37 @@ func (a *App) requestDeviceDirectories(
 	envType string,
 	payload any,
 ) (model.DeviceDirectoriesResultPayload, error) {
+	return a.requestDeviceDirectoriesWithChunk(ctx, operatorID, deviceID, requestID, envType, payload, nil)
+}
+
+// requestDeviceDirectoriesWithChunk 与 requestDeviceDirectories 相同，
+// 但可携带分块原始字节：设备声明支持二进制帧时走二进制下发，
+// 否则回退到 base64 文本，保证升级窗口内新旧设备都能上传。
+func (a *App) requestDeviceDirectoriesWithChunk(
+	ctx context.Context,
+	operatorID int64,
+	deviceID string,
+	requestID string,
+	envType string,
+	payload any,
+	chunk []byte,
+) (model.DeviceDirectoriesResultPayload, error) {
 	resultCh := a.registerDirectoriesRequest(requestID)
 	defer a.unregisterDirectoriesRequest(requestID)
-	if err := a.broker.DispatchForOperator(ctx, operatorID, deviceID, model.Envelope{
+	env := model.Envelope{
 		Type:      envType,
 		RequestID: requestID,
 		SentAt:    time.Now().UTC().Format(time.RFC3339),
 		Payload:   payload,
-	}); err != nil {
-		return model.DeviceDirectoriesResultPayload{}, err
+	}
+	var dispatchErr error
+	if len(chunk) > 0 && a.broker.HasCapability(operatorID, deviceID, model.BinaryChunkCapability) {
+		dispatchErr = a.broker.DispatchBinaryForOperator(ctx, operatorID, deviceID, env, chunk)
+	} else {
+		dispatchErr = a.broker.DispatchForOperator(ctx, operatorID, deviceID, env)
+	}
+	if dispatchErr != nil {
+		return model.DeviceDirectoriesResultPayload{}, dispatchErr
 	}
 	select {
 	case <-ctx.Done():
@@ -1544,7 +1566,7 @@ func (a *App) Router() http.Handler {
 }
 
 func (a *App) apiHandler() *api.API {
-	handler := api.New(a.store, a.broker, a.auth, a.mailer, a.streamArtifact, a.notifyService, a.pushService, a.requestDeviceAIConfig, a.requestGoalOptimize, a.requestDeviceMCPConfig, a.requestDeviceEnvConfig, a.requestDeviceLauncher, a.requestDeviceDirectories, a.projectMemoryEnabled)
+	handler := api.NewWithChunkRequest(a.store, a.broker, a.auth, a.mailer, a.streamArtifact, a.notifyService, a.pushService, a.requestDeviceAIConfig, a.requestGoalOptimize, a.requestDeviceMCPConfig, a.requestDeviceEnvConfig, a.requestDeviceLauncher, a.requestDeviceDirectories, a.requestDeviceDirectoriesWithChunk, a.projectMemoryEnabled)
 	handler.SetOverlayHub(a.overlayHub)
 	handler.SetSessionHistoryRequest(a.requestSessionHistory)
 	return handler

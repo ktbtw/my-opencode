@@ -8,6 +8,7 @@ import '../../../core/services/shared_streams.dart';
 import '../../../core/services/connection_telemetry.dart';
 import '../../../shared/grok_context_limit.dart';
 import 'chat_model.dart';
+import 'model_log.dart';
 
 void _chatDiag(String stage, [Map<String, Object?> data = const {}]) {
   debugPrint('[ChatDiag] $stage $data');
@@ -1571,8 +1572,26 @@ class ChatRepository {
     final path = machine.isEmpty
         ? '/api/models'
         : '/api/models?machine_id=${Uri.encodeQueryComponent(machine)}';
-    final data = await ApiClient.get(path);
-    return _parseModels(data);
+    final startedAt = DateTime.now();
+    ModelLog.listRequested(path);
+    final Map<String, dynamic> data;
+    try {
+      data = await ApiClient.get(path);
+    } catch (error) {
+      ModelLog.listFailed(
+        path,
+        error,
+        DateTime.now().difference(startedAt).inMilliseconds,
+      );
+      rethrow;
+    }
+    final models = _parseModels(data);
+    ModelLog.listLoaded(
+      path,
+      models.length,
+      DateTime.now().difference(startedAt).inMilliseconds,
+    );
+    return models;
   }
 
   Future<MCPStatusInfo> getMCPStatus({
@@ -1595,11 +1614,16 @@ class ChatRepository {
         .map((e) => e.toString())
         .toSet();
     final allProviders = data['all'] as List<dynamic>? ?? [];
+    var skippedProvider = 0;
+    var skippedDeprecated = 0;
 
     for (final p in allProviders) {
       if (p is! Map<String, dynamic>) continue;
       final providerID = p['id'] as String? ?? '';
-      if (providerID.isEmpty || !connected.contains(providerID)) continue;
+      if (providerID.isEmpty || !connected.contains(providerID)) {
+        skippedProvider += 1;
+        continue;
+      }
       final name = p['name'] as String? ?? providerID;
       final providerBaseUrl = _providerUrlValue(
         p['base_url'] ?? p['baseUrl'] ?? p['api'],
@@ -1614,7 +1638,10 @@ class ChatRepository {
         final modelID = entry.key;
         final modelName = m['name'] as String? ?? modelID;
         final status = m['status'] as String? ?? 'active';
-        if (status == 'deprecated') continue;
+        if (status == 'deprecated') {
+          skippedDeprecated += 1;
+          continue;
+        }
         final variants = <String>[];
         final variantsMap = m['variants'] as Map<String, dynamic>? ?? {};
         variants.addAll(variantsMap.keys);
@@ -1650,6 +1677,13 @@ class ChatRepository {
         );
       }
     }
+    ModelLog.listParsed(
+      providers: allProviders.length,
+      connectedProviders: connected.length,
+      skippedProvider: skippedProvider,
+      skippedDeprecated: skippedDeprecated,
+      models: result.length,
+    );
     return result;
   }
 

@@ -390,6 +390,45 @@ func (b *Broker) DispatchForOperator(ctx context.Context, operatorID int64, devi
 	return b.dispatch(ctx, deviceKey(operatorID, deviceID), env)
 }
 
+// HasCapability 判断设备是否声明了某项能力。
+func (b *Broker) HasCapability(operatorID int64, deviceID, capability string) bool {
+	b.mu.RLock()
+	dev, ok := b.devices[deviceKey(operatorID, deviceID)]
+	b.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	for _, item := range dev.Capabilities {
+		if item == capability {
+			return true
+		}
+	}
+	return false
+}
+
+// DispatchBinaryForOperator 以二进制帧下发指令：分块内容走帧尾原始字节，
+// 避免 base64 的 33% 膨胀。设备需声明 BinaryChunkCapability。
+func (b *Broker) DispatchBinaryForOperator(ctx context.Context, operatorID int64, deviceID string, env model.Envelope, payload []byte) error {
+	return b.dispatchBinary(ctx, deviceKey(operatorID, deviceID), env, payload)
+}
+
+func (b *Broker) dispatchBinary(ctx context.Context, key string, env model.Envelope, payload []byte) error {
+	b.mu.RLock()
+	dev, ok := b.devices[key]
+	b.mu.RUnlock()
+	if !ok {
+		return ErrOffline
+	}
+
+	frame, err := model.EncodeBinaryFrame(env, payload)
+	if err != nil {
+		return err
+	}
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	return dev.conn.Write(ctx, websocket.MessageBinary, frame)
+}
+
 func (b *Broker) dispatch(ctx context.Context, key string, env model.Envelope) error {
 	b.mu.RLock()
 	dev, ok := b.devices[key]

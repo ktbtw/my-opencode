@@ -31,6 +31,7 @@ const state = {
   skills: [],
   mcpCatalog: [],
   environmentPresets: [],
+  modelPromptPresets: [],
   runtimeCatalog: [],
   toolCatalog: [],
   operators: [],
@@ -118,6 +119,14 @@ const el = {
   semanticEditorSections: document.querySelectorAll(".semantic-editor-section"),
   skillEditorSections: document.querySelectorAll(".skill-editor-section"),
   environmentEditorSections: document.querySelectorAll(".environment-editor-section"),
+  modelPromptEditorSections: document.querySelectorAll(".model-prompt-editor-section"),
+  modelPromptFieldId: document.querySelector("#modelPromptFieldId"),
+  modelPromptFieldName: document.querySelector("#modelPromptFieldName"),
+  modelPromptFieldProvider: document.querySelector("#modelPromptFieldProvider"),
+  modelPromptFieldPattern: document.querySelector("#modelPromptFieldPattern"),
+  modelPromptFieldSortOrder: document.querySelector("#modelPromptFieldSortOrder"),
+  modelPromptFieldEnabled: document.querySelector("#modelPromptFieldEnabled"),
+  modelPromptFieldPrompt: document.querySelector("#modelPromptFieldPrompt"),
   runtimeEditorSections: document.querySelectorAll(".runtime-editor-section"),
   toolEditorSections: document.querySelectorAll(".tool-editor-section"),
   catalogEditorFields: document.querySelectorAll(".catalog-editor-field"),
@@ -431,6 +440,8 @@ function dispatchViewLoad() {
       return loadRuntimeCatalog();
     case "environment":
       return loadEnvironmentPresets();
+    case "modelPrompts":
+      return loadModelPromptPresets();
     case "tools":
       return loadToolCatalog();
     case "operators":
@@ -557,6 +568,28 @@ async function loadEnvironmentPresets() {
       logout(error.message);
     }
     showToast(error.message || "加载环境预设失败");
+  } finally {
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
+  }
+}
+
+async function loadModelPromptPresets() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
+  setBusy(el.refreshButton, true, "刷新中");
+  try {
+    const data = await apiGet("/api/admin/semantic-model-prompts");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
+    state.modelPromptPresets = Array.isArray(data.items) ? data.items : [];
+    render();
+  } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
+    if (error.statusCode === 401 || error.statusCode === 403) {
+      logout(error.message);
+    }
+    showToast(error.message || "加载模型提示词预设失败");
   } finally {
     if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
   }
@@ -693,6 +726,12 @@ function renderCategoryFilter() {
       `<option value="all">全部分类</option>`,
       ...categories.map((category) => `<option value="${escapeAttr(category)}">${escapeHtml(category)}</option>`),
     ].join("");
+  } else if (state.view === "modelPrompts") {
+    const providers = [...new Set(currentItems().map((item) => item.provider).filter(Boolean))].sort();
+    options = [
+      `<option value="all">全部供应商</option>`,
+      ...providers.map((provider) => `<option value="${escapeAttr(provider)}">${escapeHtml(provider)}</option>`),
+    ].join("");
   } else if (state.view === "operators") {
     options = [
       `<option value="all">全部等级</option>`,
@@ -730,6 +769,8 @@ function filteredItems() {
         if (category !== "all" && !(item.tags || []).includes(category)) return false;
       } else if (state.view === "environment" || state.view === "tools") {
         if (category !== "all" && (item.category || "通用") !== category) return false;
+      } else if (state.view === "modelPrompts") {
+        if (category !== "all" && (item.provider || "") !== category) return false;
       } else if (state.view === "operators") {
         if (category !== "all" && (item.membership_tier || "free") !== category) return false;
       }
@@ -766,6 +807,8 @@ function currentItems() {
       return state.runtimeCatalog;
     case "environment":
       return state.environmentPresets;
+    case "modelPrompts":
+      return state.modelPromptPresets;
     case "tools":
       return state.toolCatalog;
     case "operators":
@@ -787,6 +830,8 @@ function cardForCurrentView(item) {
       return runtimeCatalogCardTemplate(item);
     case "environment":
       return environmentPresetCardTemplate(item);
+    case "modelPrompts":
+      return modelPromptPresetCardTemplate(item);
     case "tools":
       return toolCatalogCardTemplate(item);
     case "operators":
@@ -1011,6 +1056,46 @@ function environmentPresetCardTemplate(item) {
   `;
 }
 
+// 模型提示词预设卡片：展示匹配规则与提示词预览。
+function modelPromptPresetCardTemplate(item) {
+  const provider = item.provider || "";
+  const pattern = item.model_pattern || "";
+  const matchLabel = provider && pattern
+    ? `供应商含「${provider}」且模型名含「${pattern}」`
+    : provider
+      ? `供应商含「${provider}」`
+      : pattern
+        ? `模型名含「${pattern}」`
+        : "匹配全部模型";
+  const prompt = item.prompt || "";
+  const preview = prompt.length > 220 ? `${prompt.slice(0, 220)}…` : prompt;
+  return `
+    <article class="recommendation-card">
+      <div class="card-head">
+        <div>
+          <h2>${escapeHtml(item.name || item.id || "未命名预设")}</h2>
+          <p class="muted">${escapeHtml(item.id || "")}</p>
+        </div>
+        <span class="pill ${item.enabled ? "enabled" : "disabled"}">${item.enabled ? "已启用" : "已停用"}</span>
+      </div>
+      <p class="card-description">${escapeHtml(matchLabel)}</p>
+      <div class="pill-row">
+        ${provider ? `<span class="pill">供应商 ${escapeHtml(provider)}</span>` : ""}
+        ${pattern ? `<span class="pill">模型 ${escapeHtml(pattern)}</span>` : ""}
+        <span class="pill">排序 ${escapeHtml(String(item.sort_order || 100))}</span>
+      </div>
+      ${preview ? `<div class="card-code multiline" title="${escapeAttr(prompt)}">${escapeHtml(preview)}</div>` : ""}
+      <div class="card-actions">
+        <button class="secondary-button" type="button" data-action="edit" data-id="${escapeAttr(item.id)}">编辑</button>
+        <button class="secondary-button" type="button" data-action="toggle" data-id="${escapeAttr(item.id)}">
+          ${item.enabled ? "停用" : "启用"}
+        </button>
+        <button class="danger-button" type="button" data-action="delete" data-id="${escapeAttr(item.id)}">删除</button>
+      </div>
+    </article>
+  `;
+}
+
 function runtimeCatalogCardTemplate(item) {
   const versions = Array.isArray(item.versions) ? item.versions : [];
   const artifacts = Array.isArray(item.artifacts) ? item.artifacts : [];
@@ -1156,6 +1241,10 @@ function openEditor(item = null) {
     openEnvironmentEditor(item);
     return;
   }
+  if (state.view === "modelPrompts") {
+    openModelPromptEditor(item);
+    return;
+  }
   if (state.view === "runtime") {
     openRuntimeEditor(item);
     return;
@@ -1172,7 +1261,8 @@ function openEditor(item = null) {
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
   editorDidOpen();
-  el.catalogFieldId.focus();
+  // 编辑时 ID 字段被禁用无法聚焦，改聚焦名称，避免焦点落到抽屉外。
+  (item ? el.fieldName : el.catalogFieldId).focus();
 }
 
 async function openSemanticEditor(item) {
@@ -1200,7 +1290,8 @@ function openSkillEditor(item = null) {
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
   editorDidOpen();
-  el.skillFieldId.focus();
+  // 编辑时 ID 字段被禁用无法聚焦，改聚焦名称，避免焦点落到抽屉外。
+  (item ? el.skillFieldName : el.skillFieldId).focus();
 }
 
 function openEnvironmentEditor(item = null) {
@@ -1213,11 +1304,90 @@ function openEnvironmentEditor(item = null) {
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
   editorDidOpen();
-  el.envFieldId.focus();
+  // 编辑时 ID 字段被禁用无法聚焦，改聚焦名称，避免焦点落到抽屉外。
+  (item ? el.envFieldName : el.envFieldId).focus();
+}
+
+function openModelPromptEditor(item = null) {
+  state.editing = item;
+  el.drawerTitle.textContent = item ? "编辑模型提示词预设" : "新增模型提示词预设";
+  el.deleteButton.classList.toggle("hidden", !item);
+  el.importJson.value = "";
+  showEditorSections("modelPrompts");
+  fillModelPromptForm(item || defaultModelPromptPreset());
+  el.drawerOverlay.classList.remove("hidden");
+  el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
+  // 编辑时 ID 字段被禁用无法聚焦，改聚焦名称，避免焦点落到抽屉外。
+  (item ? el.modelPromptFieldName : el.modelPromptFieldId).focus();
+}
+
+function fillModelPromptForm(item) {
+  el.modelPromptFieldId.value = item.id || "";
+  // 编辑时 ID 是主键，不允许改动，避免产生孤儿记录。
+  el.modelPromptFieldId.disabled = Boolean(state.editing);
+  el.modelPromptFieldName.value = item.name || "";
+  el.modelPromptFieldProvider.value = item.provider || "";
+  el.modelPromptFieldPattern.value = item.model_pattern || "";
+  el.modelPromptFieldSortOrder.value = item.sort_order || 100;
+  el.modelPromptFieldEnabled.checked = item.enabled !== false;
+  el.modelPromptFieldPrompt.value = item.prompt || "";
+}
+
+function defaultModelPromptPreset() {
+  return {
+    id: "",
+    name: "",
+    provider: "",
+    model_pattern: "",
+    prompt: "",
+    enabled: true,
+    sort_order: 100,
+  };
+}
+
+function modelPromptFormPayload() {
+  const id = el.modelPromptFieldId.value.trim();
+  const provider = el.modelPromptFieldProvider.value.trim();
+  const pattern = el.modelPromptFieldPattern.value.trim();
+  const prompt = el.modelPromptFieldPrompt.value.trim();
+  if (!id) throw new Error("请填写预设 ID");
+  if (!prompt) throw new Error("请填写模型提示词");
+  if (!provider && !pattern) throw new Error("供应商与模型名至少填写一项，否则会匹配全部模型");
+  return {
+    id,
+    name: el.modelPromptFieldName.value.trim() || id,
+    provider,
+    model_pattern: pattern,
+    prompt,
+    enabled: el.modelPromptFieldEnabled.checked,
+    sort_order: Number(el.modelPromptFieldSortOrder.value) || 100,
+  };
+}
+
+async function saveModelPromptEditor() {
+  let payload;
+  try {
+    payload = modelPromptFormPayload();
+  } catch (error) {
+    showToast(error.message);
+    return;
+  }
+  await runAdminAction({
+    button: el.saveButton,
+    busyText: "保存中",
+    pendingText: state.editing ? "正在保存模型提示词预设..." : "正在新增模型提示词预设...",
+    successText: state.editing ? "模型提示词预设已保存" : "模型提示词预设已新增",
+    failureText: "模型提示词预设保存失败",
+    action: async () => {
+      await apiPost(`/api/admin/semantic-model-prompts/${encodeURIComponent(payload.id)}`, payload);
+      closeEditor();
+      await loadModelPromptPresets();
+    },
+  });
 }
 
 function openRuntimeEditor(item = null) {
-  state.editing = item;
   state.runtimeDraft = cloneRuntimeDraft(item || defaultRuntimeCatalogItem());
   el.drawerTitle.textContent = item ? "编辑运行时环境" : "新增运行时环境";
   el.deleteButton.classList.toggle("hidden", !item);
@@ -1227,7 +1397,8 @@ function openRuntimeEditor(item = null) {
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
   editorDidOpen();
-  el.runtimeFieldId.focus();
+  // 编辑时 ID 字段被禁用无法聚焦，改聚焦名称，避免焦点落到抽屉外。
+  (item ? el.runtimeFieldName : el.runtimeFieldId).focus();
 }
 
 function openToolEditor(item = null) {
@@ -1240,7 +1411,8 @@ function openToolEditor(item = null) {
   el.drawerOverlay.classList.remove("hidden");
   el.drawerOverlay.setAttribute("aria-hidden", "false");
   editorDidOpen();
-  el.toolFieldId.focus();
+  // 编辑时 ID 字段被禁用无法聚焦，改聚焦名称，避免焦点落到抽屉外。
+  (item ? el.toolFieldName : el.toolFieldId).focus();
 }
 
 function closeEditor() {
@@ -1549,6 +1721,10 @@ async function saveEditor(event) {
   }
   if (state.view === "environment") {
     await saveEnvironmentEditor();
+    return;
+  }
+  if (state.view === "modelPrompts") {
+    await saveModelPromptEditor();
     return;
   }
   if (state.view === "runtime") {
@@ -2268,6 +2444,21 @@ async function setEnabled(item, enabled, button = null) {
     });
     return;
   }
+  if (state.view === "modelPrompts") {
+    await runAdminAction({
+      button,
+      busyText: `${actionText}中`,
+      pendingText: `正在${actionText}「${title}」...`,
+      successText: enabled ? "已启用模型提示词预设" : "已停用模型提示词预设",
+      failureText: "状态更新失败",
+      action: async () => {
+        // 该接口是整体覆盖语义，停用/启用需要连同其余字段一起提交。
+        await apiPost(`/api/admin/semantic-model-prompts/${encodeURIComponent(item.id)}`, { ...item, enabled });
+        await loadModelPromptPresets();
+      },
+    });
+    return;
+  }
   if (state.view === "tools") {
     await runAdminAction({
       button,
@@ -2308,6 +2499,8 @@ async function deleteItem(item, closeAfterDelete = false, button = null) {
         await apiPost(`/api/admin/mcp-catalog/${encodeURIComponent(item.id)}/delete`, {});
       } else if (state.view === "environment") {
         await apiPost(`/api/admin/environment-presets/${encodeURIComponent(item.id)}/delete`, {});
+      } else if (state.view === "modelPrompts") {
+        await apiPost(`/api/admin/semantic-model-prompts/${encodeURIComponent(item.id)}/delete`, {});
       } else if (state.view === "runtime") {
         await apiPost(`/api/admin/runtime-catalog/${encodeURIComponent(item.id)}/delete`, {});
       } else if (state.view === "tools") {
@@ -2387,6 +2580,8 @@ function deleteEntityLabel() {
       return "MCP ";
     case "environment":
       return "环境预设";
+    case "modelPrompts":
+      return "模型提示词预设";
     case "runtime":
       return "运行时环境";
     case "tools":
@@ -2420,6 +2615,7 @@ function initialView() {
   if (hash === "mcp-catalog" || hash === "recommendations") return "mcpCatalog";
   if (hash === "runtime-catalog") return "runtime";
   if (hash === "environment-presets") return "environment";
+  if (hash === "model-prompt-presets") return "modelPrompts";
   if (hash === "tool-catalog") return "tools";
   if (hash === "operators") return "operators";
   return "mcpCatalog";
@@ -2432,7 +2628,7 @@ function normalizeLegacyHash() {
 }
 
 function normalizeView(view) {
-  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "tools" || view === "operators") {
+  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "modelPrompts" || view === "tools" || view === "operators") {
     return view;
   }
   return "mcpCatalog";
@@ -2450,6 +2646,8 @@ function hashForView(view) {
       return "runtime-catalog";
     case "environment":
       return "environment-presets";
+    case "modelPrompts":
+      return "model-prompt-presets";
     case "tools":
       return "tool-catalog";
     case "operators":
@@ -2521,6 +2719,18 @@ function viewChrome(view) {
       categoryLabel: "分类数量",
       deleteTitle: "删除环境预设",
     },
+    modelPrompts: {
+      eyebrow: "Model Prompt Presets",
+      title: "模型提示词预设",
+      description: "按供应商与模型名匹配的专属提示词，对全部语义 Agent 生效；单个 Agent 内也可追加自己的预设。",
+      newText: "新增预设",
+      canCreate: true,
+      emptyTitle: "没有匹配的模型提示词预设",
+      emptyDescription: "调整筛选条件，或点击右上角新增预设。",
+      totalLabel: "预设总数",
+      categoryLabel: "供应商数量",
+      deleteTitle: "删除模型提示词预设",
+    },
     runtime: {
       eyebrow: "Managed Runtime",
       title: "运行时环境",
@@ -2555,6 +2765,7 @@ function statCategorySet(items) {
   if (state.view === "skills") return new Set(items.map((item) => item.category || "通用"));
   if (state.view === "runtime") return new Set(items.flatMap((item) => item.tags || []));
   if (state.view === "environment" || state.view === "tools") return new Set(items.map((item) => item.category || "通用"));
+  if (state.view === "modelPrompts") return new Set(items.map((item) => item.provider || "全部供应商"));
   if (state.view === "operators") return new Set(items.map((item) => item.membership_tier || "free"));
   return new Set();
 }
@@ -2568,6 +2779,7 @@ function showEditorSections(mode) {
   const semantic = mode === "semantic";
   const skill = mode === "skills";
   const environment = mode === "environment";
+  const modelPrompts = mode === "modelPrompts";
   const runtime = mode === "runtime";
   const tool = mode === "tools";
   const mcp = mode === "mcpCatalog";
@@ -2576,6 +2788,7 @@ function showEditorSections(mode) {
   el.semanticEditorSections.forEach((section) => section.classList.toggle("hidden", !semantic));
   el.skillEditorSections.forEach((section) => section.classList.toggle("hidden", !skill));
   el.environmentEditorSections.forEach((section) => section.classList.toggle("hidden", !environment));
+  el.modelPromptEditorSections.forEach((section) => section.classList.toggle("hidden", !modelPrompts));
   el.runtimeEditorSections.forEach((section) => section.classList.toggle("hidden", !runtime));
   el.toolEditorSections.forEach((section) => section.classList.toggle("hidden", !tool));
   el.catalogEditorFields.forEach((field) => field.classList.toggle("hidden", !catalog));
@@ -3271,6 +3484,11 @@ function searchableTextForCurrentView(item) {
       return mcpCatalogSearchableText(item);
     case "environment":
       return environmentPresetSearchableText(item);
+    case "modelPrompts":
+      return [item.id, item.name, item.provider, item.model_pattern, item.prompt]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
     case "runtime":
       return runtimeCatalogSearchableText(item);
     case "tools":
@@ -3641,7 +3859,7 @@ function setDisplayMode(mode) {
 }
 
 function updateNavCounts() {
-  const counts = { mcpCatalog: state.mcpCatalog.length, skills: state.skills.length, tools: state.toolCatalog.length, semantic: state.semanticAgents.length, runtime: state.runtimeCatalog.length, environment: state.environmentPresets.length, operators: state.operators.length };
+  const counts = { mcpCatalog: state.mcpCatalog.length, skills: state.skills.length, tools: state.toolCatalog.length, semantic: state.semanticAgents.length, runtime: state.runtimeCatalog.length, environment: state.environmentPresets.length, modelPrompts: state.modelPromptPresets.length, operators: state.operators.length };
   document.querySelectorAll("[data-count]").forEach((count) => { count.textContent = state.loadedViews.has(count.dataset.count) ? counts[count.dataset.count] : ""; });
   el.navLinks.forEach((link) => { if (link.dataset.view === state.view) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current"); });
 }
@@ -3674,7 +3892,7 @@ async function requestCloseEditor() {
 }
 
 function consoleCommands() {
-  const views = ["mcpCatalog", "skills", "tools", "semantic", "runtime", "environment", "operators"];
+  const views = ["mcpCatalog", "skills", "tools", "semantic", "runtime", "environment", "modelPrompts", "operators"];
   const commands = views.map((view) => ({ title: viewChrome(view).title, detail: "跳转到管理模块", action: () => switchView(view) }));
   commands.push({ title: "刷新当前模块", detail: "重新读取服务端数据", action: loadCurrentView });
   if (viewChrome(state.view).canCreate) commands.push({ title: viewChrome(state.view).newText, detail: "打开配置编辑器", action: () => openEditor() });

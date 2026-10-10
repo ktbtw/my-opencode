@@ -1,0 +1,1710 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>生图工作台 · 交互原型</title>
+<style>
+/* ============================================================
+   生图工作台 —— 交互原型
+   配色全部取自 AppColors，不新增色相
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-start:#EFF4FB; --bg-end:#F7FAFF; --bg:#F2F6FC;
+  --surface:#FFFFFF; --surface-el:#FAFCFF;
+  --border:#D0DDEF; --border-lt:#E8EFF8; --divider:#E4ECF5;
+  --input-bg:#F8FAFD;
+  --primary:#2563EB; --primary-hov:#1D4ED8;
+  --primary-lt:#EFF6FF; --primary-mut:#BFD7FF;
+  --text-1:#0F1729; --text-2:#4A5D7A; --text-3:#8FA3BF;
+  --success:#16A34A; --error:#DC2626;
+
+  --t-fast:90ms; --t-base:160ms; --t-slow:260ms;
+  --ease:cubic-bezier(.22,.7,.3,1);
+
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+}
+
+body {
+  background:var(--bg); color:var(--text-1);
+  font-family:var(--sans); font-size:14px; line-height:1.5;
+  padding:40px 28px 72px; -webkit-font-smoothing:antialiased;
+}
+.wrap { max-width:1200px; margin:0 auto; }
+
+.page-head { margin-bottom:22px; max-width:760px; }
+.page-head h1 { font-size:26px; font-weight:700; letter-spacing:-.02em; margin-bottom:10px; }
+.page-head p { color:var(--text-2); font-size:13.5px; line-height:1.7; }
+.page-head code {
+  font-family:var(--mono); font-size:11.5px; color:var(--primary-hov);
+  background:var(--primary-lt); padding:1px 5px; border-radius:3px;
+}
+
+/* 视图切换 */
+.viewtabs { display:flex; gap:6px; margin-bottom:18px; }
+.viewtabs button {
+  font-family:var(--sans); font-size:12.5px; font-weight:600;
+  padding:7px 15px; border-radius:8px; cursor:pointer;
+  border:1px solid var(--border); background:var(--surface); color:var(--text-2);
+  transition:all var(--t-base) var(--ease);
+}
+.viewtabs button.on { background:var(--primary); border-color:var(--primary); color:#fff; }
+
+/* ============================================================
+   通用面板
+   ============================================================ */
+.app {
+  border-radius:12px; overflow:hidden; border:1px solid var(--border);
+  background:var(--surface); box-shadow:0 18px 46px -24px rgba(15,23,41,.22);
+}
+.app-head {
+  height:54px; display:flex; align-items:center; gap:10px;
+  padding:0 18px; border-bottom:1px solid var(--border);
+}
+.app-title { font-size:15px; font-weight:700; letter-spacing:-.01em; flex:0 0 auto; }
+.app-meta { font-family:var(--mono); font-size:10.5px; color:var(--text-3); flex:0 0 auto; }
+.app-dot { width:3px; height:3px; border-radius:50%; background:var(--border); flex:0 0 auto; }
+.spacer { flex:1; }
+
+/* 模型按钮 —— 桌面与手机共用 */
+.model-btn {
+  display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 11px;
+  border-radius:8px; border:1px solid var(--primary-mut); background:var(--primary-lt);
+  font-family:var(--sans); font-size:12px; color:var(--primary-hov); font-weight:600;
+  cursor:pointer; flex:0 0 auto; transition:all var(--t-base) var(--ease);
+}
+.model-btn:hover { background:#E3EDFF; }
+.model-btn .pip { width:6px; height:6px; border-radius:50%; background:var(--primary); flex:0 0 auto; }
+.model-btn .caret { font-size:9px; opacity:.65; }
+.model-btn .cap {
+  font-family:var(--mono); font-size:9px; padding:1px 5px; border-radius:3px;
+  background:var(--primary); color:#fff; font-weight:700; letter-spacing:.02em;
+}
+.model-btn .cap.video { background:#0F1729; }
+
+.icon-btn {
+  width:32px; height:32px; border-radius:8px; border:1px solid transparent;
+  background:transparent; color:var(--text-2); font-size:15px;
+  display:grid; place-items:center; cursor:pointer; flex:0 0 auto;
+  transition:all var(--t-base) var(--ease);
+}
+.icon-btn:hover { background:var(--input-bg); border-color:var(--border); }
+
+/* ============================================================
+   桌面布局
+   ============================================================ */
+.desk-body { display:grid; grid-template-columns:66px 1fr 232px; }
+
+.rail {
+  border-right:1px solid var(--border); padding:14px 0;
+  display:flex; flex-direction:column; align-items:center; gap:11px;
+  background:var(--surface-el);
+}
+.rail .item {
+  width:40px; display:flex; flex-direction:column; align-items:center; gap:4px;
+  cursor:pointer; padding:5px 0; border-radius:6px;
+  transition:background var(--t-base) var(--ease);
+}
+.rail .item:hover { background:var(--input-bg); }
+.rail .thumb {
+  width:34px; height:26px; border-radius:4px; border:1px solid var(--border);
+  background:linear-gradient(135deg,#DDE7F5,#B9CCE6);
+}
+.rail .item.on .thumb { border-color:var(--primary); box-shadow:0 0 0 1px var(--primary); }
+.rail .no { font-family:var(--mono); font-size:9px; color:var(--text-3); }
+.rail .item.on .no { color:var(--primary); font-weight:700; }
+.rail .add {
+  width:34px; height:26px; border:1px dashed var(--border); border-radius:4px;
+  display:grid; place-items:center; color:var(--text-3); font-size:13px; cursor:pointer;
+  transition:all var(--t-base) var(--ease);
+}
+.rail .add:hover { border-color:var(--primary); color:var(--primary); }
+
+.wall { padding:18px 20px 22px; min-height:0; }
+.wall-head {
+  display:flex; align-items:baseline; gap:10px; margin-bottom:14px;
+  padding-bottom:9px; border-bottom:1px solid var(--divider);
+}
+.wall-head .t { font-size:12.5px; font-weight:600; color:var(--text-1); }
+.wall-head .c { font-family:var(--mono); font-size:10.5px; color:var(--primary); margin-left:auto; }
+
+.grid { display:grid; grid-template-columns:repeat(4,1fr); gap:18px 14px; }
+
+/* ============================================================
+   单格
+   ============================================================ */
+.sheet { position:relative; }
+
+@keyframes beat {
+  0%   { opacity:0; transform:scale(.96); }
+  60%  { opacity:.9; transform:scale(1.015); }
+  100% { opacity:1; transform:scale(1); }
+}
+.sheet.enter { animation:beat var(--t-slow) var(--ease); }
+
+.sheet .plate {
+  position:relative; aspect-ratio:1/1; overflow:hidden;
+  background:var(--input-bg); border:1px solid var(--border); border-radius:8px;
+  transition:border-color var(--t-base) var(--ease),
+             box-shadow var(--t-base) var(--ease),
+             transform var(--t-base) var(--ease);
+}
+.sheet[data-s="done"] .plate { cursor:zoom-in; }
+.sheet[data-s="done"]:hover .plate {
+  transform:translateY(-2px);
+  box-shadow:0 10px 22px -8px rgba(15,23,41,.26);
+}
+
+/* 空位 */
+.sheet[data-s="blank"] .plate {
+  border-style:dashed; background:transparent;
+  display:grid; place-items:center; box-shadow:none;
+}
+.sheet[data-s="blank"] .plate .ph {
+  font-size:11px; color:var(--text-3);
+}
+
+/* 占位图：中性骨架，不画具体内容 */
+.sheet .plate .fill {
+  position:absolute; inset:0;
+  background:linear-gradient(135deg,#E6EDF7 0%,#D3E0F0 45%,#C2D4EA 100%);
+  display:grid; place-items:center;
+}
+.sheet .plate .fill .glyph { color:#9DB4D2; opacity:.9; }
+/* 生成中：扫光 */
+.sheet .plate .fill::after {
+  content:""; position:absolute; inset:0; opacity:0;
+  background:linear-gradient(100deg,transparent 35%,rgba(255,255,255,.62) 50%,transparent 65%);
+}
+.sheet[data-s="gen"] .plate .fill::after { opacity:1; animation:sweep 1.5s linear infinite; }
+@keyframes sweep {
+  0%   { transform:translateX(-100%); }
+  100% { transform:translateX(100%); }
+}
+
+/* 生成中：模糊 → 清晰（与真实图片加载一致） */
+.sheet .plate .fill {
+  filter:blur(10px); transform:scale(1.06); opacity:.5;
+  transition:filter 1.1s var(--ease), transform 1.1s var(--ease), opacity 1.1s var(--ease);
+}
+.sheet[data-s="done"] .plate .fill { filter:none; transform:none; opacity:1; }
+.sheet[data-s="gen"]  .plate .fill { filter:blur(7px); transform:scale(1.03); opacity:.8; }
+
+.sheet[data-s="gen"] .plate {
+  border-color:var(--primary);
+  animation:breathe 2.2s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%,100% { box-shadow:0 0 0 1px rgba(37,99,235,.25), 0 4px 12px -5px rgba(37,99,235,.3); }
+  50%     { box-shadow:0 0 0 1px rgba(37,99,235,.5),  0 8px 20px -5px rgba(37,99,235,.45); }
+}
+
+/* 选中 */
+.sheet.picked .plate {
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px var(--surface), 0 0 0 4.5px var(--primary),
+             0 8px 20px -8px rgba(37,99,235,.4);
+}
+
+/* 桌面悬停操作 */
+.acts {
+  position:absolute; right:6px; top:6px; display:flex; gap:4px;
+  opacity:0; transform:translateY(-4px); pointer-events:none; z-index:4;
+  transition:opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease);
+}
+.sheet[data-s="done"]:hover .acts { opacity:1; transform:none; pointer-events:auto; }
+.acts .a {
+  width:26px; height:26px; border-radius:6px;
+  background:rgba(255,255,255,.95); border:1px solid var(--border);
+  display:grid; place-items:center; color:var(--text-2); font-size:12px; cursor:pointer;
+  transition:all var(--t-fast) var(--ease);
+}
+.acts .a:hover { background:var(--primary); color:#fff; border-color:var(--primary); }
+.acts .a.danger:hover { background:var(--error); border-color:var(--error); }
+
+/* 信息行 */
+.sheet .meta {
+  display:flex; align-items:baseline; gap:6px; margin-top:6px;
+  font-family:var(--mono); font-size:9.5px; color:var(--text-3);
+}
+.sheet .meta .idx { color:var(--text-2); font-weight:700; }
+.sheet .meta .sz { margin-left:auto; }
+.sheet .meta .stage { color:var(--primary); font-weight:700; display:none; }
+.sheet[data-s="gen"] .meta .stage { display:inline; }
+.sheet[data-s="gen"] .meta .sz { display:none; }
+
+/* ============================================================
+   参考图托盘（图生图）
+   ============================================================ */
+.refs {
+  display:flex; align-items:center; gap:9px; margin-bottom:9px;
+  padding:8px 10px; border-radius:9px;
+  background:var(--input-bg); border:1px solid var(--border);
+}
+.refs .lbl { font-size:11.5px; font-weight:600; color:var(--text-2); flex:0 0 auto; }
+.refs .cap { font-family:var(--mono); font-size:10px; color:var(--text-3); flex:0 0 auto; }
+.refs .cap.full { color:var(--error); font-weight:700; }
+.refs .thumbs { display:flex; gap:6px; flex:1; min-width:0; overflow-x:auto; }
+
+.ref-thumb {
+  width:40px; height:40px; border-radius:6px; position:relative; flex:0 0 auto;
+  border:1px solid var(--border); overflow:hidden; cursor:pointer;
+  background:linear-gradient(135deg,#DDE7F5,#B9CCE6);
+  transition:all var(--t-base) var(--ease);
+}
+.ref-thumb:hover { border-color:var(--primary); transform:translateY(-1px); }
+.ref-thumb .rm {
+  position:absolute; top:0; right:0; width:16px; height:16px;
+  background:rgba(15,23,41,.72); color:#fff; font-size:10px; line-height:16px;
+  text-align:center; border-bottom-left-radius:6px;
+  opacity:0; transition:opacity var(--t-base) var(--ease);
+}
+.ref-thumb:hover .rm { opacity:1; }
+.ref-thumb .badge {
+  position:absolute; left:0; bottom:0; padding:1px 4px; font-family:var(--mono);
+  font-size:8px; background:rgba(37,99,235,.9); color:#fff; border-top-right-radius:5px;
+}
+
+.ref-thumb.off { opacity:.42; }
+.ref-thumb.off:hover { border-color:var(--border); transform:none; }
+.refs.over { border-color:var(--error); background:#FEF2F2; }
+
+.ref-add {
+  width:40px; height:40px; border:1px dashed var(--border); border-radius:6px;
+  display:grid; place-items:center; color:var(--text-3); font-size:15px;
+  cursor:pointer; flex:0 0 auto;
+  transition:all var(--t-base) var(--ease);
+}
+.ref-add:hover { border-color:var(--primary); color:var(--primary); background:var(--primary-lt); }
+.ref-add.off { opacity:.4; cursor:not-allowed; }
+.ref-add.off:hover { border-color:var(--border); color:var(--text-3); background:transparent; }
+
+/* 拖放遮罩 */
+.dropzone {
+  position:absolute; inset:0; z-index:12; border-radius:12px;
+  background:rgba(37,99,235,.07); backdrop-filter:blur(2px);
+  border:2px dashed var(--primary);
+  display:grid; place-items:center; text-align:center;
+  opacity:0; pointer-events:none;
+  transition:opacity var(--t-base) var(--ease);
+}
+.dropzone.on { opacity:1; }
+.dropzone .t { font-size:14px; font-weight:600; color:var(--primary-hov); margin-bottom:5px; }
+.dropzone .s { font-size:11.5px; color:var(--text-2); }
+
+/* ============================================================
+   参数面板
+   ============================================================ */
+.params {
+  border-left:1px solid var(--border); background:var(--surface-el);
+  padding:16px 0 14px; display:flex; flex-direction:column; min-height:0;
+}
+.p-head {
+  display:flex; align-items:baseline; gap:8px;
+  padding:0 16px 11px; border-bottom:1px solid var(--divider); margin-bottom:4px;
+}
+.p-head .t { font-size:11.5px; font-weight:700; color:var(--text-1); }
+.p-head .hint { margin-left:auto; font-size:9.5px; color:var(--text-3); }
+
+.p-scroll { flex:1; overflow-y:auto; min-height:0; }
+
+.p-row {
+  padding:9px 16px; display:flex; align-items:center; gap:8px;
+  border-left:3px solid transparent; cursor:pointer;
+  transition:background var(--t-base) var(--ease), border-color var(--t-base) var(--ease);
+}
+.p-row:hover { background:var(--surface); }
+.p-row.on { border-left-color:var(--primary); background:var(--primary-lt); }
+.p-row.open { background:var(--primary-lt); border-left-color:var(--primary); }
+.p-row .k { font-size:12px; color:var(--text-2); flex:0 0 auto; }
+.p-row .v {
+  margin-left:auto; font-size:12px; font-variant-numeric:tabular-nums;
+  color:var(--text-3); white-space:nowrap;
+}
+.p-row.on .v { color:var(--primary-hov); font-weight:700; }
+.p-row .chev { font-size:9px; color:var(--text-3); flex:0 0 auto; transition:transform var(--t-base) var(--ease); }
+.p-row.open .chev { transform:rotate(180deg); }
+
+/* 就地展开 */
+.p-wrap { display:grid; grid-template-rows:0fr; transition:grid-template-rows var(--t-slow) var(--ease); }
+.p-wrap.open { grid-template-rows:1fr; }
+.p-wrap > .inner { overflow:hidden; }
+.p-expand { padding:2px 16px 9px 19px; background:var(--primary-lt); border-left:3px solid var(--primary); }
+
+.opt {
+  display:flex; align-items:center; gap:7px; padding:6px 9px; border-radius:6px;
+  font-size:12px; color:var(--text-2); cursor:pointer;
+  transition:background var(--t-fast) var(--ease);
+}
+.opt:hover { background:rgba(255,255,255,.92); }
+.opt.cur { background:var(--surface); border:1px solid var(--primary-mut); color:var(--primary-hov); font-weight:600; }
+.opt .sub { font-family:var(--mono); font-size:10px; color:var(--text-3); }
+.opt .chk { margin-left:auto; color:var(--primary); font-size:11px; }
+
+/* 张数 / 时长步进器 */
+.stepper { display:flex; align-items:center; margin-left:auto; gap:2px; }
+.stepper .btn {
+  width:22px; height:22px; border-radius:5px; border:1px solid var(--primary-mut);
+  background:var(--surface); color:var(--primary); font-size:13px; line-height:1;
+  display:grid; place-items:center; cursor:pointer;
+  transition:all var(--t-fast) var(--ease);
+}
+.stepper .btn:hover { background:var(--primary-lt); }
+.stepper .btn:active { transform:scale(.9); }
+.stepper .btn.off { opacity:.35; cursor:not-allowed; }
+.stepper .n {
+  font-family:var(--mono); font-size:12px; font-weight:700; color:var(--primary-hov);
+  font-variant-numeric:tabular-nums; min-width:26px; text-align:center;
+}
+@keyframes tick { 0%{opacity:0;transform:translateY(-5px)} 100%{opacity:1;transform:none} }
+.stepper .n.tick { animation:tick var(--t-base) var(--ease); }
+
+/* 自定义秒数输入 */
+.p-input { display:flex; align-items:center; gap:7px; padding:5px 9px; }
+.p-input input {
+  width:66px; height:28px; border-radius:6px; border:1px solid var(--border);
+  background:var(--surface); font-family:var(--mono); font-size:12px;
+  color:var(--text-1); padding:0 8px; outline:none;
+  transition:border-color var(--t-base) var(--ease);
+}
+.p-input input:focus { border-color:var(--primary); }
+.p-input .unit { font-size:11px; color:var(--text-3); }
+.p-input .err { font-size:10.5px; color:var(--error); }
+
+/* 提示 */
+.p-note {
+  margin:8px 16px 0; padding:9px 11px; border-radius:8px;
+  background:var(--input-bg); border:1px solid var(--border-lt);
+  font-size:11px; color:var(--text-2); line-height:1.65;
+}
+.p-note b { color:var(--text-1); }
+
+/* ============================================================
+   输入区
+   ============================================================ */
+.cmd { border-top:1px solid var(--border); padding:12px 18px 14px; background:var(--surface); }
+.cmd-row { display:flex; align-items:stretch; gap:9px; }
+.cmd-field {
+  flex:1; display:flex; align-items:center; gap:9px; min-height:46px; padding:0 14px;
+  border-radius:10px; background:var(--input-bg); border:1px solid var(--border);
+  transition:all var(--t-base) var(--ease);
+}
+.cmd-field.focus { border-color:var(--primary); background:var(--surface); }
+.cmd-field input {
+  flex:1; border:0; outline:0; background:transparent;
+  font-family:var(--sans); font-size:13.5px; color:var(--text-1); min-width:0;
+}
+.cmd-field input::placeholder { color:var(--text-3); }
+
+.press-btn {
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  min-width:112px; padding:0 22px; border-radius:10px; border:0;
+  background:var(--primary); color:#fff; font-family:var(--sans);
+  font-size:14px; font-weight:600; cursor:pointer; flex:0 0 auto;
+  box-shadow:0 4px 12px -3px rgba(37,99,235,.45);
+  transition:all var(--t-base) var(--ease);
+}
+.press-btn:hover { background:var(--primary-hov); }
+.press-btn:active { transform:scale(.97); }
+.press-btn.stop { background:var(--error); box-shadow:0 4px 12px -3px rgba(220,38,38,.4); }
+.press-btn.stop:hover { background:#B91C1C; }
+.press-btn:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+
+.log {
+  margin-top:10px; display:flex; align-items:baseline; gap:9px;
+  font-family:var(--mono); font-size:10.5px; border-top:1px solid var(--divider);
+  padding-top:10px; overflow:hidden;
+}
+.log .tag { color:var(--primary); font-weight:700; flex:0 0 auto; }
+.log .txt { color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; }
+.log .meta { color:var(--text-3); margin-left:auto; flex:0 0 auto; font-variant-numeric:tabular-nums; }
+
+/* ============================================================
+   手机
+   ============================================================ */
+.mobile-stage { display:grid; grid-template-columns:360px 1fr; gap:30px; align-items:start; }
+
+.phone {
+  width:360px; height:720px; border-radius:26px; overflow:hidden;
+  border:1px solid var(--border); box-shadow:0 22px 50px -20px rgba(15,23,41,.3), 0 0 0 7px #fff;
+  display:flex; flex-direction:column; background:var(--bg);
+}
+.m-body { flex:1; min-height:0; display:flex; flex-direction:column; }
+.m-grid {
+  display:grid; grid-template-columns:repeat(2,1fr); gap:13px 11px;
+  padding:14px 13px 6px; flex:1; min-height:0; overflow-y:auto; align-content:start;
+}
+.m-summary {
+  display:flex; align-items:center; gap:7px;
+  padding:9px 13px; border-top:1px solid var(--divider);
+  background:var(--surface-el); cursor:pointer;
+  transition:background var(--t-base) var(--ease);
+}
+.m-summary:hover { background:var(--primary-lt); }
+.m-summary .k { font-size:11px; color:var(--text-3); flex:0 0 auto; }
+.m-summary .v {
+  font-family:var(--mono); font-size:10.5px; color:var(--primary-hov); font-weight:700;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;
+}
+.m-summary .chev { font-size:9px; color:var(--text-3); flex:0 0 auto; }
+.m-cmd { border-top:1px solid var(--border); padding:10px 12px 13px; background:var(--surface); }
+.m-cmd .row1 { display:flex; gap:8px; align-items:stretch; }
+.m-cmd .fld {
+  flex:1; min-height:42px; border-radius:10px; background:var(--input-bg);
+  border:1px solid var(--border); display:flex; align-items:center; padding:0 12px;
+  font-size:12.5px; color:var(--text-3); min-width:0;
+}
+.m-cmd .exp {
+  width:42px; height:42px; border-radius:10px; background:var(--primary);
+  border:0; display:grid; place-items:center; color:#fff; flex:0 0 auto; cursor:pointer;
+  box-shadow:0 4px 12px -3px rgba(37,99,235,.45);
+  transition:all var(--t-base) var(--ease);
+}
+.m-cmd .exp:active { transform:scale(.94); }
+.m-cmd .exp.stop { background:var(--error); }
+
+/* 长按提示条 */
+.m-longpress {
+  margin-top:8px; display:flex; align-items:center; gap:6px;
+  font-size:10.5px; color:var(--text-3);
+}
+
+/* ============================================================
+   底部抽屉（模型选择 / 参数 / 长按菜单）
+   ============================================================ */
+.sheet-back {
+  position:fixed; inset:0; z-index:70; background:rgba(15,23,41,.42);
+  opacity:0; pointer-events:none; transition:opacity var(--t-slow) var(--ease);
+}
+.sheet-back.on { opacity:1; pointer-events:auto; }
+
+.drawer {
+  position:fixed; left:0; right:0; bottom:0; z-index:71;
+  max-height:78vh; background:var(--surface);
+  border-radius:16px 16px 0 0; display:flex; flex-direction:column;
+  transform:translateY(100%); transition:transform var(--t-slow) var(--ease);
+  box-shadow:0 -14px 40px -12px rgba(15,23,41,.3);
+}
+.drawer.on { transform:translateY(0); }
+.drawer .grab {
+  width:36px; height:4px; border-radius:2px; background:var(--border);
+  margin:9px auto 3px; flex:0 0 auto;
+}
+.drawer .d-head {
+  padding:9px 18px 11px; display:flex; align-items:center; gap:10px;
+  border-bottom:1px solid var(--divider); flex:0 0 auto;
+}
+.drawer .d-head .t { font-size:15px; font-weight:700; }
+.drawer .d-body { overflow-y:auto; padding:8px 0 16px; min-height:0; }
+.drawer .d-foot { padding:10px 18px 16px; border-top:1px solid var(--divider); flex:0 0 auto; }
+
+/* 搜索 */
+.search {
+  display:flex; align-items:center; gap:8px; margin:0 18px 10px;
+  height:36px; padding:0 11px; border-radius:8px;
+  background:var(--input-bg); border:1px solid var(--border);
+}
+.search input {
+  flex:1; border:0; outline:0; background:transparent;
+  font-family:var(--sans); font-size:12.5px; color:var(--text-1); min-width:0;
+}
+.search input::placeholder { color:var(--text-3); }
+
+/* 模型分组 */
+.mgroup { padding:9px 18px 4px; font-size:10.5px; font-weight:700; color:var(--text-3); letter-spacing:.04em; }
+.mrow {
+  display:flex; align-items:center; gap:10px; padding:10px 18px; cursor:pointer;
+  transition:background var(--t-fast) var(--ease);
+}
+.mrow:hover { background:var(--input-bg); }
+.mrow.cur { background:var(--primary-lt); }
+.mrow .info { flex:1; min-width:0; }
+.mrow .nm {
+  font-size:13px; font-weight:600; color:var(--text-1);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.mrow.cur .nm { color:var(--primary-hov); }
+.mrow .id {
+  font-family:var(--mono); font-size:10px; color:var(--text-3); margin-top:2px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.mrow .tags { display:flex; gap:4px; flex:0 0 auto; }
+.mrow .tag {
+  font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.02em;
+  padding:2px 6px; border-radius:3px; background:var(--primary); color:#fff;
+}
+.mrow .tag.video { background:#0F1729; }
+.mrow .tag.ctx { background:var(--input-bg); color:var(--text-2); border:1px solid var(--border); }
+.mrow .chk { color:var(--primary); font-size:14px; flex:0 0 auto; }
+
+/* 长按菜单 */
+.menu-item {
+  display:flex; align-items:center; gap:11px; padding:13px 18px; cursor:pointer;
+  font-size:13.5px; color:var(--text-1);
+  transition:background var(--t-fast) var(--ease);
+}
+.menu-item:hover { background:var(--input-bg); }
+.menu-item .ic { width:18px; text-align:center; color:var(--text-2); }
+.menu-item.danger { color:var(--error); }
+.menu-item.danger .ic { color:var(--error); }
+
+/* ============================================================
+   放大查看
+   ============================================================ */
+.viewer {
+  position:fixed; inset:0; z-index:80; background:rgba(15,23,41,.86);
+  backdrop-filter:blur(10px); display:grid; place-items:center; padding:44px;
+  opacity:0; pointer-events:none; transition:opacity var(--t-slow) var(--ease);
+}
+.viewer.on { opacity:1; pointer-events:auto; }
+.viewer .box {
+  width:min(620px,86vw); position:relative;
+  transform:scale(.95); transition:transform var(--t-slow) var(--ease);
+}
+.viewer.on .box { transform:scale(1); }
+.viewer .frame {
+  aspect-ratio:1/1; border-radius:10px; overflow:hidden; position:relative;
+  border:1px solid rgba(255,255,255,.2); box-shadow:0 36px 80px -28px #000;
+}
+.viewer .cap {
+  margin-top:13px; display:flex; align-items:baseline; gap:10px;
+  font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.75);
+}
+.viewer .cap .sz { margin-left:auto; }
+.viewer .nav {
+  position:absolute; top:50%; transform:translateY(-50%);
+  width:38px; height:38px; border-radius:50%; cursor:pointer;
+  background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.25);
+  display:grid; place-items:center; color:#fff; font-size:15px;
+  transition:background var(--t-base) var(--ease);
+}
+.viewer .nav:hover { background:rgba(255,255,255,.3); }
+.viewer .nav.prev { left:-50px; }
+.viewer .nav.next { right:-50px; }
+.viewer .close {
+  position:absolute; top:-40px; right:0; cursor:pointer;
+  font-family:var(--mono); font-size:11px; letter-spacing:.08em;
+  color:rgba(255,255,255,.65);
+}
+.viewer .close:hover { color:#fff; }
+
+/* Toast */
+.toast {
+  position:fixed; left:50%; bottom:30px; z-index:90;
+  transform:translate(-50%,14px); background:var(--text-1); color:#fff;
+  font-size:12.5px; padding:9px 17px; border-radius:99px;
+  opacity:0; pointer-events:none;
+  transition:opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease);
+  box-shadow:0 10px 26px -8px rgba(15,23,41,.55);
+}
+.toast.on { opacity:1; transform:translate(-50%,0); }
+
+/* ============================================================
+   规格表
+   ============================================================ */
+.specs { margin-top:34px; display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.spec { border:1px solid var(--border); border-radius:10px; padding:20px; background:var(--surface); }
+.spec h3 { font-size:13px; font-weight:700; margin-bottom:3px; }
+.spec .cap {
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--primary); margin-bottom:14px;
+}
+.spec table { width:100%; border-collapse:collapse; }
+.spec td {
+  font-size:11.5px; padding:6px 0; vertical-align:top; line-height:1.6;
+  border-bottom:1px solid var(--divider); color:var(--text-2);
+}
+.spec tr:last-child td { border-bottom:0; }
+.spec td:first-child { color:var(--text-1); font-weight:600; width:40%; padding-right:9px; }
+.spec code {
+  font-family:var(--mono); font-size:10px; color:var(--primary-hov);
+  background:var(--primary-lt); padding:1px 4px; border-radius:3px;
+}
+.spec .warn { color:var(--error); font-weight:600; }
+
+@media (prefers-reduced-motion:reduce) {
+  *,*::before,*::after { animation-duration:.01ms !important; transition-duration:.01ms !important; }
+}
+@media (max-width:1080px) {
+  .mobile-stage, .specs { grid-template-columns:1fr; }
+  .desk-body { grid-template-columns:1fr; }
+  .rail, .params { display:none; }
+  body { padding:26px 14px 56px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page-head">
+    <h1>生图工作台 · 交互原型</h1>
+    <p>
+      桌面端与移动端<b>都可交互</b>。参数取值全部对着
+      <code>chat_model.dart</code> / <code>chat_page.dart</code> 核对过。
+      占位图使用中性骨架，不画具体内容。
+    </p>
+  </header>
+
+  <div class="viewtabs">
+    <button class="on" data-view="desk">桌面端</button>
+    <button data-view="mobile">移动端</button>
+  </div>
+
+  <!-- ============================================================
+       桌面端
+       ============================================================ -->
+  <div class="app" id="deskApp">
+    <div class="app-head">
+      <div class="app-title">生图工作台</div>
+      <div class="app-meta">mac-mini</div>
+      <div class="app-dot"></div>
+      <div class="app-meta">codex</div>
+      <div class="app-dot"></div>
+      <div class="app-meta" id="runLabel">第 07 次生成</div>
+      <div class="spacer"></div>
+      <button class="model-btn" data-open="model">
+        <span class="pip"></span><span id="modelName">gpt-image-1</span>
+        <span class="cap" id="modelCap">生图</span>
+        <span class="caret">▾</span>
+      </button>
+      <button class="icon-btn">⋯</button>
+    </div>
+
+    <div class="desk-body">
+      <div class="rail" id="rail"></div>
+
+      <div class="wall">
+        <div class="wall-head">
+          <div class="t">第 07 次生成</div>
+          <div class="c" id="wallCount">0 / 6 已完成</div>
+        </div>
+        <div class="grid" id="grid"></div>
+      </div>
+
+      <div class="params">
+        <div class="p-head"><span class="t">参数</span><span class="hint" id="capHint">按模型能力显示</span></div>
+        <div class="p-scroll" id="paramRows"></div>
+        <div class="p-note" id="paramNote"></div>
+      </div>
+    </div>
+
+    <div class="cmd">
+      <div class="refs" id="refsBar">
+        <span class="lbl">参考图</span>
+        <span class="thumbs" id="refThumbs"></span>
+        <span class="cap" id="refCap">0 / 3</span>
+        <div class="ref-add" id="refAdd" title="添加参考图">+</div>
+      </div>
+      <div class="cmd-row">
+        <div class="cmd-field" id="field">
+          <input id="prompt" placeholder="描述你想要的画面" autocomplete="off">
+        </div>
+        <button class="press-btn" id="press">生成</button>
+      </div>
+      <div class="log">
+        <span class="tag" id="logTag">第 07 次</span>
+        <span class="txt" id="logTxt">等待输入</span>
+        <span class="meta" id="logMeta">—</span>
+      </div>
+    </div>
+
+    <div class="dropzone" id="dropzone">
+      <div>
+        <div class="t">松开以添加参考图</div>
+        <div class="s">支持 PNG / JPEG / WEBP</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       移动端
+       ============================================================ -->
+  <div class="mobile-stage" id="mobileApp" style="display:none">
+    <div>
+      <div class="phone">
+        <div class="app-head" style="height:50px;padding:0 13px;gap:8px;">
+          <div class="app-title" style="font-size:14px;">生图工作台</div>
+          <div class="spacer"></div>
+          <button class="model-btn" data-open="model" style="height:28px;padding:0 9px;font-size:11px;">
+            <span class="pip"></span><span id="mModelName">gpt-image-1</span>
+            <span class="cap" id="mModelCap">生图</span>
+            <span class="caret">▾</span>
+          </button>
+        </div>
+
+        <div class="m-body">
+          <div class="m-grid" id="mGrid"></div>
+
+          <div class="m-summary" data-open="params">
+            <span class="k">参数</span>
+            <span class="v" id="mSummary">—</span>
+            <span class="chev">▾</span>
+          </div>
+
+          <div class="m-cmd">
+            <div class="refs" id="mRefsBar" style="margin-bottom:8px;">
+              <span class="lbl">参考图</span>
+              <span class="thumbs" id="mRefThumbs"></span>
+              <span class="cap" id="mRefCap">0 / 3</span>
+              <div class="ref-add" id="mRefAdd" title="添加参考图">+</div>
+            </div>
+            <div class="row1">
+              <div class="fld" id="mField">描述你想要的画面</div>
+              <button class="exp" id="mPress">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/>
+                  <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
+            <div class="m-longpress">
+              <span>长按图片可放大、保存或删除</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="spec" style="height:100%;">
+      <h3>移动端交互差异</h3>
+      <div class="cap">Touch Interactions</div>
+      <table>
+        <tr><td>选中图片</td><td>单击选中并高亮</td></tr>
+        <tr><td>放大查看</td><td><b>长按</b>弹出操作菜单（触屏无悬停）</td></tr>
+        <tr><td>切换图片</td><td>查看页左右滑动，或点两侧箭头</td></tr>
+        <tr><td>参数设置</td><td>点摘要行 → 底部抽屉，支持拖拽关闭</td></tr>
+        <tr><td>模型选择</td><td>顶栏 ◈ → 底部抽屉，带搜索与分组</td></tr>
+        <tr><td>张数调整</td><td>抽屉内 − / + 步进器</td></tr>
+        <tr><td>网格布局</td><td>4 列 → 2 列</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       规格说明
+       ============================================================ -->
+  <div class="specs">
+    <div class="spec">
+      <h3>图片参数</h3>
+      <div class="cap">Image Generation</div>
+      <table>
+        <tr><td>尺寸</td><td><code>1024x1024</code> <code>1024x1536</code> <code>1536x1024</code><br><code>1792x1024</code> <code>1024x1792</code></td></tr>
+        <tr><td>比例</td><td>xAI 用比例替代尺寸，二者<b>互斥</b></td></tr>
+        <tr><td>张数</td><td>1 – <code>10</code></td></tr>
+        <tr><td>质量</td><td><code>low</code> 快速 / <code>medium</code> 标准 / <code>high</code> 精细<br>另有 <code>standard</code> 标准 / <code>hd</code> 高清 / <code>auto</code> 自动</td></tr>
+        <tr><td>格式</td><td><code>png</code> <code>jpeg</code> <code>webp</code></td></tr>
+      </table>
+    </div>
+
+    <div class="spec">
+      <h3>视频参数</h3>
+      <div class="cap">Video Generation</div>
+      <table>
+        <tr><td>时长</td><td><code>4</code> <code>6</code> <code>8</code> <code>10</code> <code>15</code> 秒<br>或自定义 <b>1 – 15</b> 整数秒</td></tr>
+        <tr><td>比例</td><td><code>16:9</code> <code>9:16</code> <code>1:1</code><br><code>4:3</code> <code>3:4</code> <code>3:2</code> <code>2:3</code></td></tr>
+        <tr><td>分辨率</td><td><code>480p</code> <code>720p</code></td></tr>
+      </table>
+    </div>
+
+    <div class="spec">
+      <h3>我上一版写错的地方</h3>
+      <div class="cap">Corrections</div>
+      <table>
+        <tr><td>质量选项</td><td>错把 <code>hd</code> 的「高清」与<br><code>low/medium/high</code> 混在一组</td></tr>
+        <tr><td>尺寸 / 比例</td><td>错合成一个「画幅」，<br>实际是两套互斥的参数</td></tr>
+        <tr><td>视频参数</td><td class="warn">完全缺失</td></tr>
+        <tr><td>参考图</td><td class="warn">我编的 —— <code>maxReferences</code><br>在 model 层解析了但界面未使用</td></tr>
+        <tr><td>阶段文案</td><td>应使用代码里已有的<br>「准备提示词 / 提交生图请求 / 图片生成中」</td></tr>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================================
+     抽屉与浮层
+     ============================================================ -->
+<div class="sheet-back" id="back"></div>
+
+<!-- 模型选择 -->
+<div class="drawer" id="modelDrawer">
+  <div class="grab"></div>
+  <div class="d-head">
+    <div class="t">选择模型</div>
+    <div class="spacer"></div>
+    <button class="icon-btn" data-close>✕</button>
+  </div>
+  <div class="search">
+    <span style="color:var(--text-3);font-size:12px;">⌕</span>
+    <input id="modelSearch" placeholder="搜索模型…">
+  </div>
+  <div class="d-body" id="modelList"></div>
+  <div class="d-foot">
+    <button class="press-btn" style="width:100%;" data-close>完成</button>
+  </div>
+</div>
+
+<!-- 参数抽屉（移动端） -->
+<div class="drawer" id="paramDrawer">
+  <div class="grab"></div>
+  <div class="d-head">
+    <div class="t">参数</div>
+    <div class="spacer"></div>
+    <button class="icon-btn" data-close>✕</button>
+  </div>
+  <div class="d-body" id="paramRowsMobile"></div>
+  <div class="d-foot">
+    <button class="press-btn" style="width:100%;" data-close>完成</button>
+  </div>
+</div>
+
+<!-- 长按菜单 -->
+<div class="drawer" id="menuDrawer">
+  <div class="grab"></div>
+  <div class="d-head"><div class="t" id="menuTitle">图片</div></div>
+  <div class="d-body">
+    <div class="menu-item" data-menu="open"><span class="ic">⤢</span>放大查看</div>
+    <div class="menu-item" data-menu="ref"><span class="ic">⊞</span>用作参考图</div>
+    <div class="menu-item" data-menu="down"><span class="ic">↓</span>保存到设备</div>
+    <div class="menu-item" data-menu="regen"><span class="ic">↻</span>重新生成这一张</div>
+    <div class="menu-item danger" data-menu="del"><span class="ic">✕</span>删除</div>
+  </div>
+  <div class="d-foot">
+    <button class="press-btn" style="width:100%;background:var(--input-bg);color:var(--text-2);box-shadow:none;" data-close>取消</button>
+  </div>
+</div>
+
+<!-- 放大查看 -->
+<div class="viewer" id="viewer">
+  <div class="box">
+    <div class="close" id="viewerClose">关闭 ESC</div>
+    <div class="frame"><div class="fill" id="viewerFill"></div></div>
+    <div class="cap">
+      <span id="viewerIdx">01</span>
+      <span id="viewerName">image_01.png</span>
+      <span class="sz" id="viewerSz">1.8 MB</span>
+    </div>
+    <div class="nav prev" id="viewerPrev">‹</div>
+    <div class="nav next" id="viewerNext">›</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   模型列表 —— 结构对齐 ModelInfo
+   ============================================================ */
+const MODELS = [
+  { id:'gpt-image-1',      name:'GPT Image 1',      prov:'openai',    cap:'image', refs:3 },
+  { id:'dall-e-3',         name:'DALL·E 3',         prov:'openai',    cap:'image', refs:0 },
+  { id:'grok-2-image',     name:'Grok 2 Image',     prov:'xai',       cap:'image', refs:2 },
+  { id:'grok-video',       name:'Grok Video',       prov:'xai',       cap:'video', refs:1 },
+  { id:'flux-pro',         name:'FLUX 1.1 Pro',     prov:'fal',       cap:'image', refs:4 },
+  { id:'imagen-3',         name:'Imagen 3',         prov:'google',    cap:'image', refs:0 },
+  { id:'gpt-5',            name:'GPT-5',            prov:'openai',    cap:'text',  ctx:'400K' },
+  { id:'claude-sonnet-4',  name:'Claude Sonnet 4',  prov:'anthropic', cap:'text',  ctx:'200K' },
+];
+
+/* ============================================================
+   参数定义 —— 逐项对照 chat_model.dart
+   ============================================================ */
+const PARAMS_IMAGE = [
+  { key:'size', label:'尺寸', values:['1024x1024','1024x1536','1536x1024','1792x1024','1024x1792'],
+    labels:{'1024x1024':'1024² · 1:1','1024x1536':'竖版 2:3','1536x1024':'横版 3:2',
+            '1792x1024':'宽屏','1024x1792':'竖屏'}, def:null },
+  { key:'aspect', label:'比例', values:['16:9','9:16','1:1','4:3','3:4','3:2','2:3'], def:null },
+  { key:'count', label:'张数', stepper:{min:1,max:10}, def:1 },
+  { key:'quality', label:'质量', values:['low','medium','high'],
+    labels:{low:'快速',medium:'标准',high:'精细'}, def:null },
+  { key:'format', label:'格式', values:['png','jpeg','webp'],
+    labels:{png:'PNG',jpeg:'JPEG',webp:'WEBP'}, def:null },
+];
+
+const PARAMS_VIDEO = [
+  { key:'duration', label:'时长', values:[4,6,8,10,15], suffix:'秒', custom:true, def:null },
+  { key:'aspect', label:'比例', values:['16:9','9:16','1:1','4:3','3:4','3:2','2:3'], def:null },
+  { key:'resolution', label:'分辨率', values:['480p','720p'], def:null },
+];
+
+/* ============================================================
+   状态
+   ============================================================ */
+const S = {
+  model: MODELS[0],
+  count: 6,
+  tiles: [],
+  picked: null,
+  vals: { size:null, aspect:null, count:1, quality:null, format:null, duration:null, resolution:null },
+  generating: false,
+  startedAt: 0,
+  timers: [], tick: null,
+  menuTarget: null,
+  viewerIdx: 0,
+  refs: [],            // 参考图 id 列表（图生图）
+  refSeq: 0,
+};
+
+const $  = (s) => document.querySelector(s);
+const $$ = (s) => [...document.querySelectorAll(s)];
+const grid = $('#grid');
+const mGrid = $('#mGrid');
+
+const params = () => S.model.cap === 'video' ? PARAMS_VIDEO : PARAMS_IMAGE;
+
+/* ============================================================
+   工具
+   ============================================================ */
+function blankTile(i) {
+  return { status:'blank', size:'—', name:`image_${String(i+1).padStart(2,'0')}` };
+}
+function fmtSize() { return (1.2 + Math.random()*1.4).toFixed(1) + ' MB'; }
+
+function buildTiles(keep = true) {
+  const old = S.tiles, next = [];
+  for (let i = 0; i < S.count; i++) {
+    if (keep && old[i] && old[i].status !== 'blank') next.push(old[i]);
+    else next.push(blankTile(i));
+  }
+  S.tiles = next;
+  render();
+}
+
+/* 中性占位骨架 */
+const PLACEHOLDER_GLYPH = `
+  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" class="glyph">
+    <rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" stroke-width="1.5"/>
+    <circle cx="8.5" cy="9.5" r="1.8" fill="currentColor"/>
+    <path d="M4 17l4.5-4.5L12 16l3-3 5 5" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+
+/* ============================================================
+   渲染
+   ============================================================ */
+function render() {
+  renderGrid();
+  renderMobile();
+  renderParams();
+  renderParamsMobile();
+  renderRail();
+  renderRefs();
+  updateCounts();
+}
+
+function renderGrid(animate = false) {
+  grid.innerHTML = '';
+  const allBlank = S.tiles.every(t => t.status === 'blank');
+
+  if (allBlank) {
+    const e = document.createElement('div');
+    e.style.cssText = 'grid-column:1/-1;padding:48px 20px;text-align:center;border:1px dashed var(--border);border-radius:10px;';
+    e.innerHTML = `<div style="color:var(--text-3);margin-bottom:12px;">
+        <svg width="38" height="38" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" stroke-width="1.2"/>
+          <circle cx="8.5" cy="9.5" r="1.6" fill="currentColor"/>
+          <path d="M4 17l4.5-4.5L12 16l3-3 5 5" stroke="currentColor" stroke-width="1.2"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg></div>
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:5px;">还没有生成结果</div>
+      <div style="font-size:12px;color:var(--text-3);line-height:1.7;">
+        当前 ${S.count} 张待生成，输入描述后点生成</div>`;
+    grid.appendChild(e);
+    return;
+  }
+
+  S.tiles.forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'sheet' + (S.picked === i ? ' picked' : '') + (animate ? ' enter' : '');
+    el.dataset.s = t.status;
+    el.dataset.i = i;
+
+    if (t.status === 'blank') {
+      el.innerHTML = `
+        <div class="plate"><div class="ph">待生成</div></div>
+        <div class="meta"><span class="idx">${String(i+1).padStart(2,'0')}</span><span>—</span></div>`;
+    } else {
+      el.innerHTML = `
+        <div class="plate"><div class="fill">${PLACEHOLDER_GLYPH}</div></div>
+        <div class="acts">
+          <div class="a" data-act="open" title="放大">⤢</div>
+          <div class="a" data-act="ref" title="用作参考图">⊞</div>
+          <div class="a" data-act="down" title="保存">↓</div>
+          <div class="a danger" data-act="del" title="删除">✕</div>
+        </div>
+        <div class="meta">
+          <span class="idx">${String(i+1).padStart(2,'0')}</span>
+          <span>${t.name}</span>
+          <span class="stage" data-k="gen">生成中</span>
+          <span class="sz">${t.size}</span>
+        </div>`;
+    }
+
+    el.addEventListener('click', (ev) => {
+      const a = ev.target.closest('.a');
+      if (a) { doAction(a.dataset.act, i); return; }
+      if (t.status === 'blank') { toast('这一张还没生成'); return; }
+      S.picked = (S.picked === i ? null : i);
+      renderGrid();
+      if (S.picked !== null) openViewer(i);
+    });
+
+    /* 触屏长按 —— 移动端无悬停 */
+    let lp = null;
+    el.addEventListener('touchstart', () => {
+      lp = setTimeout(() => { if (t.status !== 'blank') openMenu(i); }, 480);
+    }, { passive:true });
+    ['touchend','touchmove','touchcancel'].forEach(e =>
+      el.addEventListener(e, () => clearTimeout(lp), { passive:true }));
+
+    grid.appendChild(el);
+  });
+}
+
+function renderMobile() {
+  mGrid.innerHTML = '';
+  const allBlank = S.tiles.every(t => t.status === 'blank');
+  if (allBlank) {
+    const e = document.createElement('div');
+    e.style.cssText = 'grid-column:1/-1;padding:36px 16px;text-align:center;border:1px dashed var(--border);border-radius:10px;';
+    e.innerHTML = `<div style="font-size:13px;font-weight:600;margin-bottom:5px;">还没有生成结果</div>
+      <div style="font-size:11.5px;color:var(--text-3);">当前 ${S.count} 张待生成</div>`;
+    mGrid.appendChild(e);
+    return;
+  }
+
+  S.tiles.forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'sheet' + (S.picked === i ? ' picked' : '');
+    el.dataset.s = t.status;
+
+    if (t.status === 'blank') {
+      el.innerHTML = `<div class="plate"><div class="ph">待生成</div></div>
+        <div class="meta"><span class="idx">${String(i+1).padStart(2,'0')}</span><span>—</span></div>`;
+    } else {
+      el.innerHTML = `
+        <div class="plate"><div class="fill">${PLACEHOLDER_GLYPH}</div></div>
+        <div class="meta"><span class="idx">${String(i+1).padStart(2,'0')}</span>
+          <span class="sz">${t.size}</span></div>`;
+    }
+
+    el.addEventListener('click', () => {
+      if (t.status === 'blank') { toast('这一张还没生成'); return; }
+      S.picked = (S.picked === i ? null : i);
+      renderGrid(); renderMobile();
+      if (S.picked !== null) openViewer(i);
+    });
+
+    let lp = null;
+    el.addEventListener('touchstart', () => {
+      lp = setTimeout(() => { if (t.status !== 'blank') openMenu(i); }, 480);
+    }, { passive:true });
+    ['touchend','touchmove','touchcancel'].forEach(e =>
+      el.addEventListener(e, () => clearTimeout(lp), { passive:true }));
+
+    mGrid.appendChild(el);
+  });
+}
+
+function renderRail() {
+  const rail = $('#rail');
+  rail.innerHTML = '';
+  [5,6,7].forEach((n, i) => {
+    const el = document.createElement('div');
+    el.className = 'item' + (i === 2 ? ' on' : '');
+    el.innerHTML = `<div class="thumb"></div><div class="no">${String(n).padStart(2,'0')}</div>`;
+    el.addEventListener('click', () => toast(`切换到第 ${String(n).padStart(2,'0')} 次生成`));
+    rail.appendChild(el);
+  });
+  const add = document.createElement('div');
+  add.className = 'add'; add.textContent = '+';
+  add.addEventListener('click', () => toast('新建一次生成'));
+  rail.appendChild(add);
+}
+
+/* ============================================================
+   参数面板
+   ============================================================ */
+function paramLabel(p, v) {
+  if (p.labels && p.labels[v] != null) return p.labels[v];
+  if (p.suffix) return `${v} ${p.suffix}`;
+  return String(v);
+}
+
+function buildParamRows(container, mobile) {
+  container.innerHTML = '';
+  const list = params();
+
+  list.forEach(p => {
+    const cur = S.vals[p.key];
+    const isSet = cur != null;
+    const row = document.createElement('div');
+    row.className = 'p-row' + (isSet ? ' on' : '');
+    row.dataset.key = p.key;
+
+    /* 步进器 */
+    if (p.stepper) {
+      const v = S.vals.count;
+      row.innerHTML = `
+        <span class="k">${p.label}</span>
+        <span class="stepper">
+          <span class="btn${v <= p.stepper.min ? ' off' : ''}" data-step="-1">−</span>
+          <span class="n" data-n>${v}</span>
+          <span class="btn${v >= p.stepper.max ? ' off' : ''}" data-step="1">+</span>
+        </span>`;
+      row.querySelectorAll('.btn').forEach(b => {
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const d = +b.dataset.step;
+          const next = Math.min(p.stepper.max, Math.max(p.stepper.min, S.vals.count + d));
+          if (next === S.vals.count) return;
+          S.vals.count = next;
+          S.count = next;
+          buildTiles();
+          const n = container.querySelector(`.p-row[data-key="count"] [data-n]`);
+          if (n) { n.textContent = next; n.classList.remove('tick'); void n.offsetWidth; n.classList.add('tick'); }
+          updateCounts();
+          renderParams(); renderParamsMobile();
+          toast(`张数改为 ${next}`);
+        });
+      });
+      container.appendChild(row);
+      return;
+    }
+
+    const display = isSet ? paramLabel(p, cur) : '默认';
+    row.innerHTML = `<span class="k">${p.label}</span>
+      <span class="v">${display}</span><span class="chev">▾</span>`;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'p-wrap';
+    const inner = document.createElement('div'); inner.className = 'inner';
+    const exp = document.createElement('div'); exp.className = 'p-expand';
+
+    p.values.forEach(v => {
+      const o = document.createElement('div');
+      o.className = 'opt' + (v === cur ? ' cur' : '');
+      o.innerHTML = `<span>${paramLabel(p, v)}</span>` +
+                    (v === p.def ? '<span class="sub">默认</span>' : '') +
+                    (v === cur ? '<span class="chk">✓</span>' : '');
+      o.addEventListener('click', (e) => {
+        e.stopPropagation();
+        S.vals[p.key] = (v === cur ? null : v);
+        renderParams(); renderParamsMobile(); updateCounts();
+        toast(`${p.label}：${S.vals[p.key] === null ? '默认' : paramLabel(p, v)}`);
+      });
+      exp.appendChild(o);
+    });
+
+    /* 自定义秒数 */
+    if (p.custom) {
+      const box = document.createElement('div');
+      box.className = 'p-input';
+      box.innerHTML = `<input type="number" min="1" max="15" placeholder="1-15"
+          value="${typeof cur === 'number' ? cur : ''}">
+        <span class="unit">秒</span><span class="err"></span>`;
+      const inp = box.querySelector('input');
+      const err = box.querySelector('.err');
+      inp.addEventListener('click', e => e.stopPropagation());
+      inp.addEventListener('input', () => {
+        const n = parseInt(inp.value, 10);
+        if (inp.value === '') { err.textContent = ''; return; }
+        if (isNaN(n) || n < 1 || n > 15) { err.textContent = '请输入 1 到 15 的整数秒'; return; }
+        err.textContent = '';
+        S.vals.duration = n;
+        updateCounts(); renderParams(); renderParamsMobile();
+      });
+      exp.appendChild(box);
+    }
+
+    inner.appendChild(exp);
+    wrap.appendChild(inner);
+
+    row.addEventListener('click', () => {
+      const open = wrap.classList.contains('open');
+      container.querySelectorAll('.p-wrap.open').forEach(w => w.classList.remove('open'));
+      container.querySelectorAll('.p-row.open').forEach(r => r.classList.remove('open'));
+      if (!open) { wrap.classList.add('open'); row.classList.add('open'); }
+    });
+
+    container.appendChild(row);
+    container.appendChild(wrap);
+  });
+}
+
+function renderParams() { buildParamRows($('#paramRows'), false); updateNote(); }
+function renderParamsMobile() { buildParamRows($('#paramRowsMobile'), true); }
+
+function updateNote() {
+  const isVideo = S.model.cap === 'video';
+  $('#paramNote').innerHTML = isVideo
+    ? `<b>视频参数</b><br>时长 4–15 秒，比例与分辨率由模型能力决定。`
+    : `<b>尺寸与比例互斥</b><br>OpenAI 用尺寸，xAI 用比例。未设置时由服务端取默认值。`;
+  $('#capHint').textContent = isVideo ? '视频模型' : '图片模型';
+}
+
+/* ============================================================
+   参考图（图生图）
+   真实机制：参考图作为 task parts 的 file 部分随提示词一起发出，
+   数量上限来自模型能力字段 max_references。
+   ============================================================ */
+const refLimit = () => S.model.refs || 0;
+
+function renderRefs() {
+  const max = refLimit();
+  const over = S.refs.length > max;          // 超出当前模型上限
+  const full = S.refs.length >= max;
+  // 有参考图时始终显示托盘（即使当前模型不支持），
+  // 否则切换模型会「吞掉」用户已上传的图，切回来就找不到了。
+  const show = S.refs.length > 0 || max > 0;
+
+  $$('#refsBar, #mRefsBar').forEach(bar => {
+    bar.style.display = show ? 'flex' : 'none';
+    bar.classList.toggle('over', over || (max === 0 && S.refs.length > 0));
+  });
+  if (!show) return;
+
+  const capTxt = max === 0
+    ? `${S.refs.length} 张 · 当前模型不支持`
+    : `${S.refs.length} / ${max}`;
+  $$('#refCap, #mRefCap').forEach(c => {
+    c.textContent = capTxt;
+    c.className = 'cap' + (full || over ? ' full' : '');
+  });
+
+  $$('#refThumbs, #mRefThumbs').forEach(box => {
+    box.innerHTML = '';
+    S.refs.forEach((id, i) => {
+      const el = document.createElement('div');
+      const unusable = i >= max;
+      el.className = 'ref-thumb' + (unusable ? ' off' : '');
+      el.innerHTML = `<span class="badge">${i+1}</span><span class="rm" title="移除">✕</span>`;
+      el.title = unusable
+        ? `参考图 ${i+1} · 超出当前模型上限，不会发送`
+        : `参考图 ${i+1}`;
+      el.querySelector('.rm').addEventListener('click', (e) => {
+        e.stopPropagation();
+        S.refs.splice(i, 1);
+        renderRefs();
+        toast(`已移除参考图 ${i+1}`);
+      });
+      el.addEventListener('click', () => toast(unusable
+        ? `参考图 ${i+1} 超出当前模型上限，不会发送`
+        : `参考图 ${i+1} · 点击可替换`));
+      box.appendChild(el);
+    });
+  });
+
+  $$('#refAdd, #mRefAdd').forEach(b => {
+    b.classList.toggle('off', full || max === 0);
+    b.title = max === 0 ? '当前模型不支持参考图'
+            : full ? `最多 ${max} 张参考图` : '添加参考图';
+  });
+}
+
+function addRef(n = 1) {
+  const max = refLimit();
+  if (max === 0) { toast('当前模型不支持图生图'); return; }
+  const room = max - S.refs.length;
+  if (room <= 0) { toast(`最多 ${max} 张参考图`); return; }
+  const add = Math.min(n, room);
+  for (let i = 0; i < add; i++) S.refs.push(++S.refSeq);
+  renderRefs();
+  toast(add === 1 ? `已添加参考图（${S.refs.length}/${max}）`
+                  : `已添加 ${add} 张参考图（${S.refs.length}/${max}）`);
+}
+
+/* 从生成结果「用作参考图」 */
+function useAsRef(i) {
+  if (refLimit() === 0) { toast('当前模型不支持图生图'); return; }
+  if (S.refs.length >= refLimit()) { toast(`最多 ${refLimit()} 张参考图`); return; }
+  S.refs.push(++S.refSeq);
+  renderRefs();
+  toast(`第 ${String(i+1).padStart(2,'0')} 张已设为参考图`);
+}
+
+/* ============================================================
+   计数 / 摘要
+   ============================================================ */
+function updateCounts() {
+  const done = S.tiles.filter(t => t.status === 'done').length;
+  $('#wallCount').textContent = `${done} / ${S.count} 已完成`;
+
+  const parts = [];
+  if (S.model.cap === 'video') {
+    if (S.vals.duration)   parts.push(`${S.vals.duration}秒`);
+    if (S.vals.aspect)     parts.push(S.vals.aspect);
+    if (S.vals.resolution) parts.push(S.vals.resolution.toUpperCase());
+  } else {
+    const byKey = Object.fromEntries(PARAMS_IMAGE.map(p => [p.key, p]));
+    if (S.vals.size)    parts.push(paramLabel(byKey.size, S.vals.size));
+    if (S.vals.aspect)  parts.push(S.vals.aspect);
+    if (S.vals.quality) parts.push(paramLabel(byKey.quality, S.vals.quality));
+  }
+  parts.push(`${S.count} 张`);
+  $('#mSummary').textContent = parts.join(' · ');
+  $('#logMeta').textContent = parts.join(' · ');
+}
+
+/* ============================================================
+   生成
+   ============================================================ */
+function expose() {
+  if (S.generating) { stopGen(); return; }
+
+  const blanks = S.tiles.map((t,i) => t.status === 'blank' ? i : -1).filter(i => i >= 0);
+  if (!blanks.length) { toast('全部已完成，先增加张数或删除几格'); return; }
+
+  S.generating = true;
+  S.startedAt = Date.now();
+  $('#logTxt').textContent = '正在生成';
+  setGenButton(true);
+
+  const PER = 850, total = blanks.length * PER + 3200;
+  blanks.forEach((idx, n) => {
+    push(() => {
+      S.tiles[idx].status = 'gen';
+      patch(idx);
+      updateCounts();
+    }, n * PER);
+    push(() => {
+      const t = S.tiles[idx];
+      t.status = 'done';
+      t.size = fmtSize();
+      patch(idx);
+      updateCounts();
+    }, n * PER + 2400);
+  });
+  push(finishGen, total);
+  startTick();
+}
+
+/* 从「待生成」进入生成时，plate 里只有占位文字，需要重建骨架层 */
+function patch(idx) {
+  const t = S.tiles[idx];
+  const el = grid.querySelector(`.sheet[data-i="${idx}"]`);
+  if (!el) return;
+
+  if (!el.querySelector('.fill')) {
+    el.querySelector('.plate').innerHTML = `<div class="fill">${PLACEHOLDER_GLYPH}</div>`;
+    el.querySelector('.meta').innerHTML = `
+      <span class="idx">${String(idx+1).padStart(2,'0')}</span>
+      <span>${t.name}</span>
+      <span class="stage" data-k="gen">生成中</span>
+      <span class="sz">${t.size}</span>`;
+    void el.querySelector('.plate').offsetWidth;
+  }
+
+  el.dataset.s = t.status;
+  const sz = el.querySelector('.sz');
+  if (sz && t.size !== '—') sz.textContent = t.size;
+  const st = el.querySelector('.stage');
+  if (st) st.textContent = t.status === 'done' ? '' : '生成中';
+}
+
+function finishGen() {
+  S.generating = false;
+  stopTick();
+  setGenButton(false);
+  const done = S.tiles.filter(t => t.status === 'done').length;
+  toast(`生成完成 · ${done} 张`);
+  $('#logTxt').textContent = '生成完成';
+  $('#logMeta').textContent = `${done} 张 · ${((Date.now()-S.startedAt)/1000).toFixed(1)}s`;
+}
+
+function stopGen() {
+  S.timers.forEach(clearTimeout); S.timers = [];
+  stopTick();
+  S.tiles.forEach((t,i) => {
+    if (t.status === 'gen') { t.status = 'done'; t.size = fmtSize(); patch(i); }
+  });
+  S.generating = false;
+  setGenButton(false);
+  updateCounts(); renderMobile();
+  toast('已停止');
+}
+
+function push(fn, d) { S.timers.push(setTimeout(fn, d)); }
+
+function setGenButton(on) {
+  const b = $('#press');
+  b.classList.toggle('stop', on);
+  b.textContent = on ? '停止' : '生成';
+  const m = $('#mPress');
+  m.classList.toggle('stop', on);
+  m.innerHTML = on
+    ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`
+    : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+         <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/>
+         <path d="M12 1.8v4M12 18.2v4M1.8 12h4M18.2 12h4"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+}
+
+function startTick() {
+  stopTick();
+  S.tick = setInterval(() => {
+    const done = S.tiles.filter(t => t.status === 'done').length;
+    const s = (Date.now() - S.startedAt) / 1000;
+    $('#logMeta').textContent = `${done} / ${S.count} · ${s.toFixed(1)}s`;
+  }, 100);
+}
+function stopTick() { if (S.tick) { clearInterval(S.tick); S.tick = null; } }
+
+/* ============================================================
+   抽屉
+   ============================================================ */
+let openDrawer = null;
+function showDrawer(id) {
+  closeDrawers();
+  openDrawer = id;
+  $('#back').classList.add('on');
+  $('#' + id).classList.add('on');
+}
+function closeDrawers() {
+  $('#back').classList.remove('on');
+  $$('.drawer').forEach(d => d.classList.remove('on'));
+  openDrawer = null;
+}
+$('#back').addEventListener('click', closeDrawers);
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-close]')) closeDrawers();
+  const o = e.target.closest('[data-open]');
+  if (!o) return;
+  const k = o.dataset.open;
+  if (k === 'model')  { renderModelList(); showDrawer('modelDrawer'); }
+  if (k === 'params') showDrawer('paramDrawer');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if ($('#viewer').classList.contains('on')) closeViewer();
+    else closeDrawers();
+  }
+});
+
+/* ============================================================
+   模型列表
+   ============================================================ */
+function renderModelList() {
+  const q = ($('#modelSearch').value || '').toLowerCase();
+  const list = MODELS.filter(m =>
+    !q || m.id.includes(q) || m.name.toLowerCase().includes(q) || m.prov.includes(q));
+
+  const groups = {};
+  list.forEach(m => (groups[m.prov] ||= []).push(m));
+
+  const box = $('#modelList');
+  box.innerHTML = '';
+  if (!list.length) {
+    box.innerHTML = `<div style="padding:30px;text-align:center;color:var(--text-3);font-size:12.5px;">
+      没有匹配的模型</div>`;
+    return;
+  }
+
+  Object.keys(groups).forEach(prov => {
+    const h = document.createElement('div');
+    h.className = 'mgroup'; h.textContent = prov;
+    box.appendChild(h);
+
+    groups[prov].forEach(m => {
+      const el = document.createElement('div');
+      el.className = 'mrow' + (m.id === S.model.id ? ' cur' : '');
+      const tags = [];
+      if (m.cap === 'image') tags.push('<span class="tag">生图</span>');
+      if (m.cap === 'video') tags.push('<span class="tag video">生视频</span>');
+      if (m.ctx) tags.push(`<span class="tag ctx">${m.ctx}</span>`);
+      el.innerHTML = `
+        <div class="info">
+          <div class="nm">${m.name}</div>
+          <div class="id">${m.id}</div>
+        </div>
+        <div class="tags">${tags.join('')}</div>
+        ${m.id === S.model.id ? '<span class="chk">✓</span>' : ''}`;
+      el.addEventListener('click', () => {
+        S.model = m;
+        $('#modelName').textContent = m.id;
+        $('#mModelName').textContent = m.id;
+        const capTxt = m.cap === 'video' ? '生视频' : m.cap === 'image' ? '生图' : '文本';
+        const capCls = 'cap' + (m.cap === 'video' ? ' video' : '');
+        ['#modelCap','#mModelCap'].forEach(sel => {
+          const el = $(sel);
+          if (el) { el.textContent = capTxt; el.className = capCls; }
+        });
+        // 保留所有参数值 —— 与真实实现一致：ImageGenerationOptions
+        // 是一个持有全部字段的对象，切模型只改变「显示哪些参数」，
+        // 不清空已设置的值。切回来时设置还在。
+        // 参考图同理保留：超出新模型上限的只是「不发送」并置灰提示，
+        // 不删除。删掉等于用户切一下模型就丢了已上传的图。
+        const max = m.refs || 0;
+        const over = S.refs.length - max;
+        if (max === 0 && S.refs.length > 0) {
+          toast(`已切换到 ${m.name}，该模型不支持参考图，${S.refs.length} 张暂不发送`);
+        } else if (over > 0) {
+          toast(`已切换到 ${m.name}，前 ${max} 张参考图会发送`);
+        } else {
+          toast(`已切换到 ${m.name}`);
+        }
+        renderParams(); renderParamsMobile(); renderRefs(); updateCounts();
+        closeDrawers();
+      });
+      box.appendChild(el);
+    });
+  });
+}
+$('#modelSearch').addEventListener('input', renderModelList);
+
+/* ============================================================
+   长按菜单
+   ============================================================ */
+function openMenu(i) {
+  S.menuTarget = i;
+  $('#menuTitle').textContent = `第 ${String(i+1).padStart(2,'0')} 张`;
+  showDrawer('menuDrawer');
+}
+document.addEventListener('click', e => {
+  const mi = e.target.closest('[data-menu]');
+  if (!mi || S.menuTarget == null) return;
+  const i = S.menuTarget, k = mi.dataset.menu;
+  closeDrawers();
+  if (k === 'open')  { S.picked = i; renderGrid(); renderMobile(); openViewer(i); }
+  if (k === 'ref')   useAsRef(i);
+  if (k === 'down')  toast(`已保存 ${S.tiles[i].name}.png`);
+  if (k === 'regen') toast(`重新生成第 ${String(i+1).padStart(2,'0')} 张`);
+  if (k === 'del')   { S.tiles[i] = blankTile(i); S.picked = null; render(); toast('已删除'); }
+});
+
+/* ============================================================
+   放大查看
+   ============================================================ */
+function openViewer(i) {
+  const t = S.tiles[i];
+  if (!t || t.status !== 'done') return;
+  S.viewerIdx = i;
+  $('#viewerIdx').textContent = String(i+1).padStart(2,'0');
+  $('#viewerName').textContent = `${t.name}.png`;
+  $('#viewerSz').textContent = t.size;
+  $('#viewer').classList.add('on');
+}
+function closeViewer() { $('#viewer').classList.remove('on'); }
+function stepViewer(d) {
+  const idx = S.tiles.map((t,i) => t.status === 'done' ? i : -1).filter(i => i >= 0);
+  if (!idx.length) return;
+  const at = idx.indexOf(S.viewerIdx);
+  const next = idx[(at + d + idx.length) % idx.length];
+  openViewer(next);
+  S.picked = next;
+  renderGrid(); renderMobile();
+}
+$('#viewerClose').addEventListener('click', closeViewer);
+$('#viewerPrev').addEventListener('click', e => { e.stopPropagation(); stepViewer(-1); });
+$('#viewerNext').addEventListener('click', e => { e.stopPropagation(); stepViewer(1); });
+$('#viewer').addEventListener('click', e => { if (e.target.id === 'viewer') closeViewer(); });
+document.addEventListener('keydown', e => {
+  if (!$('#viewer').classList.contains('on')) return;
+  if (e.key === 'ArrowLeft')  stepViewer(-1);
+  if (e.key === 'ArrowRight') stepViewer(1);
+});
+
+/* 触屏左右滑动切换 */
+let swipeX = null;
+$('#viewer').addEventListener('touchstart', e => { swipeX = e.touches[0].clientX; }, { passive:true });
+$('#viewer').addEventListener('touchend', e => {
+  if (swipeX == null) return;
+  const dx = e.changedTouches[0].clientX - swipeX;
+  if (Math.abs(dx) > 46) stepViewer(dx < 0 ? 1 : -1);
+  swipeX = null;
+}, { passive:true });
+
+/* ============================================================
+   格子操作
+   ============================================================ */
+function doAction(act, i) {
+  const t = S.tiles[i];
+  if (act === 'open') { S.picked = i; renderGrid(); openViewer(i); return; }
+  if (act === 'ref')  { useAsRef(i); return; }
+  if (act === 'down') { toast(`已保存 ${t.name}.png`); return; }
+  if (act === 'del')  { S.tiles[i] = blankTile(i); S.picked = null; render(); toast('已删除'); }
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+let tTimer = null;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.classList.add('on');
+  clearTimeout(tTimer);
+  tTimer = setTimeout(() => el.classList.remove('on'), 1900);
+}
+
+/* ============================================================
+   绑定
+   ============================================================ */
+$('#press').addEventListener('click', expose);
+$('#mPress').addEventListener('click', expose);
+$('#prompt').addEventListener('input', e => {
+  $('#field').classList.toggle('filled', e.target.value.length > 0);
+});
+$('#prompt').addEventListener('focus', () => $('#field').classList.add('focus'));
+$('#prompt').addEventListener('blur',  () => $('#field').classList.remove('focus'));
+$('#prompt').addEventListener('keydown', e => { if (e.key === 'Enter') expose(); });
+
+/* 添加参考图按钮 */
+$$('#refAdd, #mRefAdd').forEach(b => b.addEventListener('click', () => {
+  if (S.refs.length >= refLimit()) { toast(`最多 ${refLimit()} 张参考图`); return; }
+  addRef(1);
+}));
+
+/* 拖放添加参考图 */
+let dragDepth = 0;
+const dz = $('#dropzone');
+const deskApp = $('#deskApp');
+deskApp.addEventListener('dragenter', e => {
+  e.preventDefault();
+  if (refLimit() === 0) return;
+  dragDepth++;
+  dz.classList.add('on');
+});
+deskApp.addEventListener('dragover', e => e.preventDefault());
+deskApp.addEventListener('dragleave', e => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) dz.classList.remove('on');
+});
+deskApp.addEventListener('drop', e => {
+  e.preventDefault();
+  dragDepth = 0;
+  dz.classList.remove('on');
+  const n = e.dataTransfer?.files?.length || 1;
+  addRef(n);
+});
+
+$$('.viewtabs button').forEach(b => b.addEventListener('click', () => {
+  $$('.viewtabs button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on');
+  const desk = b.dataset.view === 'desk';
+  $('#deskApp').style.display = desk ? '' : 'none';
+  $('#mobileApp').style.display = desk ? 'none' : 'grid';
+}));
+
+/* ============================================================
+   启动
+   ============================================================ */
+S.tiles = [0,1,2,3,4,5].map(i => ({
+  status: i < 4 ? 'done' : 'blank',
+  size: i < 4 ? ['1.8 MB','2.1 MB','1.6 MB','1.9 MB'][i] : '—',
+  name: `image_${String(i+1).padStart(2,'0')}`,
+}));
+S.vals = { size:'1024x1024', aspect:null, count:6, quality:'high', format:'png',
+           duration:null, resolution:null };
+S.count = 6;
+render();
+$('#prompt').value = '一只坐在窗台上的橘猫，晨光';
+$('#logTxt').textContent = '一只坐在窗台上的橘猫，晨光';
+$('#logMeta').textContent = '1024² · 1:1 · 精细 · 4 张';
+</script>
+</body>
+</html>

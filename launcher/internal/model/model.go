@@ -730,6 +730,9 @@ type DirectoryFileRequest struct {
 	SHA256      string `json:"sha256,omitempty"`
 	// Resume 为 true 时保留同一 upload_id 已写入的分块，仅补齐缺失分块。
 	Resume bool `json:"resume,omitempty"`
+	// RawContent 承载二进制帧传输的原始分块字节（Encoding=="binary" 时使用）。
+	// 标 json:"-" 以免被再次序列化/编码；它由 relay 层从帧尾注入。
+	RawContent []byte `json:"-"`
 }
 
 // UploadStatus 描述一次分块上传的当前进度，供客户端断点续传使用。
@@ -771,6 +774,9 @@ type ProjectFilesRequest struct {
 	SHA256      string `json:"sha256,omitempty"`
 	// Resume 为 true 时保留同一 upload_id 已写入的分块，仅补齐缺失分块。
 	Resume bool `json:"resume,omitempty"`
+	// RawContent 承载二进制帧传输的原始分块字节（Encoding=="binary" 时使用）。
+	// 标 json:"-" 以免被再次序列化/编码；它由 relay 层从帧尾注入。
+	RawContent []byte `json:"-"`
 }
 
 type WelcomePayload struct {

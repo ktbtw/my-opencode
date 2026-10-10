@@ -17,6 +17,7 @@ import '../data/chat_repository.dart';
 import '../data/task_event_batcher.dart';
 import '../data/local_chat_store.dart';
 import '../data/local_event_writer.dart';
+import '../data/model_log.dart';
 import 'chat_error_formatter.dart';
 
 final chatRepositoryProvider = Provider((ref) {
@@ -52,8 +53,16 @@ class SelectedModelNotifier extends StateNotifier<ModelInfo?> {
 
   /// 初始化：从后端加载该设备的模型设置，匹配可用模型列表
   Future<void> init(List<ModelInfo> models) async {
-    if (models.isEmpty || agentId.isEmpty) return;
+    if (models.isEmpty || agentId.isEmpty) {
+      ModelLog.restoreSkipped(
+        agentId,
+        models.length,
+        models.isEmpty ? '可用模型列表为空' : 'agentId 为空',
+      );
+      return;
+    }
     final generation = ++_initGeneration;
+    ModelLog.restoreStart(agentId, models.length);
 
     // 优先从后端获取
     try {
@@ -62,15 +71,26 @@ class SelectedModelNotifier extends StateNotifier<ModelInfo?> {
         'chat_model_init_loaded',
         data: {'agent_id': agentId, 'saved_model': settings['selected_model']},
       );
-      if (generation != _initGeneration) return;
       final saved = settings['selected_model']?.toString().trim() ?? '';
+      ModelLog.restoreLoaded(agentId, saved);
+      if (generation != _initGeneration) {
+        ModelLog.restoreStale(agentId, saved);
+        return;
+      }
       if (saved.isEmpty) {
         state = null;
+        ModelLog.restoreDefault(agentId);
         return;
       }
       final match = models.where((model) => model.metaKey == saved).firstOrNull;
       if (match != null) {
         state = match;
+        ModelLog.restoreMatched(
+          agentId,
+          saved,
+          match.metaKey,
+          via: '完整键匹配',
+        );
         return;
       }
 
@@ -79,14 +99,29 @@ class SelectedModelNotifier extends StateNotifier<ModelInfo?> {
       if (separator > 0 && separator < saved.length - 1) {
         final provider = saved.substring(0, separator);
         final modelID = saved.substring(separator + 1);
-        state = models
+        final legacy = models
             .where(
               (model) =>
                   model.providerID == provider && model.modelID == modelID,
             )
             .firstOrNull;
+        state = legacy;
+        if (legacy != null) {
+          ModelLog.restoreMatched(
+            agentId,
+            saved,
+            legacy.metaKey,
+            via: '历史格式拆分匹配',
+          );
+        } else {
+          ModelLog.restoreNotFound(agentId, saved, models.length);
+        }
+        return;
       }
-    } catch (_) {}
+      ModelLog.restoreNotFound(agentId, saved, models.length);
+    } catch (error) {
+      ModelLog.restoreFailed(agentId, error);
+    }
   }
 
   Future<void> select(ModelInfo? model) async {
@@ -103,13 +138,22 @@ class SelectedModelNotifier extends StateNotifier<ModelInfo?> {
     );
     // 同步保存到后端
     if (agentId.isNotEmpty) {
+      final startedAt = DateTime.now();
       try {
         await ApiClient.post('/api/agents/$agentId/settings', {
           'selected_model': model == null
               ? ''
               : '${model.providerID}/${model.modelID}',
         });
-      } catch (_) {}
+        ModelLog.selectSaved(
+          agentId,
+          previous?.metaKey,
+          model?.metaKey,
+          DateTime.now().difference(startedAt).inMilliseconds,
+        );
+      } catch (error) {
+        ModelLog.selectSaveFailed(agentId, error);
+      }
     }
   }
 }

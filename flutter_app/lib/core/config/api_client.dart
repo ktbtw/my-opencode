@@ -174,6 +174,59 @@ class ApiClient {
     return _handle(resp);
   }
 
+  /// 以 multipart 提交二进制分块：元数据走表单字段，分块内容原样传输，
+  /// 避免 base64 带来的 33% 膨胀。服务端按 Content-Type 自动区分新旧协议。
+  static Future<Map<String, dynamic>> postChunkMultipart(
+    String path, {
+    required Map<String, String> fields,
+    required List<int> chunk,
+    Duration? timeout,
+    String? expectedIdentity,
+  }) async {
+    void checkIdentity() {
+      if (expectedIdentity != null &&
+          AppStorage.storageIdentity != expectedIdentity) {
+        throw StateError('Account changed during settings sync');
+      }
+    }
+
+    checkIdentity();
+    final uri = Uri.parse('$baseUrl$path');
+    final request = http.MultipartRequest('POST', uri)
+      ..fields.addAll(fields)
+      ..files.add(
+        http.MultipartFile.fromBytes('chunk', chunk, filename: 'chunk'),
+      );
+    final token = AppStorage.getToken();
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    var resp = await http.Response.fromStream(
+      await (timeout == null
+          ? request.send()
+          : request.send().timeout(timeout)),
+    );
+    checkIdentity();
+    if (resp.statusCode == 401 && await _tryRefreshToken()) {
+      checkIdentity();
+      final retry = http.MultipartRequest('POST', uri)
+        ..fields.addAll(fields)
+        ..files.add(
+          http.MultipartFile.fromBytes('chunk', chunk, filename: 'chunk'),
+        );
+      final retryToken = AppStorage.getToken();
+      if (retryToken != null && retryToken.isNotEmpty) {
+        retry.headers['Authorization'] = 'Bearer $retryToken';
+      }
+      resp = await http.Response.fromStream(
+        await (timeout == null
+            ? retry.send()
+            : retry.send().timeout(timeout)),
+      );
+    }
+    return _handle(resp);
+  }
+
   static Future<Map<String, dynamic>> patch(
     String path,
     Map<String, dynamic> body,

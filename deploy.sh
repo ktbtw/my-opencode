@@ -872,9 +872,7 @@ payload = {
     "channel": "latest",
     # 用 chr(10) 拼换行，避免在多层引号里写转义序列出错。
     "changelog": chr(10).join([
-        "- 同步 OpenCode 最新模型目录：自动识别上下文窗口、最大输出、输入输出模态、思考协议与思考档位",
-        "- 第三方中转模型支持 GPT、Grok、Kimi、Claude、Gemini、DeepSeek、Qwen、Llama、Mistral、GLM 等模型简称匹配",
-        "- 语义 Agent 支持按供应商和模型名配置模型提示词，并支持 Agent、模型或两者同时生效",
+        "- 修复模型列表与 AI 配置长时间加载失败的问题：模型目录（models.dev）的联网刷新此前挡在请求路径上，网络慢或不可达时会把设备请求卡满超时；现在改为后台刷新，请求立即返回上一次的有效目录",
         "- 新增「应用 MCP 配置」内置 Skill：Launcher 启动时自动为所有用户预装并默认启用，可直接让 Agent 通过本地接口新增、修改、删除、查看本应用的全局 MCP，无需手动导入 Skill",
         "- 内置默认 Skill 的正文随 Launcher 一起更新，升级后自动刷新为最新内容；不覆盖用户手动关闭的开关，也不影响用户自己导入的 Skill",
         "- 修复单独安装运行时（例如 FFmpeg）时报「agent not found」的问题：运行时安装是设备级操作，此前却按项目 Agent 校验 launcher 设备标识，导致安装直接被拒；现在不再要求存在项目 Agent",

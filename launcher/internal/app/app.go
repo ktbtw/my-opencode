@@ -1261,11 +1261,9 @@ func (s *service) AIConfig() (*model.DeviceAIConfigInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The initial configuration view must use the same OpenCode catalogue as
-	// the explicit model refresh action. Without this refresh, a running
-	// runtime can provide metadata while the local catalogue is still empty,
-	// so presets only appear after the user manually refreshes models.
-	aiconfig.SyncOpenCodeModelCatalog()
+	// 目录只提供可选的预设元数据，联网刷新由 enrichAIConfigFromRuntime 在
+	// 后台完成。对话页拉取模型列表与配置页读取配置都走这里，models.dev 慢或
+	// 不可达时请求必须立即返回上一次的有效快照。
 	return s.enrichAIConfigFromRuntime(cfg), nil
 }
 
@@ -1274,6 +1272,7 @@ func (s *service) ListAIModels(input model.DeviceAIConfigInput) (*model.DeviceAI
 	if err != nil {
 		return nil, err
 	}
+	// 用户显式刷新模型时才同步等待目录，确保拿到最新的预设。
 	aiconfig.SyncOpenCodeModelCatalog()
 	return s.enrichAIConfigFromRuntime(cfg), nil
 }

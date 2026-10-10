@@ -22,6 +22,12 @@ type envelope struct {
 	RequestID string `json:"request_id,omitempty"`
 	SentAt    string `json:"sent_at,omitempty"`
 	Payload   any    `json:"payload,omitempty"`
+	// RawChunk 承载二进制帧里的原始字节。
+	//
+	// 不放进 Payload：handler 会把 Payload 再 json.Marshal 一次，
+	// []byte 会被重新 base64 编码，正好抵消二进制传输的收益。
+	// 用独立字段旁路，既有 handler 的解析逻辑不受影响。
+	RawChunk []byte `json:"-"`
 }
 
 type handlerFunc func(envelope, config.Config, Service) envelope
@@ -77,7 +83,12 @@ func connect(ctx context.Context, cfg config.Config, svc Service) error {
 			"hostname":     cfg.Relay.Hostname,
 			"operator_key": cfg.Relay.OperatorKey,
 			"version":      "launcher-" + launcherVersion.Value,
-			"capabilities": []string{"device_compaction_config_v1", "device_storage_v1", "device_runtime_v1"},
+			"capabilities": []string{
+				"device_compaction_config_v1",
+				"device_storage_v1",
+				"device_runtime_v1",
+				binaryFrameCapability,
+			},
 			"projects":     []map[string]any{},
 		},
 	}
@@ -89,13 +100,25 @@ func connect(ctx context.Context, cfg config.Config, svc Service) error {
 	heartbeatStarted := false
 	handlers := buildHandlers()
 	for {
-		_, data, err := conn.Read(ctx)
+		messageType, data, err := conn.Read(ctx)
 		if err != nil {
 			return err
 		}
 		var env envelope
-		if err := json.Unmarshal(data, &env); err != nil {
+		var rawChunk []byte
+		if messageType == websocket.MessageBinary {
+			// 二进制帧：分块内容以原始字节传输，省掉 base64 的 33% 膨胀。
+			decoded, payload, ok := decodeBinaryFrame(data)
+			if !ok {
+				continue
+			}
+			env = decoded
+			rawChunk = payload
+		} else if err := json.Unmarshal(data, &env); err != nil {
 			continue
+		}
+		if rawChunk != nil {
+			env.RawChunk = rawChunk
 		}
 		if env.Type == "device.welcome" {
 			if !heartbeatStarted {
@@ -1165,6 +1188,11 @@ func handleDirectoryFiles(env envelope, cfg config.Config, svc Service) envelope
 	var payload model.DirectoryFileRequest
 	blob, _ := json.Marshal(env.Payload)
 	_ = json.Unmarshal(blob, &payload)
+	// 二进制帧：分块内容以原始字节随帧传输，不走 base64 字段。
+	if len(env.RawChunk) > 0 {
+		payload.RawContent = env.RawChunk
+		payload.Encoding = "binary"
+	}
 	action := strings.TrimPrefix(env.Type, "device.directory_files.")
 	base := envelope{
 		Type:      "device.directories.result",
@@ -1240,6 +1268,11 @@ func handleProjectFiles(env envelope, cfg config.Config, svc Service) envelope {
 	var payload model.ProjectFilesRequest
 	blob, _ := json.Marshal(env.Payload)
 	_ = json.Unmarshal(blob, &payload)
+	// 二进制帧：分块内容以原始字节随帧传输，不走 base64 字段。
+	if len(env.RawChunk) > 0 {
+		payload.RawContent = env.RawChunk
+		payload.Encoding = "binary"
+	}
 	action := strings.TrimPrefix(env.Type, "device.project_files.")
 	base := envelope{
 		Type:      "device.directories.result",

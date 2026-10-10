@@ -32,6 +32,7 @@ import '../../../features/settings/settings_provider.dart';
 import '../../../core/services/recent_task_resume.dart';
 import '../data/chat_model.dart';
 import '../data/chat_target.dart';
+import '../data/model_log.dart';
 import 'attachment_drop_support.dart';
 import 'attachment_drop_target.dart';
 import 'chat_provider.dart';
@@ -575,7 +576,14 @@ class _ChatPageState extends ConsumerState<ChatPage>
       // 如果模型列表已加载，立即初始化模型选择
       final models = ref.read(availableModelsProvider(_modelsKey)).valueOrNull;
       if (models != null && models.isNotEmpty) {
+        ModelLog.restoreTriggered(
+          '页面初始化（postFrame）',
+          widget.agentId,
+          models.length,
+        );
         ref.read(selectedModelProvider(widget.agentId).notifier).init(models);
+      } else {
+        ModelLog.restorePending('页面初始化（postFrame）');
       }
     });
   }
@@ -1532,7 +1540,14 @@ class _ChatPageState extends ConsumerState<ChatPage>
     ref.listen(availableModelsProvider(_modelsKey), (_, next) {
       final models = next.valueOrNull;
       if (models != null && models.isNotEmpty) {
+        ModelLog.restoreTriggered('模型列表加载完成', widget.agentId, models.length);
         ref.read(selectedModelProvider(widget.agentId).notifier).init(models);
+      } else if (next.hasError) {
+        ModelLog.restoreSkipped(
+          widget.agentId,
+          0,
+          '模型列表加载失败：${next.error}',
+        );
       }
     });
 
@@ -1762,6 +1777,14 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                         .removeAttachedFile(i);
                                   },
                                   onSelectModel: (m) {
+                                    ModelLog.pickerSelected(
+                                      ref
+                                          .read(
+                                            selectedModelProvider(widget.agentId),
+                                          )
+                                          ?.metaKey,
+                                      m?.metaKey,
+                                    );
                                     _warnModelContextSwitch(
                                       context,
                                       chat.contextUsage,
@@ -10021,6 +10044,7 @@ class _ModelSelector extends StatelessWidget {
   }
 
   void _showModelPicker(BuildContext context) {
+    ModelLog.pickerOpened(availableModels.length, selectedModel?.metaKey);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -10766,6 +10790,8 @@ class _ModelPickerSheet extends StatefulWidget {
 
 class _ModelPickerSheetState extends State<_ModelPickerSheet> {
   String _search = '';
+  // 面板可能因搜索/滚动频繁重建，只在统计变化时输出一次，避免刷屏。
+  String? _lastLoggedSignature;
 
   @override
   Widget build(BuildContext context) {
@@ -10781,6 +10807,17 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
     final grouped = <String, List<ModelInfo>>{};
     for (final m in filtered) {
       grouped.putIfAbsent(m.providerID, () => []).add(m);
+    }
+    final signature =
+        '$_search|${widget.availableModels.length}|${filtered.length}|${grouped.length}';
+    if (signature != _lastLoggedSignature) {
+      _lastLoggedSignature = signature;
+      ModelLog.pickerShown(
+        _search,
+        widget.availableModels.length,
+        filtered.length,
+        grouped.length,
+      );
     }
 
     return DraggableScrollableSheet(
