@@ -278,7 +278,8 @@ func TestBackendRelayRouterDispatchesTaskAndRecordsCompletion(t *testing.T) {
 	if created.Metadata["goal"] != "完成真实 relay goal 测试" || created.Metadata["goal_max_iterations"] != "3" {
 		t.Fatalf("unexpected created task metadata: %+v", created.Metadata)
 	}
-	if created.Metadata["goal_status"] != "pending" || created.Metadata["goal_iteration"] != "0" {
+	// 新建目标即进入 active（见 api.go 的 goal 元数据初始化），不再有 pending 阶段。
+	if created.Metadata["goal_status"] != "active" || created.Metadata["goal_iteration"] != "0" {
 		t.Fatalf("expected initial goal metadata, got %+v", created.Metadata)
 	}
 

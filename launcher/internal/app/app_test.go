@@ -541,8 +541,10 @@ func TestDirectoryFileUploadRequiresChecksumsAndBindsSessionToTarget(t *testing.
 	if _, err := svc.CreateDirectoryUpload(req); err != nil {
 		t.Fatalf("create directory upload: %v", err)
 	}
-	if _, err := svc.CreateDirectoryUpload(req); err == nil {
-		t.Fatal("expected duplicate upload session rejected")
+	// 重复 create 复用既有会话：客户端被杀后重试可能拿不到续传标志，参数一致时
+	// 直接返回成功，后续分块与完成流程沿用同一会话（见 upload_session.go）。
+	if _, err := svc.CreateDirectoryUpload(req); err != nil {
+		t.Fatalf("duplicate upload session should reuse existing session: %v", err)
 	}
 	if _, err := svc.WriteDirectoryUploadChunk(model.DirectoryFileRequest{
 		Path:       target,
