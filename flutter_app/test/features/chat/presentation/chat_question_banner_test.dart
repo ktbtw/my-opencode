@@ -166,6 +166,140 @@ void main() {
     await tester.pumpAndSettle();
     expect(checkIcon(), findsOneWidget, reason: '答完后应打勾');
   });
+
+  testWidgets('collapsing keeps only the title row', (tester) async {
+    await tester.pumpWidget(
+      _surface(question: _multiQuestion(), onSubmit: (_, _) {}),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('第一个问题？'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('question-banner-collapse')));
+    await tester.pumpAndSettle();
+
+    // 收起后题目与操作按钮都不再渲染，只留一行标题
+    expect(find.text('第一个问题？'), findsNothing);
+    expect(find.text('提交选择'), findsNothing);
+    expect(find.byKey(const ValueKey('question-banner-expand')), findsOneWidget);
+    expect(find.text('2 题待作答'), findsOneWidget);
+  });
+
+  testWidgets('expanding again preserves the answers already made', (
+    tester,
+  ) async {
+    List<List<String>>? submitted;
+    await tester.pumpWidget(
+      _surface(
+        question: _multiQuestion(),
+        onSubmit: (_, answers) => submitted = answers,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('甲'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('question-banner-collapse')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 题待作答'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('question-banner-expand')));
+    await tester.pumpAndSettle();
+
+    // 收起前的选择仍在，补答第二题后即可提交
+    await tester.tap(find.byKey(const ValueKey('question-step-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('丙'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('提交选择'));
+
+    expect(submitted, [
+      <String>['甲'],
+      <String>['丙'],
+    ]);
+  });
+
+  testWidgets('an external expand tick re-expands a collapsed banner', (
+    tester,
+  ) async {
+    final tick = ValueNotifier<int>(0);
+    addTearDown(tick.dispose);
+    await tester.pumpWidget(
+      ValueListenableBuilder<int>(
+        valueListenable: tick,
+        builder: (context, value, _) => MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: QuestionBanner(
+                question: _multiQuestion(),
+                expandTick: value,
+                onSubmit: (_, _) {},
+                onReject: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('question-banner-collapse')));
+    await tester.pumpAndSettle();
+    expect(find.text('第一个问题？'), findsNothing);
+
+    // 模拟切回前台或用户尝试发消息：外部把 tick 加一
+    tick.value++;
+    await tester.pumpAndSettle();
+
+    expect(find.text('第一个问题？'), findsOneWidget);
+    expect(find.byKey(const ValueKey('question-banner-expand')), findsNothing);
+  });
+
+  testWidgets('a new question request starts expanded', (tester) async {
+    final request = ValueNotifier<QuestionRequestInfo>(_multiQuestion());
+    addTearDown(request.dispose);
+    await tester.pumpWidget(
+      ValueListenableBuilder<QuestionRequestInfo>(
+        valueListenable: request,
+        builder: (context, value, _) => MaterialApp(
+          theme: AppTheme.light,
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: QuestionBanner(
+                question: value,
+                onSubmit: (_, _) {},
+                onReject: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('question-banner-collapse')));
+    await tester.pumpAndSettle();
+    expect(find.text('第一个问题？'), findsNothing);
+
+    // 换一条新请求：不应沿用上一条的收起状态
+    request.value = QuestionRequestInfo(
+      requestId: 'question-next',
+      questions: [
+        QuestionItemInfo(
+          question: '新的问题？',
+          header: '新问题',
+          options: const [
+            QuestionOptionInfo(label: '好', description: '继续'),
+          ],
+          multiple: false,
+          custom: false,
+        ),
+      ],
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('新的问题？'), findsOneWidget);
+  });
 }
 
 QuestionRequestInfo _multiQuestion() {

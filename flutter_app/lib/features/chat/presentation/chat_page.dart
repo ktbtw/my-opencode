@@ -450,6 +450,14 @@ class _ChatPageState extends ConsumerState<ChatPage>
   ChatNotifier? _visibleNotifier;
   PageRoute<dynamic>? _observedRoute;
   String? _syncedGoalTerminalKey;
+  // 自增后传给 QuestionBanner，把收起的提问卡片重新展开。
+  int _questionExpandTick = 0;
+
+  void _expandPendingQuestion() {
+    if (!mounted) return;
+    if (ref.read(chatProvider(_chatKey)).pendingQuestion == null) return;
+    setState(() => _questionExpandTick++);
+  }
 
   @override
   void didChangeDependencies() {
@@ -891,6 +899,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
     final notifier = ref.read(chatProvider(_chatKey).notifier);
     if (state == AppLifecycleState.resumed) {
       unawaited(notifier.reconcileAfterResume());
+      // 回到前台时把收起的提问卡片重新展开，避免用户忘记任务还在等待作答。
+      _expandPendingQuestion();
       return;
     }
     // 进入后台：长连接会被系统挂起，期间的断开按预期行为处理，
@@ -1148,6 +1158,11 @@ class _ChatPageState extends ConsumerState<ChatPage>
   Future<void> _send() async {
     final text = _sanitizeInput(_inputCtrl.text).trim();
     if (text.isEmpty) return;
+    // 有提问等待作答时，先把卡片展开提醒：此时发送只会进入发送队列，
+    // 并不能回答 Agent 的问题，直接静默排队会让用户以为已经回复过。
+    if (ref.read(chatProvider(_chatKey)).pendingQuestion != null) {
+      _expandPendingQuestion();
+    }
     final commandGoal = _goalFromInput(text);
     if (commandGoal != null) {
       try {
@@ -1692,6 +1707,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                 if (chat.pendingQuestion != null)
                                   QuestionBanner(
                                     question: chat.pendingQuestion!,
+                                    expandTick: _questionExpandTick,
                                     onSubmit: (requestId, answers) {
                                       ref
                                           .read(chatProvider(_chatKey).notifier)
@@ -6483,12 +6499,15 @@ class QuestionBanner extends StatefulWidget {
   final QuestionRequestInfo question;
   final void Function(String requestId, List<List<String>> answers) onSubmit;
   final void Function(String requestId) onReject;
+  /// 每次自增都会把收起状态重新展开，用于切回前台或用户试图发消息时提醒。
+  final int expandTick;
 
   const QuestionBanner({
     super.key,
     required this.question,
     required this.onSubmit,
     required this.onReject,
+    this.expandTick = 0,
   });
 
   @override
@@ -6503,6 +6522,13 @@ class _QuestionBannerState extends State<QuestionBanner>
   late List<TextEditingController> _customAnswerControllers;
   late final PageController _pageController;
   int _activeIndex = 0;
+  // 收起后只保留一行标题，避免长时间挡住消息区；作答内容不丢。
+  bool _collapsed = false;
+
+  void _setCollapsed(bool value) {
+    if (_collapsed == value) return;
+    setState(() => _collapsed = value);
+  }
 
   @override
   void initState() {
@@ -6526,6 +6552,11 @@ class _QuestionBannerState extends State<QuestionBanner>
   @override
   void didUpdateWidget(covariant QuestionBanner oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 外部要求展开（切回前台、用户尝试发消息）时优先响应。
+    // 这里处在 build 阶段，直接改字段即可，无需 setState。
+    if (widget.expandTick != oldWidget.expandTick) {
+      _collapsed = false;
+    }
     if (oldWidget.question.requestId != widget.question.requestId ||
         oldWidget.question.questions.length !=
             widget.question.questions.length) {
@@ -6538,6 +6569,8 @@ class _QuestionBannerState extends State<QuestionBanner>
       );
       _customAnswerControllers = _createCustomAnswerControllers();
       _activeIndex = 0;
+      // 新请求一律以展开态呈现，避免沿用上一条的收起状态。
+      _collapsed = false;
       if (_pageController.hasClients) {
         _pageController.jumpToPage(0);
       }
@@ -6640,141 +6673,204 @@ class _QuestionBannerState extends State<QuestionBanner>
         opacity: _ctrl,
         child: Container(
           margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          padding: const EdgeInsets.all(14),
+          padding: EdgeInsets.all(_collapsed ? 10 : 14),
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: AppRadius.mdRadius,
             border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(
-                    Icons.quiz_outlined,
-                    size: 16,
-                    color: AppColors.primary,
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    '需要选择',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.08),
-                      borderRadius: AppRadius.smRadius,
-                    ),
-                    child: Text(
-                      '${question.questions.length} 题',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (question.questions.length > 1) ...[
-                const SizedBox(height: 10),
-                _QuestionStepper(
-                  questions: question.questions,
-                  activeIndex: _activeIndex,
-                  isAnswered: _isAnswered,
-                  onSelect: _goToPage,
-                ),
-              ],
-              const SizedBox(height: 12),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 320),
-                child: PageView.builder(
-                  controller: _pageController,
-                  itemCount: question.questions.length,
-                  onPageChanged: (index) => setState(() => _activeIndex = index),
-                  itemBuilder: (context, index) => _buildQuestionPage(
-                    index,
-                    question.questions[index],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Icon(
-                    _canSubmit
-                        ? Icons.check_circle_outline_rounded
-                        : Icons.radio_button_unchecked_rounded,
-                    size: 13,
-                    color: _canSubmit
-                        ? AppColors.statusSuccess
-                        : AppColors.textMuted,
-                  ),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      _canSubmit
-                          ? '全部作答完成，可以提交'
-                          : '还有 ${_remainingCount(question)} 题未作答',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        color: _canSubmit
-                            ? AppColors.statusSuccess
-                            : AppColors.textMuted,
-                      ),
-                    ),
-                  ),
-                  if (question.questions.length > 1)
-                    Text(
-                      '左右滑动切换题目',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 9),
-              Row(
-                children: [
-                  Expanded(
-                    child: AppButton(
-                      label: '提交选择',
-                      onPressed: _canSubmit
-                          ? () => widget.onSubmit(
-                              question.requestId,
-                              _submittedAnswers,
-                            )
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: AppButton(
-                      label: '取消/拒绝',
-                      outlined: true,
-                      onPressed: () => widget.onReject(question.requestId),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+          child: _collapsed
+              ? _buildCollapsedRow(question)
+              : _buildExpandedContent(question),
         ),
       ),
+    );
+  }
+
+  /// 收起态：一行标题 + 未答题数，点击任意处展开。
+  Widget _buildCollapsedRow(QuestionRequestInfo question) {
+    final remaining = _remainingCount(question);
+    return InkWell(
+      key: const ValueKey('question-banner-expand'),
+      borderRadius: AppRadius.mdRadius,
+      onTap: () => _setCollapsed(false),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.quiz_outlined,
+            size: 16,
+            color: AppColors.primary,
+          ),
+          const SizedBox(width: 6),
+          const Text(
+            '需要选择',
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              remaining > 0 ? '$remaining 题待作答' : '已作答，待提交',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ),
+          IconButton(
+            key: const ValueKey('question-banner-expand-button'),
+            tooltip: '展开',
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            color: AppColors.primary,
+            icon: const Icon(Icons.keyboard_arrow_up_rounded),
+            onPressed: () => _setCollapsed(false),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExpandedContent(QuestionRequestInfo question) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.quiz_outlined,
+              size: 16,
+              color: AppColors.primary,
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              '需要选择',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+                color: AppColors.primary,
+              ),
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.08),
+                borderRadius: AppRadius.smRadius,
+              ),
+              child: Text(
+                '${question.questions.length} 题',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            // 收起后只留标题行，作答内容保留，重新展开即可继续。
+            IconButton(
+              key: const ValueKey('question-banner-collapse'),
+              tooltip: '收起',
+              iconSize: 18,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              color: AppColors.primary,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              onPressed: () => _setCollapsed(true),
+            ),
+          ],
+        ),
+        if (question.questions.length > 1) ...[
+          const SizedBox(height: 10),
+          _QuestionStepper(
+            questions: question.questions,
+            activeIndex: _activeIndex,
+            isAnswered: _isAnswered,
+            onSelect: _goToPage,
+          ),
+        ],
+        const SizedBox(height: 12),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: question.questions.length,
+            onPageChanged: (index) => setState(() => _activeIndex = index),
+            itemBuilder: (context, index) =>
+                _buildQuestionPage(index, question.questions[index]),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Icon(
+              _canSubmit
+                  ? Icons.check_circle_outline_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              size: 13,
+              color: _canSubmit
+                  ? AppColors.statusSuccess
+                  : AppColors.textMuted,
+            ),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                _canSubmit
+                    ? '全部作答完成，可以提交'
+                    : '还有 ${_remainingCount(question)} 题未作答',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: _canSubmit
+                      ? AppColors.statusSuccess
+                      : AppColors.textMuted,
+                ),
+              ),
+            ),
+            if (question.questions.length > 1)
+              Text(
+                '左右滑动切换题目',
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textMuted,
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 9),
+        Row(
+          children: [
+            Expanded(
+              child: AppButton(
+                label: '提交选择',
+                onPressed: _canSubmit
+                    ? () =>
+                          widget.onSubmit(question.requestId, _submittedAnswers)
+                    : null,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: AppButton(
+                label: '取消/拒绝',
+                outlined: true,
+                onPressed: () => widget.onReject(question.requestId),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
