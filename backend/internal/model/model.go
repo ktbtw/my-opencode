@@ -1231,6 +1231,13 @@ type SemanticAgentModelPromptPreset struct {
 	SortOrder    int    `json:"sort_order,omitempty"`
 }
 
+// 语义 Agent 提示词的来源标记。内置目录里的提示词会随发布更新，
+// 运维在控制台改过的提示词必须保留，seed 依此决定是否覆盖。
+const (
+	SemanticPromptOriginBuiltin = "builtin"
+	SemanticPromptOriginCustom  = "custom"
+)
+
 type SemanticAgentProfile struct {
 	ID                    string                           `json:"id"`
 	Name                  string                           `json:"name"`
@@ -1254,6 +1261,7 @@ type SemanticAgentProfile struct {
 	Enabled               bool                             `json:"enabled"`
 	SortOrder             int                              `json:"sort_order,omitempty"`
 	BuiltIn               bool                             `json:"built_in,omitempty"`
+	PromptOrigin          string                           `json:"prompt_origin,omitempty"`
 	CreatedAt             time.Time                        `json:"created_at,omitempty"`
 	UpdatedAt             time.Time                        `json:"updated_at,omitempty"`
 }

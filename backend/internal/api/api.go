@@ -4653,12 +4653,55 @@ func (a *API) RestartDeviceAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestID := fmt.Sprintf("req_launcher_agent_restart_%d", time.Now().UnixNano())
+	a.syncDeviceAgentSemanticProfile(r.Context(), operator.ID, launcherID, req.AgentID)
 	result, err := a.requestDeviceLauncher(r.Context(), operator.ID, launcherID, requestID, "device.launcher.restart_agent", req)
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	write(w, http.StatusOK, result)
+}
+
+// syncDeviceAgentSemanticProfile 在重启前把设备当前语义 Agent 的最新角色提示词补推一次。
+// 控制台改提示词只写库，设备端仍持有上次下发时的快照；重启是设备最常用的刷新入口，
+// 借它把库里最新配置同步下去，用户不必先手动切一次语义 Agent 才能生效。
+// 设备端已是最新、语义 Agent 已被删除或禁用、launcher 不可达时都直接跳过，不阻断重启。
+func (a *API) syncDeviceAgentSemanticProfile(ctx context.Context, operatorID int64, launcherID, agentID string) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return
+	}
+	loaded, err := a.requestDeviceLauncher(ctx, operatorID, launcherID, fmt.Sprintf("req_semantic_agent_sync_get_%d", time.Now().UnixNano()), "device.launcher.semantic_agent_get", model.DeviceAgentSemanticSelectionPayload{AgentID: agentID})
+	if err != nil {
+		log.Printf("[semantic] restart sync skipped agent_id=%s reason=selection_unavailable err=%v", agentID, err)
+		return
+	}
+	selection := loaded.SemanticSelection
+	if selection == nil || strings.TrimSpace(selection.SemanticAgentID) == "" {
+		return
+	}
+	profile, err := a.semanticAgentByID(selection.SemanticAgentID, false)
+	if err != nil {
+		log.Printf("[semantic] restart sync skipped agent_id=%s semantic_agent_id=%s err=%v", agentID, selection.SemanticAgentID, err)
+		return
+	}
+	// 空角色提示词写不出可用的 Agent 配置：launcher 会设置 default_agent 却没有对应条目，
+	// opencode 启动时会直接报 default agent not found。此时保持设备现状不动。
+	if strings.TrimSpace(profile.Prompt) == "" {
+		log.Printf("[semantic] restart sync skipped agent_id=%s semantic_agent_id=%s reason=empty_prompt", agentID, profile.ID)
+		return
+	}
+	if selection.Profile != nil && strings.TrimSpace(selection.Profile.Prompt) == strings.TrimSpace(profile.Prompt) {
+		return
+	}
+	if _, err := a.requestDeviceLauncher(ctx, operatorID, launcherID, fmt.Sprintf("req_semantic_agent_sync_save_%d", time.Now().UnixNano()), "device.launcher.semantic_agent_save", model.DeviceAgentSemanticSelectionPayload{
+		AgentID:          agentID,
+		SemanticAgentID:  profile.ID,
+		SemanticAgent:    &profile,
+		DisableVerifyMCP: !selection.VerifyMCPEnabled,
+	}); err != nil {
+		log.Printf("[semantic] restart sync failed agent_id=%s semantic_agent_id=%s err=%v", agentID, profile.ID, err)
+	}
 }
 
 func (a *API) RenameDeviceAgent(w http.ResponseWriter, r *http.Request) {

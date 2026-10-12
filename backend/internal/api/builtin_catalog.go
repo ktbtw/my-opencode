@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"relay-server/internal/model"
@@ -85,4 +86,19 @@ func builtinRuntimeMirrors() []model.RuntimeMirror {
 
 func builtinSemanticAgentProfiles() []model.SemanticAgentProfile {
 	return append([]model.SemanticAgentProfile(nil), mustBuiltinSemanticCatalog().SemanticAgents...)
+}
+
+// builtinSemanticAgentPrompt 返回内置目录里该 Agent 的角色提示词，第二个返回值为是否命中。
+// 用于判定库里保存的提示词是否仍等同于内置版本。
+func builtinSemanticAgentPrompt(id string) (string, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", false
+	}
+	for _, agent := range mustBuiltinSemanticCatalog().SemanticAgents {
+		if agent.ID == id {
+			return strings.TrimSpace(agent.Prompt), true
+		}
+	}
+	return "", false
 }

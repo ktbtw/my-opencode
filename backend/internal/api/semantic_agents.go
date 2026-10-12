@@ -456,6 +456,9 @@ func (a *API) ensureDefaultSemanticAgents() error {
 	if err := a.ensureDefaultSemanticAgentAssets(); err != nil {
 		return err
 	}
+	if err := a.syncBuiltinSemanticAgentPrompts(); err != nil {
+		return err
+	}
 	initialized, err := a.defaultSeedInitialized(defaultSeedSemanticAgentsKey)
 	if err != nil {
 		return err
@@ -485,6 +488,50 @@ func (a *API) ensureDefaultSemanticAgents() error {
 		}
 	}
 	return a.markDefaultSeedInitialized(defaultSeedSemanticAgentsKey)
+}
+
+// syncBuiltinSemanticAgentPrompts 把内置目录里的角色提示词同步到已入库的语义 Agent。
+// 内置提示词属于随发布一起更新的产品资产，库里那份必须跟随目录，否则线上会一直停留在
+// 首次入库时的旧文案。只有明确标记为内置来源的行参与同步，运维自行改写的提示词保持不动。
+func (a *API) syncBuiltinSemanticAgentPrompts() error {
+	items, err := a.store.ListSemanticAgents(true)
+	if err != nil {
+		return err
+	}
+	exists := make(map[string]model.SemanticAgentProfile, len(items))
+	for _, item := range items {
+		exists[item.ID] = item
+	}
+	for _, builtin := range defaultSemanticAgentProfiles() {
+		current, ok := exists[builtin.ID]
+		if !ok || !current.BuiltIn || !isBuiltinSemanticPrompt(current) {
+			continue
+		}
+		if strings.TrimSpace(current.Prompt) == strings.TrimSpace(builtin.Prompt) {
+			continue
+		}
+		current.Prompt = builtin.Prompt
+		if _, err := a.upsertSemanticAgent(current); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// semanticPromptOrigin 判定提示词是否仍等同于内置目录里的那一份：
+// 一致时标记为 builtin（可被内置更新覆盖），否则标记为 custom（运维自定义，必须保留）。
+func semanticPromptOrigin(id, prompt string) string {
+	if builtin, ok := builtinSemanticAgentPrompt(id); ok && builtin == strings.TrimSpace(prompt) {
+		return model.SemanticPromptOriginBuiltin
+	}
+	return model.SemanticPromptOriginCustom
+}
+
+// isBuiltinSemanticPrompt 判断该 Agent 的提示词是否确认来自内置目录。
+// 只有明确标记 builtin 的行才跟随目录更新；custom 或来源未知的历史行一律保留现值，
+// 避免内置发布冲掉运维在控制台自定义的提示词。
+func isBuiltinSemanticPrompt(item model.SemanticAgentProfile) bool {
+	return strings.EqualFold(strings.TrimSpace(item.PromptOrigin), model.SemanticPromptOriginBuiltin)
 }
 
 func mergeBuiltinSemanticAgentReferences(current model.SemanticAgentProfile, builtin model.SemanticAgentProfile) model.SemanticAgentProfile {
@@ -911,6 +958,7 @@ func (a *API) upsertSemanticAgent(item model.SemanticAgentProfile) (*model.Seman
 	item.Color = strings.TrimSpace(item.Color)
 	item.OpencodeName = strings.TrimSpace(item.OpencodeName)
 	item.Prompt = strings.TrimSpace(item.Prompt)
+	item.PromptOrigin = semanticPromptOrigin(item.ID, item.Prompt)
 	switch strings.ToLower(strings.TrimSpace(item.PromptMode)) {
 	case "model", "both":
 		item.PromptMode = strings.ToLower(strings.TrimSpace(item.PromptMode))
