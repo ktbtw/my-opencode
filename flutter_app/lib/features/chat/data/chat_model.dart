@@ -1975,6 +1975,9 @@ class ModelInfo {
       outputModalities.any((item) => item.toLowerCase() == 'video') ||
       looksLikeVideoGenerationModel(providerID, modelID, name);
 
+  /// DeepSeek 系列模型才会开放破甲模式。
+  bool get isDeepSeek => looksLikeDeepSeekModel(providerID, modelID, name);
+
   // 格式化为 metadata 传输字段 "providerID/modelID"
   String get metaKey => '$providerID/$modelID';
 
@@ -2011,6 +2014,16 @@ bool looksLikeImageGenerationModel(
       text.contains('image') ||
       text.contains('stable-diffusion') ||
       text.contains('sdxl');
+}
+
+/// 仅凭模型名/供应商名判断是不是 DeepSeek 系列。
+/// 破甲模式只在 DeepSeek 系列模型上开放（长按机器人图标生效）。
+bool looksLikeDeepSeekModel(
+  String providerID,
+  String modelID,
+  String name,
+) {
+  return '$providerID $modelID $name'.toLowerCase().contains('deepseek');
 }
 
 // 已选附件文件

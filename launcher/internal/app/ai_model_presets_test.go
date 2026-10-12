@@ -19,7 +19,17 @@ func TestAIConfigEnrichesRelayRuntimeDefaultsFromUnconnectedCatalog(t *testing.T
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	t.Setenv("OPENCODE_DISABLE_MODELS_FETCH", "1")
-	t.Setenv("OPENCODE_MODELS_PATH", filepath.Join(home, "absent.json"))
+	// 未配置的原生供应商预设来自 models.dev 公共目录，不再来自设备运行时接口：
+	// /config/providers 只返回已配置的供应商，openai 不在其中。
+	catalogPath := filepath.Join(home, "models.json")
+	if err := os.WriteFile(catalogPath, []byte(`{"openai":{"id":"openai","models":{"gpt-5.4":{
+	  "id":"gpt-5.4","name":"GPT 5.4","reasoning":true,
+	  "limit":{"context":1050000,"output":128000},
+	  "modalities":{"input":["text","image","pdf"],"output":["text"]}
+	}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENCODE_MODELS_PATH", catalogPath)
 	root := filepath.Join(home, ".config", "opencode")
 	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
@@ -28,13 +38,13 @@ func TestAIConfigEnrichesRelayRuntimeDefaultsFromUnconnectedCatalog(t *testing.T
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/provider" {
+		if r.URL.Path != providerMetadataPath {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(`{"connected":["relay"],"all":[
-		  {"id":"relay","models":{"gpt-5.4":{"id":"gpt-5.4","limit":{"context":4096,"output":1024},"capabilities":{"input":{"text":true},"output":{"text":true}}}}},
-		  {"id":"openai","models":{"gpt-5.4":{"id":"gpt-5.4","limit":{"context":1050000,"output":128000},"capabilities":{"reasoning":true,"input":{"text":true,"image":true,"pdf":true},"output":{"text":true}}}}}
+		// 只返回设备上已配置的供应商：relay 自身。
+		_, _ = w.Write([]byte(`{"providers":[
+		  {"id":"relay","models":{"gpt-5.4":{"id":"gpt-5.4","limit":{"context":4096,"output":1024},"capabilities":{"input":{"text":true},"output":{"text":true}}}}}
 		]}`))
 	}))
 	defer server.Close()
@@ -46,6 +56,7 @@ func TestAIConfigEnrichesRelayRuntimeDefaultsFromUnconnectedCatalog(t *testing.T
 		cfg:    config.Config{RuntimeDir: t.TempDir()},
 		agents: []model.Agent{{AgentID: "preset-fixture", Status: "running", Port: port, Enabled: true}},
 	}
+	primeProviderMetadata(t, svc, []int{port})
 	info, err := svc.AIConfig()
 	if err != nil {
 		t.Fatal(err)

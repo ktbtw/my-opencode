@@ -5454,6 +5454,8 @@ Rules:
       hostname: cfg.host,
       version: InstallationVersion,
       running_task_id: state.task?.id,
+      // 上报语义 Agent 绑定：后端建任务时据此匹配「模型提示词预设」。
+      semantic_agent_id: process.env.OPENCODE_SEMANTIC_AGENT_ID?.trim() || undefined,
       capabilities: [
         TASK_RESUME_CAPABILITY,
         "session_history_v1",

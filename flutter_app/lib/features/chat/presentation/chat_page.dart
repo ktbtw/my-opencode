@@ -560,6 +560,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
       ref.read(settingsProvider.notifier).loadGlobalPrompt();
       ref.read(selectedVariantProvider(widget.agentId).notifier).init();
       ref.read(projectPromptProvider(widget.agentId).notifier).init();
+      ref.read(deepSeekJailbreakProvider(widget.agentId).notifier).init();
       ref.read(goalSettingsProvider(_chatKey).notifier).init();
       unawaited(_loadCompactionConfig());
       if (widget.sessionId.trim().isNotEmpty) {
@@ -606,6 +607,31 @@ class _ChatPageState extends ConsumerState<ChatPage>
           );
       if (mounted) setState(() => _compactionConfig = config);
     } catch (_) {}
+  }
+
+  /// 长按 agent 机器人图标：切换 DeepSeek 破甲模式。
+  /// 仅开启时校验模型属于 DeepSeek 系列，关闭始终允许；后端还会按模型二次门控。
+  Future<void> _toggleDeepSeekJailbreak() async {
+    final enabling = !ref.read(deepSeekJailbreakProvider(widget.agentId));
+    if (enabling) {
+      final model = ref.read(selectedModelProvider(widget.agentId));
+      if (model == null) {
+        showAppFeedback(context, message: '请先选择模型再开启破甲模式');
+        return;
+      }
+      if (!model.isDeepSeek) {
+        showAppFeedback(context, message: '破甲模式仅支持 DeepSeek 系列模型');
+        return;
+      }
+    }
+    try {
+      await ref.read(deepSeekJailbreakProvider(widget.agentId).notifier).toggle();
+      if (!mounted) return;
+      showAppFeedback(context, message: enabling ? '破甲模式已开启' : '破甲模式已关闭');
+    } catch (error) {
+      if (!mounted) return;
+      showAppFeedback(context, message: '破甲模式切换失败：$error', error: true);
+    }
   }
 
   Future<void> _showAgentSwitcher() async {
@@ -1538,6 +1564,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
   Widget build(BuildContext context) {
     final chat = ref.watch(chatProvider(_chatKey));
     final selectedModel = ref.watch(selectedModelProvider(widget.agentId));
+    final jailbreakEnabled = ref.watch(deepSeekJailbreakProvider(widget.agentId));
     final availableModels =
         ref.watch(availableModelsProvider(_modelsKey)).valueOrNull ?? const [];
     final isMobile = AppBreakpoints.isMobile(context);
@@ -1693,6 +1720,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                         .read(chatProvider(_chatKey).notifier)
                                         .retryHistoryDetails(taskId),
                                     onUserScroll: _handleUserScroll,
+                                    jailbreakEnabled: jailbreakEnabled,
+                                    onToggleJailbreak: _toggleDeepSeekJailbreak,
                                   ),
                                 ),
                                 if (chat.pendingApproval != null)
@@ -2231,6 +2260,12 @@ class _MessageArea extends ConsumerStatefulWidget {
   final ValueChanged<String>? onRetryHistory;
   final ValueChanged<UserScrollNotification> onUserScroll;
 
+  /// 破甲模式是否开启（agent 机器人图标转红）。
+  final bool jailbreakEnabled;
+
+  /// 长按 agent 机器人图标：切换破甲模式。
+  final VoidCallback? onToggleJailbreak;
+
   const _MessageArea({
     required this.messages,
     this.operationTitle,
@@ -2243,6 +2278,8 @@ class _MessageArea extends ConsumerStatefulWidget {
     required this.onResend,
     this.onRetryHistory,
     required this.onUserScroll,
+    this.jailbreakEnabled = false,
+    this.onToggleJailbreak,
   });
 
   @override
@@ -2368,6 +2405,8 @@ class _MessageAreaState extends ConsumerState<_MessageArea> {
                   ? operationSteps
                   : const [],
               onRetryHistory: onRetryHistory,
+              jailbreakEnabled: widget.jailbreakEnabled,
+              onToggleJailbreak: widget.onToggleJailbreak,
             );
           }
           return _MessageBubble(
@@ -2384,6 +2423,8 @@ class _MessageAreaState extends ConsumerState<_MessageArea> {
                 : const [],
             onResend: onResend,
             onRetryHistory: onRetryHistory,
+            jailbreakEnabled: widget.jailbreakEnabled,
+            onToggleJailbreak: widget.onToggleJailbreak,
             key: ValueKey(msg.id),
           );
         },
@@ -2417,6 +2458,12 @@ class _MessageBubble extends StatelessWidget {
   final List<ChatOperationStep> operationSteps;
   final Future<void> Function(ChatMessage message) onResend;
   final ValueChanged<String>? onRetryHistory;
+
+  /// 破甲模式是否开启（robot 图标转红）。
+  final bool jailbreakEnabled;
+
+  /// 长按 agent 机器人图标：切换破甲模式。
+  final VoidCallback? onToggleJailbreak;
   const _MessageBubble({
     required this.message,
     this.stopping = false,
@@ -2424,6 +2471,8 @@ class _MessageBubble extends StatelessWidget {
     this.operationSteps = const [],
     required this.onResend,
     this.onRetryHistory,
+    this.jailbreakEnabled = false,
+    this.onToggleJailbreak,
     super.key,
   });
 
@@ -2509,7 +2558,14 @@ class _MessageBubble extends StatelessWidget {
             ? MainAxisAlignment.end
             : MainAxisAlignment.start,
         children: [
-          if (!isUser) ...[_Avatar(isUser: false), const SizedBox(width: 10)],
+          if (!isUser) ...[
+            _Avatar(
+              isUser: false,
+              jailbreakEnabled: jailbreakEnabled,
+              onLongPress: onToggleJailbreak,
+            ),
+            const SizedBox(width: 10),
+          ],
           Flexible(child: contents),
           if (isUser) ...[const SizedBox(width: 10), _Avatar(isUser: true)],
         ],
@@ -2537,6 +2593,12 @@ class _ContinuousReplySegment extends StatelessWidget {
   final String? operationTitle;
   final List<ChatOperationStep> operationSteps;
   final ValueChanged<String>? onRetryHistory;
+
+  /// 破甲模式是否开启（robot 图标转红）。
+  final bool jailbreakEnabled;
+
+  /// 长按 agent 机器人图标：切换破甲模式。
+  final VoidCallback? onToggleJailbreak;
   const _ContinuousReplySegment({
     super.key,
     required this.message,
@@ -2553,6 +2615,8 @@ class _ContinuousReplySegment extends StatelessWidget {
     this.operationTitle,
     this.operationSteps = const [],
     this.onRetryHistory,
+    this.jailbreakEnabled = false,
+    this.onToggleJailbreak,
   });
 
   @override
@@ -2573,7 +2637,14 @@ class _ContinuousReplySegment extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (first) _Avatar(isUser: false) else const SizedBox(width: 32),
+          if (first)
+            _Avatar(
+              isUser: false,
+              jailbreakEnabled: jailbreakEnabled,
+              onLongPress: onToggleJailbreak,
+            )
+          else
+            const SizedBox(width: 32),
           const SizedBox(width: 10),
           Flexible(
             child: SizedBox(
@@ -3568,19 +3639,31 @@ class _MessageStatusHint extends StatelessWidget {
 @visibleForTesting
 Widget buildChatMessageListTestSurface(
   List<ChatMessage> messages,
-  ScrollController controller,
-) => _MessageArea(
+  ScrollController controller, {
+  bool jailbreakEnabled = false,
+  VoidCallback? onToggleJailbreak,
+}) => _MessageArea(
   messages: messages,
   scrollController: controller,
   loadingEarlierHistory: false,
   hasEarlierHistory: false,
   onResend: (_) async {},
   onUserScroll: (_) {},
+  jailbreakEnabled: jailbreakEnabled,
+  onToggleJailbreak: onToggleJailbreak,
 );
 
 @visibleForTesting
-Widget buildChatMessageHistoryTestSurface(ChatMessage message) =>
-    _MessageBubble(message: message, onResend: (_) async {});
+Widget buildChatMessageHistoryTestSurface(
+  ChatMessage message, {
+  bool jailbreakEnabled = false,
+  VoidCallback? onToggleJailbreak,
+}) => _MessageBubble(
+  message: message,
+  onResend: (_) async {},
+  jailbreakEnabled: jailbreakEnabled,
+  onToggleJailbreak: onToggleJailbreak,
+);
 
 @visibleForTesting
 Widget buildChatStreamingProgressTestSurface(
@@ -4926,22 +5009,44 @@ class _ThinkingBlockState extends State<_ThinkingBlock> {
 
 class _Avatar extends StatelessWidget {
   final bool isUser;
-  const _Avatar({required this.isUser});
+
+  /// 破甲模式是否开启：仅对 agent 头像生效，开启时图标与底色由蓝转红。
+  final bool jailbreakEnabled;
+
+  /// agent 头像长按回调；为 null 时不响应长按。
+  final VoidCallback? onLongPress;
+
+  const _Avatar({
+    required this.isUser,
+    this.jailbreakEnabled = false,
+    this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final active = !isUser && jailbreakEnabled;
+    final box = Container(
       width: 32,
       height: 32,
       decoration: BoxDecoration(
-        color: isUser ? AppColors.primary : AppColors.primaryLight,
+        color: isUser
+            ? AppColors.primary
+            : (active ? AppColors.statusErrorLight : AppColors.primaryLight),
         borderRadius: AppRadius.smRadius,
       ),
       child: Icon(
         isUser ? Icons.person_outline : Icons.smart_toy_outlined,
         size: 16,
-        color: isUser ? Colors.white : AppColors.primary,
+        color: isUser
+            ? Colors.white
+            : (active ? AppColors.statusError : AppColors.primary),
       ),
+    );
+    if (isUser || onLongPress == null) return box;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: onLongPress,
+      child: box,
     );
   }
 }

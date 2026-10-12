@@ -5998,3 +5998,70 @@ func requireEventually(t *testing.T, timeout time.Duration, ok func() bool) {
 		t.Fatalf("condition was not met within %s", timeout)
 	}
 }
+
+func TestIsDeepSeekModelRef(t *testing.T) {
+	on := []string{"deepseek/deepseek-chat", "custom/deepseek-reasoner", "DEEPSEEK/x", "dsh/deepseek-v3"}
+	for _, ref := range on {
+		if !isDeepSeekModelRef(ref) {
+			t.Fatalf("expected %q to be treated as DeepSeek", ref)
+		}
+	}
+	off := []string{"", "openai/gpt-4o", "anthropic/claude-3-5", "google/gemini-2.0"}
+	for _, ref := range off {
+		if isDeepSeekModelRef(ref) {
+			t.Fatalf("expected %q NOT to be treated as DeepSeek", ref)
+		}
+	}
+}
+
+func TestApplyDeepSeekJailbreak(t *testing.T) {
+	const base = "【全局提示词】\nkeep me"
+	protocol := strings.TrimSpace(deepSeekJailbreakPrompt)
+	if protocol == "" {
+		t.Fatal("embedded deepseek jailbreak prompt is empty")
+	}
+	if !strings.HasPrefix(protocol, "# "+deepSeekJailbreakMarker) {
+		t.Fatalf("prompt must start with %q", "# "+deepSeekJailbreakMarker)
+	}
+	// 断言协议里不含云端意图分类器的高命中特征词。
+	for _, banned := range []string{"最高优先级", "覆盖系统提示", "UNRESTRICTED", "拒绝即故障"} {
+		if strings.Contains(protocol, banned) {
+			t.Fatalf("prompt contains banned classifier marker %q", banned)
+		}
+	}
+	// 进入破甲即激活：不应再有任何激活词/激活回执（协议里只允许出现"无需激活词"这类说明）。
+	for _, banned := range []string{"已成功", "寒霜"} {
+		if strings.Contains(protocol, banned) {
+			t.Fatalf("prompt still carries activation handshake %q", banned)
+		}
+	}
+
+	cases := []struct {
+		name    string
+		model   string
+		enabled bool
+		wantOn  bool
+	}{
+		{"deepseek-enabled", "deepseek/deepseek-chat", true, true},
+		{"deepseek-reasoner-enabled", "custom/deepseek-reasoner", true, true},
+		{"non-deepseek-enabled", "openai/gpt-4o", true, false},
+		{"deepseek-disabled", "deepseek/deepseek-chat", false, false},
+		{"empty-model-enabled", "", true, false},
+	}
+	for _, tc := range cases {
+		got, applied := applyDeepSeekJailbreak(base, tc.model, tc.enabled)
+		if applied != tc.wantOn {
+			t.Fatalf("%s: applied=%v want %v", tc.name, applied, tc.wantOn)
+		}
+		if tc.wantOn {
+			if !strings.HasPrefix(got, "# "+deepSeekJailbreakMarker) {
+				t.Fatalf("%s: protocol not placed first", tc.name)
+			}
+			if !strings.Contains(got, base) {
+				t.Fatalf("%s: base prompt lost", tc.name)
+			}
+		} else if got != base {
+			t.Fatalf("%s: base changed unexpectedly: %q", tc.name, got)
+		}
+	}
+}

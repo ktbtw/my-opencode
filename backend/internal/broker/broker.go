@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,8 @@ type Device struct {
 	Capabilities []string
 	SeenAt       time.Time
 	CurrentTask  string
+	// SemanticAgentID 是该 agent 上报的语义 Agent 绑定，建任务时用于匹配模型提示词预设。
+	SemanticAgentID string
 	// Metrics 是设备最近一次心跳上报的运行状态，nil 表示该设备尚未上报。
 	Metrics *model.DeviceMetrics
 	conn    *websocket.Conn
@@ -75,16 +78,17 @@ func (b *Broker) Add(conn *websocket.Conn, hello model.HelloPayload, operatorID 
 		}
 	}
 	dev := &Device{
-		ID:           id,
-		OperatorID:   operatorID,
-		MachineID:    machineID,
-		Hostname:     hello.Hostname,
-		Version:      hello.Version,
-		Kind:         hello.Kind,
-		Projects:     hello.Projects,
-		Capabilities: append([]string(nil), hello.Capabilities...),
-		SeenAt:       time.Now().UTC(),
-		conn:         conn,
+		ID:              id,
+		OperatorID:      operatorID,
+		MachineID:       machineID,
+		Hostname:        hello.Hostname,
+		Version:         hello.Version,
+		Kind:            hello.Kind,
+		Projects:        hello.Projects,
+		Capabilities:    append([]string(nil), hello.Capabilities...),
+		SemanticAgentID: strings.TrimSpace(hello.SemanticAgentID),
+		SeenAt:          time.Now().UTC(),
+		conn:            conn,
 	}
 	key := deviceKey(operatorID, id)
 	previous := b.devices[key]
@@ -458,18 +462,19 @@ func snapshot(dev *Device) model.Agent {
 	projects := make([]model.HelloProject, len(dev.Projects))
 	copy(projects, dev.Projects)
 	return model.Agent{
-		ID:           dev.ID,
-		OperatorID:   dev.OperatorID,
-		MachineID:    dev.MachineID,
-		Hostname:     dev.Hostname,
-		Version:      dev.Version,
-		Enabled:      true,
-		Status:       "online",
-		Kind:         dev.Kind,
-		Projects:     projects,
-		Capabilities: append([]string(nil), dev.Capabilities...),
-		SeenAt:       dev.SeenAt,
-		CurrentTask:  dev.CurrentTask,
+		ID:              dev.ID,
+		OperatorID:      dev.OperatorID,
+		MachineID:       dev.MachineID,
+		Hostname:        dev.Hostname,
+		Version:         dev.Version,
+		Enabled:         true,
+		Status:          "online",
+		Kind:            dev.Kind,
+		Projects:        projects,
+		Capabilities:    append([]string(nil), dev.Capabilities...),
+		SemanticAgentID: dev.SemanticAgentID,
+		SeenAt:          dev.SeenAt,
+		CurrentTask:     dev.CurrentTask,
 	}
 }
 

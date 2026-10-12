@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -63,6 +64,19 @@ type service struct {
 	forceRespawnOnRestore bool
 	restoreOnRun          bool
 	shutdown              context.CancelFunc
+	// providerMetadataCache 缓存运行时代理元数据。opencode 的 /provider 会返回
+	// 数 MB 的全量目录，一次抓取代价很高；AI 配置页与模型列表在短时间内会多次
+	// 读取，缓存可避免重复抓取。
+	providerMetadataMu    sync.Mutex
+	providerMetadataCache *providerMetadataCacheEntry
+}
+
+type providerMetadataCacheEntry struct {
+	metadata aiconfig.RuntimeProviderMetadata
+	ports    string
+	expires  time.Time
+	// refreshing 表示已有后台刷新在跑，避免并发调用重复抓取。
+	refreshing bool
 }
 
 type Service = service
@@ -2513,8 +2527,7 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 	if len(agents) == 0 {
 		return aiconfig.RuntimeProviderMetadata{}, nil
 	}
-	connected := make([]string, 0, len(agents))
-	runtimeModels := map[string]map[string]aiconfig.RuntimeModelMetadata{}
+	ports := make([]int, 0, len(agents))
 	for _, agent := range agents {
 		if agent.Port <= 0 {
 			continue
@@ -2522,48 +2535,81 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 		if !strings.EqualFold(strings.TrimSpace(agent.Status), "running") {
 			continue
 		}
-		var raw struct {
-			All []struct {
-				ID     string `json:"id"`
-				Models map[string]struct {
-					ID         string `json:"id"`
-					ProviderID string `json:"providerID"`
-					Name       string `json:"name"`
-					Limit      struct {
-						Context int64 `json:"context"`
-						Output  int64 `json:"output"`
-					} `json:"limit"`
-					Modalities   *model.DeviceAIModalities `json:"modalities"`
-					Capabilities struct {
-						Reasoning bool                             `json:"reasoning"`
-						Input     map[string]bool                  `json:"input"`
-						Output    map[string]bool                  `json:"output"`
-						Image     *aiconfig.RuntimeImageCapability `json:"image,omitempty"`
-					} `json:"capabilities"`
-					Variants map[string]any `json:"variants"`
-				} `json:"models"`
-			} `json:"all"`
-			Connected []string `json:"connected"`
+		ports = append(ports, agent.Port)
+	}
+	if len(ports) == 0 {
+		return aiconfig.RuntimeProviderMetadata{}, nil
+	}
+	sort.Ints(ports)
+
+	// 缓存策略：/config/providers 实测约 0.6 秒 / 75KB，远低于后端给模型列表
+	// 的 12 秒预算，因此首次同步抓取即可，打开就有数据。过期时先返回旧数据、
+	// 后台刷新，避免把延迟压在请求路径上。
+	key := providerPortsKey(ports)
+	if cached, stale := s.cachedProviderMetadata(key); cached != nil {
+		if stale {
+			s.refreshProviderMetadataAsync(key, ports)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-		err := getAgentJSON(ctx, agent.Port, "/provider", &raw)
-		cancel()
-		if err != nil {
+		return *cached, nil
+	}
+
+	metadata := s.fetchProviderMetadata(ports)
+	if len(metadata.All) == 0 {
+		// 抓取全失败：不写成有效缓存，避免固化暂时性故障；留一条立即过期的
+		// 空快照，让后续请求立刻返回并由后台重试，而不是每次都等满超时。
+		s.storeProviderMetadataWithTTL(key, metadata, 0)
+		return metadata, nil
+	}
+	s.storeProviderMetadata(key, metadata)
+	return metadata, nil
+}
+
+// fetchProviderMetadata 并发抓取所有 agent 的配置供应商并合并结果。
+//
+// 走 /config/providers：它只返回设备上实际配置的供应商，实测约 75KB、0.6 秒。
+// 而 /provider 会并入 models.dev 公共目录（200+ 个未配置供应商），实测 6.5MB、
+// 5 秒，其中约 99% 的数据在 enrich 阶段会被 connected 过滤丢弃。
+func (s *service) fetchProviderMetadata(ports []int) aiconfig.RuntimeProviderMetadata {
+	type fetchResult struct {
+		port int
+		raw  providerMetadataResponse
+		ok   bool
+	}
+	results := make([]fetchResult, len(ports))
+	var wg sync.WaitGroup
+	for i, port := range ports {
+		wg.Add(1)
+		go func(index, agentPort int) {
+			defer wg.Done()
+			var raw providerMetadataResponse
+			ctx, cancel := context.WithTimeout(
+				context.Background(),
+				providerMetadataFetchTimeout,
+			)
+			err := getAgentJSON(ctx, agentPort, providerMetadataPath, &raw)
+			cancel()
+			if err != nil {
+				return
+			}
+			results[index] = fetchResult{port: agentPort, raw: raw, ok: true}
+		}(i, port)
+	}
+	wg.Wait()
+
+	connected := make([]string, 0, len(ports))
+	runtimeModels := map[string]map[string]aiconfig.RuntimeModelMetadata{}
+	for _, result := range results {
+		if !result.ok {
 			continue
 		}
-		if len(raw.Connected) > 0 {
-			for _, id := range raw.Connected {
-				id = strings.TrimSpace(id)
-				if id != "" {
-					connected = append(connected, id)
-				}
-			}
-		}
-		for _, provider := range raw.All {
+		// 本接口返回的就是设备上已配置的供应商，因此全部计入 connected。
+		// 与 /provider 的 connected 语义一致（实测两侧 ID 集合完全相同）。
+		for _, provider := range result.raw.Providers {
 			providerID := strings.TrimSpace(provider.ID)
 			if providerID == "" {
 				continue
 			}
+			connected = append(connected, providerID)
 			models := runtimeModels[providerID]
 			if models == nil {
 				models = map[string]aiconfig.RuntimeModelMetadata{}
@@ -2594,8 +2640,9 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 			}
 		}
 	}
+	metadata := aiconfig.RuntimeProviderMetadata{Connected: uniqueStrings(connected)}
 	if len(runtimeModels) == 0 {
-		return aiconfig.RuntimeProviderMetadata{Connected: uniqueStrings(connected)}, nil
+		return metadata
 	}
 	all := make([]aiconfig.RuntimeProviderMetadataItem, 0, len(runtimeModels))
 	for providerID, models := range runtimeModels {
@@ -2607,10 +2654,126 @@ func (s *service) runtimeProviderMetadata() (aiconfig.RuntimeProviderMetadata, e
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].ID < all[j].ID
 	})
-	return aiconfig.RuntimeProviderMetadata{
-		Connected: uniqueStrings(connected),
-		All:       all,
-	}, nil
+	metadata.All = all
+	return metadata
+}
+
+// refreshProviderMetadataAsync 在后台刷新过期的元数据。
+// 同一批 agent 同时只会有一个刷新在跑，失败时保留旧数据。
+func (s *service) refreshProviderMetadataAsync(key string, ports []int) {
+	if !s.claimProviderMetadataRefresh(key) {
+		return
+	}
+	go func() {
+		defer s.releaseProviderMetadataRefresh(key)
+		metadata := s.fetchProviderMetadata(ports)
+		// 抓取全失败时保留旧数据，避免把暂时性故障固化成空目录。
+		if len(metadata.All) == 0 {
+			return
+		}
+		s.storeProviderMetadata(key, metadata)
+	}()
+}
+
+// providerMetadataResponse 是 opencode /config/providers 接口的响应结构。
+//
+// 只返回设备上实际配置（connected）的供应商，不含 models.dev 公共目录。
+// 对比 /provider：后者会额外并入 200 多个未配置的公共供应商，实测 6.5MB、
+// 5 秒；本接口约 75KB、0.6 秒，且字段完全一致。
+type providerMetadataResponse struct {
+	Providers []struct {
+		ID     string `json:"id"`
+		Models map[string]struct {
+			ID         string `json:"id"`
+			ProviderID string `json:"providerID"`
+			Name       string `json:"name"`
+			Limit      struct {
+				Context int64 `json:"context"`
+				Output  int64 `json:"output"`
+			} `json:"limit"`
+			Modalities   *model.DeviceAIModalities `json:"modalities"`
+			Capabilities struct {
+				Reasoning bool                             `json:"reasoning"`
+				Input     map[string]bool                  `json:"input"`
+				Output    map[string]bool                  `json:"output"`
+				Image     *aiconfig.RuntimeImageCapability `json:"image,omitempty"`
+			} `json:"capabilities"`
+			Variants map[string]any `json:"variants"`
+		} `json:"models"`
+	} `json:"providers"`
+}
+
+// providerMetadataPath 是 opencode 暴露「已配置供应商」的接口。
+//
+// 不用 /provider：它会并入 models.dev 公共目录（200+ 个未配置供应商），
+// 实测 6.5MB / 5 秒；本接口约 75KB / 0.6 秒，字段与语义等价。
+const providerMetadataPath = "/config/providers"
+
+// providerMetadataFetchTimeout 是单次抓取的上限。
+// 实测单次约 0.6 秒，12 秒为慢机器与冷启动留出充足余量。
+var providerMetadataFetchTimeout = 12 * time.Second
+
+const providerMetadataCacheTTL = 30 * time.Second
+
+func providerPortsKey(ports []int) string {
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		parts = append(parts, strconv.Itoa(port))
+	}
+	return strings.Join(parts, ",")
+}
+
+// cachedProviderMetadata 返回缓存副本，以及该副本是否已过期。
+// 没有缓存时返回 nil。过期的旧数据仍然返回，由调用方决定后台刷新。
+func (s *service) cachedProviderMetadata(key string) (*aiconfig.RuntimeProviderMetadata, bool) {
+	s.providerMetadataMu.Lock()
+	defer s.providerMetadataMu.Unlock()
+	entry := s.providerMetadataCache
+	if entry == nil || entry.ports != key {
+		return nil, false
+	}
+	metadata := entry.metadata
+	return &metadata, time.Now().After(entry.expires)
+}
+
+func (s *service) storeProviderMetadata(key string, metadata aiconfig.RuntimeProviderMetadata) {
+	s.storeProviderMetadataWithTTL(key, metadata, providerMetadataCacheTTL)
+}
+
+func (s *service) storeProviderMetadataWithTTL(key string, metadata aiconfig.RuntimeProviderMetadata, ttl time.Duration) {
+	s.providerMetadataMu.Lock()
+	defer s.providerMetadataMu.Unlock()
+	// 保留正在进行的刷新标记，避免刷新完成时把它清掉。
+	refreshing := false
+	if entry := s.providerMetadataCache; entry != nil && entry.ports == key {
+		refreshing = entry.refreshing
+	}
+	s.providerMetadataCache = &providerMetadataCacheEntry{
+		metadata:   metadata,
+		ports:      key,
+		expires:    time.Now().Add(ttl),
+		refreshing: refreshing,
+	}
+}
+
+// claimProviderMetadataRefresh 认领一次后台刷新；已有刷新在跑时返回 false。
+func (s *service) claimProviderMetadataRefresh(key string) bool {
+	s.providerMetadataMu.Lock()
+	defer s.providerMetadataMu.Unlock()
+	entry := s.providerMetadataCache
+	if entry == nil || entry.ports != key || entry.refreshing {
+		return false
+	}
+	entry.refreshing = true
+	return true
+}
+
+func (s *service) releaseProviderMetadataRefresh(key string) {
+	s.providerMetadataMu.Lock()
+	defer s.providerMetadataMu.Unlock()
+	if entry := s.providerMetadataCache; entry != nil && entry.ports == key {
+		entry.refreshing = false
+	}
 }
 
 func (s *service) Agents() []model.Agent {

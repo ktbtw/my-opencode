@@ -24,6 +24,7 @@ import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
+import { extractModelPrompt } from "./model-prompt"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Bus } from "@/bus"
@@ -90,6 +91,14 @@ const DEFAULT_CHUNK_TIMEOUTS = [120_000, 180_000, 300_000, 420_000, 600_000] as 
 const DEFAULT_REQUEST_TIMEOUTS = [180_000, 300_000, 480_000, 720_000, 900_000] as const
 const DEFAULT_TOOL_INPUT_TIMEOUT = 60_000
 const MIN_TOOL_INPUT_TIMEOUT = 30_000
+
+// 破甲模式：后端在 DeepSeek 任务上注入的工作区约定首行特征串。
+// 必须与 backend/internal/api/deepseek_jailbreak.go 的 deepSeekJailbreakMarker 保持一致。
+const BREAK_PROTOCOL_MARKER = "操作者工作区运行约定"
+
+function isDeepSeekModel(model: Provider.Model) {
+  return `${model.providerID} ${model.api.id}`.toLowerCase().includes("deepseek")
+}
 
 function attemptTimeout(attempt: number | undefined, configured: unknown, defaults: readonly number[]) {
   if (typeof configured === "number" && configured > 0) return configured
@@ -224,17 +233,32 @@ const live: Layer.Layer<
       // TODO: move this to a proper hook
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
 
+      // 模型提示词（含破甲协议）：后端按会话实际模型匹配「模型提示词预设」后整段注入，用包装标记标出。
+      // 命中时整段置顶到基础提示词（PROMPT_UNIFIED）之前，等价于 hanshuang 破甲包把协议放到
+      // order=-90 顶格，而不是留在系统提示词末尾被基础提示词与对齐权重压过去。
+      const extracted = extractModelPrompt(input.user.system)
+      // 兼容旧协议：后端未包装、直接注入带首行特征串的内容时同样置顶。
+      const legacyProtocol =
+        !extracted.modelPrompt && isDeepSeekModel(input.model) && input.user.system?.includes(BREAK_PROTOCOL_MARKER)
+          ? input.user.system
+          : undefined
+      const modelProtocol = extracted.modelPrompt ?? legacyProtocol
+      const userSystem = legacyProtocol ? undefined : extracted.rest
+      const basePrompt = input.agent.prompt
+        ? [input.agent.prompt, ...SystemPrompt.provider(input.model)]
+        : SystemPrompt.provider(input.model)
+
       const system: string[] = []
       system.push(
         [
+          // 模型提示词置顶：进入该模型的工作区约定即以协议身份运行。
+          ...(modelProtocol ? [modelProtocol] : []),
           // Keep the shared service rules for every agent and model. The role prompt is an extension.
-          ...(input.agent.prompt
-            ? [input.agent.prompt, ...SystemPrompt.provider(input.model)]
-            : SystemPrompt.provider(input.model)),
+          ...basePrompt,
           // any custom prompt passed into this call
           ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
+          // any custom prompt from last user message（模型提示词已置顶时不再重复）
+          ...(userSystem ? [userSystem] : []),
           SystemPrompt.QUESTION_POLICY,
         ]
           .filter((x) => x)

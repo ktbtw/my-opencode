@@ -573,6 +573,10 @@ func (a *API) dispatchChatQueueItem(operatorID int64, item model.ChatQueueItem) 
 		restoreDispatchFailure(err)
 		return nil, err
 	}
+	// 与 CreateTask 一致：排队任务同样按 metadata 里的模型注入模型专属提示词。
+	if prompt, ok := a.modelPromptForTask(operatorID, item.AgentID, agent.SemanticAgentID, item.Metadata["model"]); ok {
+		baseSystemPrompt, _ = applyModelPrompt(baseSystemPrompt, prompt)
+	}
 	metadata := normalizeGoalTaskMetadata(item.Metadata)
 	delete(metadata, chatQueueAgentBusyRetryKey)
 	metadata = enrichTaskMetadata(metadata, agent)

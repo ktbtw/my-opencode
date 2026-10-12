@@ -368,6 +368,9 @@ type HelloPayload struct {
 	Projects      []HelloProject `json:"projects"`
 	RunningTaskID string         `json:"running_task_id,omitempty"`
 	Capabilities  []string       `json:"capabilities,omitempty"`
+	// SemanticAgentID 是该 agent 当前绑定的语义 Agent，建任务时据此匹配「模型提示词预设」。
+	// 老版本设备不上报，按未绑定处理。
+	SemanticAgentID string `json:"semantic_agent_id,omitempty"`
 }
 
 type WelcomePayload struct {

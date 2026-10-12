@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>破甲模式启动动画 · 方案对比</title>
+<style>
+  :root {
+    /* 与 lib/core/theme/app_colors.dart 对齐 */
+    --bg-start: #EFF4FB;
+    --bg-end: #F7FAFF;
+    --surface: #FFFFFF;
+    --surface-elevated: #FAFCFF;
+    --border: #D0DDEF;
+    --border-light: #E8EFF8;
+    --divider: #E4ECF5;
+    --primary: #2563EB;
+    --primary-light: #EFF6FF;
+    --text-primary: #0F1729;
+    --text-secondary: #4A5D7A;
+    --text-muted: #8FA3BF;
+    --error: #DC2626;
+    --error-light: #FEE2E2;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: linear-gradient(180deg, var(--bg-start) 0%, var(--bg-end) 100%);
+    background-attachment: fixed;
+    color: var(--text-primary);
+    font: 400 13px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 940px; margin: 0 auto; }
+
+  header.page {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  header.page h1 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: .2px;
+  }
+  header.page p {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .controls { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .switch input { accent-color: var(--primary); margin: 0; }
+  .switch.on { color: var(--primary); border-color: var(--primary); background: var(--primary-light); }
+
+  .grid { display: grid; gap: 16px; margin-top: 20px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px 16px;
+    box-shadow: 0 1px 2px rgba(15, 23, 41, .04);
+  }
+  .card.rec { border-color: var(--primary); box-shadow: 0 2px 10px rgba(37, 99, 235, .10); }
+
+  .card-head { display: flex; align-items: flex-start; gap: 12px; }
+  .idx {
+    width: 22px; height: 22px;
+    flex: 0 0 22px;
+    display: grid; place-items: center;
+    border-radius: var(--radius-sm);
+    background: var(--primary-light);
+    color: var(--primary);
+    font: 600 12px/1 var(--mono);
+  }
+  .card.rec .idx { background: var(--primary); color: #fff; }
+  .card-head h2 {
+    margin: 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .tag {
+    font: 500 10.5px/1 var(--mono);
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: var(--error-light);
+    color: var(--error);
+    letter-spacing: .3px;
+  }
+  .tag.neutral { background: var(--border-light); color: var(--text-secondary); }
+  .card-head .spec {
+    margin: 3px 0 0;
+    font: 400 11.5px/1.5 var(--mono);
+    color: var(--text-muted);
+  }
+  .card-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .state-chip {
+    font: 500 11px/1 var(--mono);
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--border-light);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .state-chip.on { background: var(--error-light); color: var(--error); }
+  button.replay {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--surface-elevated);
+    color: var(--text-secondary);
+    font: 500 11.5px/1 inherit;
+    padding: 6px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  button.replay:hover { border-color: var(--primary); color: var(--primary); }
+
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    margin-top: 14px;
+    padding: 16px 14px;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    background: linear-gradient(180deg, #FBFDFF 0%, #F4F8FD 100%);
+  }
+
+  /* —— 真实尺寸的聊天行 —— */
+  .chatrow { display: flex; align-items: flex-start; gap: 10px; flex: 1 1 auto; min-width: 0; }
+  .bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 8px 11px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-primary);
+  }
+  .bubble .dim { color: var(--text-muted); }
+
+  /* —— 头像（与 _Avatar 一致：32×32 / 圆角 6 / 图标 16）—— */
+  .av {
+    position: relative;
+    width: 32px; height: 32px;
+    flex: 0 0 32px;
+    cursor: pointer;
+    touch-action: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tile {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-sm);
+    background: var(--primary-light);
+    color: var(--primary);
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+  }
+  .tile .ico { width: 16px; height: 16px; display: block; }
+  .layer { position: absolute; inset: 0; pointer-events: none; }
+  .layer.clip { border-radius: var(--radius-sm); overflow: hidden; }
+
+  /* 通用覆盖层 */
+  .ring {
+    position: absolute; inset: 0;
+    border: 2px solid var(--error);
+    border-radius: var(--radius-sm);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .halo {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 32px; height: 32px;
+    margin: -16px 0 0 -16px;
+    border-radius: 999px;
+    background: radial-gradient(circle, rgba(220, 38, 38, .40) 0%, rgba(220, 38, 38, .14) 45%, rgba(220, 38, 38, 0) 72%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
+  .scanbar {
+    position: absolute; left: 0; right: 0; height: 7px;
+    background: linear-gradient(180deg, rgba(220,38,38,0) 0%, rgba(220,38,38,.85) 50%, rgba(220,38,38,0) 100%);
+    opacity: 0;
+  }
+  .crack { position: absolute; inset: 0; }
+  .shard {
+    position: absolute; width: 3px; height: 3px;
+    background: var(--error);
+    border-radius: 1px;
+    opacity: 0;
+  }
+  .arc { position: absolute; inset: -4px; transform: rotate(-90deg); opacity: 0; }
+  .tagbar {
+    position: absolute;
+    left: 50%; top: -20px;
+    transform: translateX(-50%) scale(.8);
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--error);
+    color: #fff;
+    font: 600 9.5px/1.4 var(--mono);
+    letter-spacing: .5px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* —— 4× 放大镜 —— */
+  .zoombox {
+    position: relative;
+    width: 190px; height: 148px;
+    flex: 0 0 190px;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    background:
+      linear-gradient(90deg, var(--border-light) 1px, transparent 1px) 0 0 / 16px 16px,
+      linear-gradient(180deg, var(--border-light) 1px, transparent 1px) 0 0 / 16px 16px,
+      var(--surface);
+  }
+  .zoominner {
+    position: absolute;
+    left: 58px; top: 58px;
+    transform: scale(4);
+    transform-origin: 0 0;
+  }
+  .zoomlabel {
+    position: absolute;
+    right: 8px; bottom: 6px;
+    font: 500 10.5px/1 var(--mono);
+    color: var(--text-muted);
+  }
+
+  .hint {
+    margin: 10px 0 0;
+    color: var(--text-muted);
+    font-size: 11.5px;
+  }
+  .hint b { color: var(--text-secondary); font-weight: 500; }
+
+  footer.page {
+    margin-top: 24px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 11.5px;
+  }
+  footer.page code { font: 400 11px/1 var(--mono); color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <div>
+      <h1>破甲模式 · 启动动画方案对比</h1>
+      <p>长按头像 400ms 触发（与真实交互一致），再长按一次关闭。颜色与尺寸取自 <code>app_colors.dart</code> / <code>AppRadius.sm</code>。</p>
+    </div>
+    <div class="controls">
+      <label class="switch" id="slowWrap"><input type="checkbox" id="slow" /> 慢动作 0.25×</label>
+      <label class="switch" id="reducedWrap"><input type="checkbox" id="reduced" /> 减弱动效</label>
+      <button class="replay" id="replayAll">全部重播</button>
+    </div>
+  </header>
+
+  <div class="grid" id="grid"></div>
+
+  <footer class="page">
+    演示为 HTML 原型，实际落地在 Flutter：<code>AnimationController</code> + <code>CustomPainter</code>（冲击波/裂纹/扫描条自绘），只动 <code>transform</code> / <code>opacity</code> / 颜色，减弱动效时降级为 150ms 纯颜色变化。
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const VARIANTS = [
+    {
+      id: "A",
+      name: "冲击波 + 图标弹起",
+      rec: true,
+      spec: "460ms · easeOutCubic / easeOutExpo · 环错开 80ms",
+      hint: "最克制也最稳：一拍弹起 + 一道环，读作「已激活」，32px 下也干净。",
+      kind: "shockwave",
+      total: 460,
+    },
+    {
+      id: "B",
+      name: "护甲碎裂",
+      rec: false,
+      spec: "520ms · 裂纹 260ms 进 / 200ms 退 · 碎片 easeOutQuart",
+      hint: "字面最贴「破甲」：先裂后碎。细节多，32px 下需要控制碎片数量否则会糊。",
+      kind: "crack",
+      total: 520,
+    },
+    {
+      id: "C",
+      name: "扫描解码",
+      rec: false,
+      spec: "420ms · 双次扫描 130ms/次 · 抖动 4 帧",
+      hint: "「协议注入」感最强，但 glitch 语义上接近「出错」，且与安静的红色常驻状态略有冲突。",
+      kind: "scan",
+      total: 420,
+    },
+    {
+      id: "D",
+      name: "充能环",
+      rec: false,
+      spec: "560ms · stroke-dash 420ms easeOutQuart · 闪一下收口",
+      hint: "节奏最慢、最「仪式感」。适合强调一次性动作，但日常反复触发会嫌拖。",
+      kind: "charge",
+      total: 560,
+    },
+    {
+      id: "E",
+      name: "冲击波 + 行内红晕 + 提示标签",
+      rec: false,
+      spec: "620ms · A 的全部 + 红晕 620ms + 标签 200→620ms",
+      hint: "信息最强：环说「头像变了」，红晕说「整个会话进入该模式」，标签说「叫什么」。也最容易过火。",
+      kind: "combo",
+      total: 620,
+    },
+  ];
+
+  // WAAPI 只认 linear / ease / ease-in / ease-out / ease-in-out / cubic-bezier() / steps()
+  const EASE_CUBIC = "cubic-bezier(.33, 1, .68, 1)";   // = easeOutCubic
+  const EASE_QUART = "cubic-bezier(.25, 1, .5, 1)";    // = easeOutQuart
+  const EASE_EXPO = "cubic-bezier(.16, 1, .3, 1)";     // = easeOutExpo
+  // 与 app_colors.dart 对齐的实色，用于关键帧（避免 var() 在 WAAPI 里的解析差异）
+  const C_PRIMARY = "#2563EB";
+  const C_PRIMARY_LIGHT = "#EFF6FF";
+  const C_ERROR = "#DC2626";
+  const C_ERROR_LIGHT = "#FEE2E2";
+
+  const ICON = `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 2v3" />
+      <circle cx="12" cy="2.2" r="1.1" fill="currentColor" stroke="none" />
+      <rect x="3.5" y="6" width="17" height="12" rx="3.2" />
+      <circle cx="9.4" cy="12" r="1.35" fill="currentColor" stroke="none" />
+      <circle cx="14.6" cy="12" r="1.35" fill="currentColor" stroke="none" />
+    </svg>`;
+
+  const CRACKS = `<svg class="crack" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.1"
+      stroke-linecap="round" aria-hidden="true">
+      <path d="M6 0 L11 9 L7.5 14 L14 20 L10 32" />
+      <path d="M26 2 L21.5 10 L25 15 L19.5 22 L23 32" />
+      <path d="M0 19 L8 17.5 L12.5 26 L16 32" />
+    </svg>`;
+
+  const ARC = `<svg class="arc" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <circle cx="20" cy="20" r="18" stroke="${C_ERROR}" stroke-width="1.6" stroke-linecap="round"
+        stroke-dasharray="113.1" stroke-dashoffset="113.1" />
+    </svg>`;
+
+  function overlays(kind) {
+    switch (kind) {
+      case "shockwave":
+        return `<div class="ring"></div><div class="layer clip"><div class="flash"></div></div>`;
+      case "crack":
+        return `<div class="layer clip">${CRACKS}<div class="flash"></div></div>
+          <div class="shard" style="left:4px;top:6px"></div>
+          <div class="shard" style="right:5px;top:9px"></div>
+          <div class="shard" style="left:9px;bottom:5px"></div>
+          <div class="shard" style="right:7px;bottom:7px"></div>
+          <div class="shard" style="left:15px;top:2px"></div>`;
+      case "scan":
+        return `<div class="layer clip"><div class="scanbar"></div><div class="flash"></div></div>`;
+      case "charge":
+        return `${ARC}<div class="layer clip"><div class="flash"></div></div>`;
+      case "combo":
+        return `<div class="halo"></div><div class="ring"></div>
+          <div class="layer clip"><div class="flash"></div></div>
+          <div class="tagbar">破甲</div>`;
+      default:
+        return "";
+    }
+  }
+
+  function avatarHTML(kind) {
+    return `<div class="av" role="button" tabindex="0" aria-label="长按切换破甲模式">
+        <div class="tile">${ICON}</div>
+        ${overlays(kind)}
+      </div>`;
+  }
+
+  // —— 渲染 ——
+  const grid = document.getElementById("grid");
+  grid.innerHTML = VARIANTS.map((v) => `
+    <section class="card${v.rec ? " rec" : ""}" data-variant="${v.id}">
+      <div class="card-head">
+        <div class="idx">${v.id}</div>
+        <div>
+          <h2>${v.name}${v.rec ? ' <span class="tag">推荐</span>' : ""}</h2>
+          <p class="spec">${v.spec}</p>
+        </div>
+        <div class="card-actions">
+          <span class="state-chip" data-state>未开启</span>
+          <button class="replay" data-replay>重播</button>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="chatrow">
+          <div data-slot="real">${avatarHTML(v.kind)}</div>
+          <div class="bubble">
+            已定位到校验函数 <span class="dim">sub_1A2B</span>，正在写 native hook…
+          </div>
+        </div>
+        <div class="zoombox">
+          <div class="zoominner" data-slot="zoom">${avatarHTML(v.kind)}</div>
+          <div class="zoomlabel">4×</div>
+        </div>
+      </div>
+      <p class="hint"><b>长按头像</b>触发 · ${v.hint}</p>
+    </section>
+  `).join("");
+
+  // —— 动效工具 ——
+  let speed = 1;
+  let reduced = false;
+  const active = new Set();
+
+  function run(el, frames, opts) {
+    const a = el.animate(frames, {
+      duration: opts.duration,
+      delay: opts.delay || 0,
+      easing: opts.easing || "linear",
+      fill: opts.fill || "forwards",
+    });
+    a.playbackRate = speed;
+    active.add(a);
+    a.finished.then(() => active.delete(a)).catch(() => {});
+    return a;
+  }
+
+  function clearAnims(root) {
+    root.querySelectorAll("*").forEach((el) => el.getAnimations().forEach((a) => a.cancel()));
+    active.forEach((a) => { try { a.cancel(); } catch (_) {} });
+    active.clear();
+  }
+
+  // 关闭时只做 150ms 颜色回退（退出比进入快，且不演出）
+  function playOff(root) {
+    const tile = root.querySelector(".tile");
+    run(tile, [
+      { backgroundColor: C_ERROR_LIGHT, color: C_ERROR },
+      { backgroundColor: C_PRIMARY_LIGHT, color: C_PRIMARY },
+    ], { duration: 150, easing: "ease-out" });
+  }
+
+  // 减弱动效：只保留 150ms 颜色变化，去掉位移/缩放/环
+  function playReduced(root) {
+    const tile = root.querySelector(".tile");
+    run(tile, [
+      { backgroundColor: C_PRIMARY_LIGHT, color: C_PRIMARY },
+      { backgroundColor: C_ERROR_LIGHT, color: C_ERROR },
+    ], { duration: 150, easing: "ease-out" });
+  }
+
+  function playOn(root, kind) {
+    const tile = root.querySelector(".tile");
+    const ring = root.querySelector(".ring");
+    const halo = root.querySelector(".halo");
+    const flash = root.querySelector(".flash");
+    const scanbar = root.querySelector(".scanbar");
+    const arcCircle = root.querySelector(".arc circle");
+    const arc = root.querySelector(".arc");
+    const tagbar = root.querySelector(".tagbar");
+    const shards = [...root.querySelectorAll(".shard")];
+    const cracks = root.querySelector(".crack");
+
+    if (reduced) { playReduced(root); return; }
+
+    // 1) 图标弹起 + 颜色交叉
+    run(tile, [
+      { transform: "scale(.94)" },
+      { transform: "scale(1.06)", offset: .55 },
+      { transform: "scale(1)" },
+    ], { duration: 150, easing: EASE_CUBIC });
+    run(tile, [
+      { backgroundColor: C_PRIMARY_LIGHT, color: C_PRIMARY },
+      { backgroundColor: C_ERROR_LIGHT, color: C_ERROR },
+    ], { duration: 200, easing: "ease-out" });
+
+    if (kind === "shockwave" || kind === "combo") {
+      run(ring, [
+        { transform: "scale(1)", opacity: .55, borderWidth: "2px" },
+        { transform: "scale(2.5)", opacity: 0, borderWidth: ".5px" },
+      ], { duration: 380, delay: 80, easing: EASE_EXPO });
+      run(flash, [{ opacity: 0 }, { opacity: .30, offset: .3 }, { opacity: 0 }],
+        { duration: 220, easing: "ease-out" });
+    }
+
+    if (kind === "combo") {
+      run(halo, [
+        { transform: "scale(1)", opacity: 0 },
+        { transform: "scale(2.2)", opacity: .55, offset: .35 },
+        { transform: "scale(7)", opacity: 0 },
+      ], { duration: 620, delay: 60, easing: EASE_EXPO });
+      run(tagbar, [
+        { opacity: 0, transform: "translateX(-50%) translateY(3px) scale(.8)" },
+        { opacity: 1, transform: "translateX(-50%) translateY(0) scale(1)", offset: .3 },
+        { opacity: 1, transform: "translateX(-50%) translateY(0) scale(1)", offset: .68 },
+        { opacity: 0, transform: "translateX(-50%) translateY(-3px) scale(.98)" },
+      ], { duration: 420, delay: 200, easing: EASE_CUBIC });
+    }
+
+    if (kind === "crack") {
+      run(tile, [
+        { transform: "scale(1)" },
+        { transform: "scale(.955)", offset: .28 },
+        { transform: "scale(1)" },
+      ], { duration: 340, easing: EASE_CUBIC });
+      run(cracks, [
+        { opacity: 0, color: "#FFFFFF" },
+        { opacity: .95, color: "#FFFFFF", offset: .35 },
+        { opacity: .35, color: C_ERROR, offset: .7 },
+        { opacity: 0, color: C_ERROR },
+      ], { duration: 460, delay: 40, easing: "ease-out" });
+      run(flash, [{ opacity: 0 }, { opacity: .5, offset: .22 }, { opacity: 0 }],
+        { duration: 260, easing: "ease-out" });
+      shards.forEach((s, i) => {
+        const dir = [[-1, -1], [1, -.7], [-.8, 1], [1, .9], [0, -1.2]][i % 5];
+        run(s, [
+          { opacity: 0, transform: "translate(0,0) rotate(0deg) scale(.6)" },
+          { opacity: .95, offset: .18 },
+          { opacity: 0, transform: `translate(${dir[0] * 11}px, ${dir[1] * 11}px) rotate(${70 + i * 30}deg) scale(1)` },
+        ], { duration: 380, delay: 150, easing: EASE_QUART });
+      });
+    }
+
+    if (kind === "scan") {
+      run(scanbar, [
+        { opacity: 0, transform: "translateY(-8px)" },
+        { opacity: .95, transform: "translateY(26px)", offset: .45 },
+        { opacity: 0, transform: "translateY(34px)", offset: .5 },
+        { opacity: .95, transform: "translateY(6px)", offset: .74 },
+        { opacity: 0, transform: "translateY(-6px)" },
+      ], { duration: 300, delay: 20, easing: "linear" });
+      run(tile.querySelector(".ico"), [
+        { transform: "translateX(0)" },
+        { transform: "translateX(1.6px)", offset: .18 },
+        { transform: "translateX(-1.4px)", offset: .34 },
+        { transform: "translateX(1px)", offset: .52 },
+        { transform: "translateX(0)", offset: .74 },
+        { transform: "scaleY(.96)", offset: .88 },
+        { transform: "translateX(0) scaleY(1)" },
+      ], { duration: 320, delay: 60, easing: "steps(1, end)" });
+      run(flash, [{ opacity: 0 }, { opacity: .34, offset: .62 }, { opacity: 0 }],
+        { duration: 240, delay: 80, easing: "ease-out" });
+    }
+
+    if (kind === "charge") {
+      run(arc, [{ opacity: 1 }, { opacity: 1, offset: .78 }, { opacity: 0 }],
+        { duration: 460, delay: 20, easing: "linear" });
+      run(arcCircle, [
+        { strokeDashoffset: 113.1 },
+        { strokeDashoffset: 0 },
+      ], { duration: 420, delay: 20, easing: EASE_QUART });
+      run(flash, [{ opacity: 0 }, { opacity: .42, offset: .2 }, { opacity: 0 }],
+        { duration: 200, delay: 380, easing: "ease-out" });
+    }
+  }
+
+  // —— 交互 ——
+  const stateOf = new Map();
+
+  function toggle(root, kind, chip) {
+    const on = !stateOf.get(root);
+    clearAnims(root);
+    if (on) {
+      playOn(root, kind);
+    } else {
+      playOff(root);
+    }
+    stateOf.set(root, on);
+    chip.textContent = on ? "已开启" : "未开启";
+    chip.classList.toggle("on", on);
+  }
+
+  function attachLongPress(av, handler) {
+    let timer = null;
+    const start = (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; handler(); }, 400);
+    };
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    av.addEventListener("pointerdown", start);
+    av.addEventListener("pointerup", cancel);
+    av.addEventListener("pointerleave", cancel);
+    av.addEventListener("pointercancel", cancel);
+    av.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handler(); }
+    });
+    av.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  document.querySelectorAll(".card").forEach((card) => {
+    const v = VARIANTS.find((x) => x.id === card.dataset.variant);
+    const chip = card.querySelector("[data-state]");
+    const replays = card.querySelectorAll("[data-replay]");
+
+    card.querySelectorAll(".av").forEach((av) => {
+      const root = av;
+      attachLongPress(av, () => toggle(root, v.kind, chip));
+    });
+
+    replays.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        // 重播：先回到关闭态再播一次，方便反复对比
+        stateOf.set(card.querySelector(".av"), false);
+        chip.textContent = "未开启";
+        chip.classList.remove("on");
+        clearAnims(card);
+        setTimeout(() => {
+          card.querySelectorAll(".av").forEach((root) => playOn(root, v.kind));
+          stateOf.set(card.querySelector(".av"), true);
+          chip.textContent = "已开启";
+          chip.classList.add("on");
+        }, 60);
+      });
+    });
+  });
+
+  const slowInput = document.getElementById("slow");
+  const slowWrap = document.getElementById("slowWrap");
+  slowInput.addEventListener("change", () => {
+    speed = slowInput.checked ? 0.25 : 1;
+    slowWrap.classList.toggle("on", slowInput.checked);
+  });
+
+  const reducedInput = document.getElementById("reduced");
+  const reducedWrap = document.getElementById("reducedWrap");
+  reducedInput.addEventListener("change", () => {
+    reduced = reducedInput.checked;
+    reducedWrap.classList.toggle("on", reduced);
+    document.querySelectorAll(".card").forEach((card) => {
+      clearAnims(card);
+      stateOf.set(card.querySelector(".av"), false);
+      card.querySelector("[data-state]").textContent = "未开启";
+      card.querySelector("[data-state]").classList.remove("on");
+    });
+  });
+
+  document.getElementById("replayAll").addEventListener("click", () => {
+    document.querySelectorAll("[data-replay]").forEach((b) => b.click());
+  });
+})();
+</script>
+</body>
+</html>

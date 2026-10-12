@@ -263,6 +263,53 @@ final projectPromptProvider =
       (ref, agentId) => ProjectPromptNotifier(agentId),
     );
 
+/// DeepSeek 破甲模式开关（按 agent 持久化到后端设置 `deepseek_jailbreak`）。
+/// 默认关闭：未设置 = 正常不启动破甲。进入破甲状态即自动激活，无需激活词。
+/// 仅在当前模型属于 DeepSeek 系列时由 UI 允许切换（后端再按模型二次门控）。
+class DeepSeekJailbreakNotifier extends StateNotifier<bool> {
+  static const _settingKey = 'deepseek_jailbreak';
+
+  final String agentId;
+
+  DeepSeekJailbreakNotifier(this.agentId) : super(false);
+
+  Future<void> init() async {
+    if (agentId.isEmpty) {
+      state = false;
+      return;
+    }
+    try {
+      final settings = await ApiClient.get('/api/agents/$agentId/settings');
+      state = (settings[_settingKey]?.toString() ?? '') == 'true';
+    } catch (_) {
+      state = false;
+    }
+  }
+
+  Future<void> toggle() async {
+    final next = !state;
+    state = next;
+    if (agentId.isEmpty) return;
+    try {
+      await ApiClient.post('/api/agents/$agentId/settings', {
+        _settingKey: next ? 'true' : 'false',
+      });
+      await AppLogService.log(
+        'deepseek_jailbreak_toggled',
+        data: {'agent_id': agentId, 'enabled': next},
+      );
+    } catch (e) {
+      state = !next;
+      rethrow;
+    }
+  }
+}
+
+final deepSeekJailbreakProvider =
+    StateNotifierProvider.family<DeepSeekJailbreakNotifier, bool, String>(
+      (ref, agentId) => DeepSeekJailbreakNotifier(agentId),
+    );
+
 // 全局审批模式（持久化）
 // 可选值: 'ask' | 'auto-approve' | 'deny'
 class PermissionModeNotifier extends StateNotifier<String> {

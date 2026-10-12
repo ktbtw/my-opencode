@@ -373,31 +373,129 @@ func catalogGenericVersionScore(value string) int {
 	return major*100 + minor
 }
 
+// catalogCandidateDerived 是候选的匹配属性缓存。
+//
+// 这些值只依赖候选自身，与待匹配的模型无关；此前它们被写在 (alias, key)
+// 双层循环内部，同一个候选要重复计算 4×3=12 次。目录规模约 226 个供应商、
+// 8000+ 个模型时，单次匹配因此要几百毫秒。
+type catalogCandidateDerived struct {
+	family          string
+	genericVersion  int
+	canonical       bool
+	runtimeVariants bool
+}
+
+// catalogIndex 预计算候选的匹配键与属性，把「遍历全部候选」收敛成
+// 「只评估可能命中的候选」。
+//
+// 命中条件只有两种：某个匹配键与模型别名完全相同，或候选家族与别名家族
+// 相同。因此按这两种关系各建一张倒排表，未出现在表中的候选不可能命中，
+// 可直接跳过。候选按原下标升序评估，保持与暴力遍历一致的「同分取先出现者」。
+type catalogIndex struct {
+	candidates []catalogCandidate
+	derived    []catalogCandidateDerived
+	keys       [][3]string
+	exact      map[string][]int
+	family     map[string][]int
+}
+
+func newCatalogIndex(candidates []catalogCandidate) *catalogIndex {
+	index := &catalogIndex{
+		candidates: candidates,
+		derived:    make([]catalogCandidateDerived, len(candidates)),
+		keys:       make([][3]string, len(candidates)),
+		exact:      make(map[string][]int, len(candidates)),
+		family:     make(map[string][]int),
+	}
+	for i := range candidates {
+		candidate := &candidates[i]
+		keys := [3]string{
+			catalogAlias(candidate.id),
+			catalogAlias(lastPathSegment(candidate.id)),
+			catalogAlias(candidate.meta.Name),
+		}
+		index.keys[i] = keys
+		family := catalogCandidateFamily(*candidate)
+		index.derived[i] = catalogCandidateDerived{
+			family:          family,
+			genericVersion:  catalogGenericVersionScore(candidate.id),
+			canonical:       canonicalProvider(candidate.provider),
+			runtimeVariants: candidate.runtime && len(candidate.meta.Variants) > 0,
+		}
+		// 同一个键可能同时来自 id 与 name，去重避免重复登记同一候选。
+		seen := map[string]bool{}
+		for _, key := range keys {
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			index.exact[key] = append(index.exact[key], i)
+		}
+		if family != "" {
+			index.family[family] = append(index.family[family], i)
+		}
+	}
+	return index
+}
+
 // Exact model IDs are preferred. Only deliberately generic aliases (GPT,
 // Grok, AI, Kimi3) use a family match, so GPT-5.4 still cannot inherit
 // GPT-5.4-Codex or GPT-50. Relay/vendor path prefixes and display-name
 // spacing are normalized without changing the advertised ID saved to the
 // provider.
-func matchCatalogModel(provider string, item model.DeviceAIModelInfo, candidates []catalogCandidate) *catalogCandidate {
-	aliases := []string{catalogAlias(item.ID), catalogAlias(lastPathSegment(item.ID)), catalogAlias(item.Name), catalogAlias(lastPathSegment(item.Name))}
+func (index *catalogIndex) match(provider string, item model.DeviceAIModelInfo) *catalogCandidate {
+	aliases := [4]string{
+		catalogAlias(item.ID),
+		catalogAlias(lastPathSegment(item.ID)),
+		catalogAlias(item.Name),
+		catalogAlias(lastPathSegment(item.Name)),
+	}
+	var aliasFamilies [4]string
+	for i, alias := range aliases {
+		aliasFamilies[i] = catalogFamily(alias)
+	}
+
+	hits := make([]int, 0, 32)
+	for i, alias := range aliases {
+		if alias == "" {
+			continue
+		}
+		hits = append(hits, index.exact[alias]...)
+		family := aliasFamilies[i]
+		if family == "" {
+			continue
+		}
+		hits = append(hits, index.family[family]...)
+		// "AI" 是兼容 OpenAI 的中转站常用展示名，家族匹配时按 GPT 处理；
+		// 仍只对显式使用该泛化别名的模型生效。
+		if family == "ai" {
+			hits = append(hits, index.family["gpt"]...)
+		}
+	}
+	sort.Ints(hits)
+
 	bestScore := 10000
 	var best *catalogCandidate
-	for i := range candidates {
-		candidate := &candidates[i]
-		keys := []string{catalogAlias(candidate.id), catalogAlias(lastPathSegment(candidate.id)), catalogAlias(candidate.meta.Name)}
+	previous := -1
+	for _, ci := range hits {
+		if ci == previous {
+			continue
+		}
+		previous = ci
+		candidate := &index.candidates[ci]
+		derived := &index.derived[ci]
+		keys := index.keys[ci]
+		ownedByMatch := strings.EqualFold(candidate.provider, item.OwnedBy)
+		providerMatch := strings.EqualFold(candidate.provider, provider)
 		for ai, alias := range aliases {
 			if alias == "" {
 				continue
 			}
 			for ki, key := range keys {
 				exactMatch := alias == key
-				family := catalogFamily(alias)
-				candidateFamily := catalogCandidateFamily(*candidate)
-				familyMatch := !exactMatch && family != "" && family == candidateFamily
-				// "AI" is a common relay display name for an OpenAI-compatible
-				// model. Treat it as the GPT family when no more specific name is
-				// available; it remains limited to the explicit generic alias.
-				if !exactMatch && family == "ai" && candidateFamily == "gpt" {
+				family := aliasFamilies[ai]
+				familyMatch := !exactMatch && family != "" && family == derived.family
+				if !exactMatch && family == "ai" && derived.family == "gpt" {
 					familyMatch = true
 				}
 				if !exactMatch && !familyMatch {
@@ -406,23 +504,22 @@ func matchCatalogModel(provider string, item model.DeviceAIModelInfo, candidates
 				score := ai*20 + ki*5 + 10
 				if familyMatch {
 					score += 300
-					score -= catalogGenericVersionScore(candidate.id) / 100
+					score -= derived.genericVersion / 100
 				}
-				if canonicalProvider(candidate.provider) {
+				if derived.canonical {
 					score -= 12
 				}
-				if strings.EqualFold(candidate.provider, item.OwnedBy) {
+				if ownedByMatch {
 					score -= 3
 				}
-				if strings.EqualFold(candidate.provider, provider) {
+				if providerMatch {
 					score -= 4
 				}
 				// A connected runtime may expose relay-specific variants that are
 				// more accurate than the public catalogue. Prefer those variants
 				// for the same configured provider, while still allowing a native
 				// OpenCode provider to supply defaults for a bare relay model.
-				if candidate.runtime && len(candidate.meta.Variants) > 0 &&
-					(strings.EqualFold(candidate.provider, provider) || strings.EqualFold(candidate.provider, item.OwnedBy)) {
+				if derived.runtimeVariants && (providerMatch || ownedByMatch) {
 					score -= 60
 				}
 				if score < bestScore {
@@ -432,6 +529,11 @@ func matchCatalogModel(provider string, item model.DeviceAIModelInfo, candidates
 		}
 	}
 	return best
+}
+
+// matchCatalogModel 保留按候选切片直接匹配的入口，供单次调用与测试使用。
+func matchCatalogModel(provider string, item model.DeviceAIModelInfo, candidates []catalogCandidate) *catalogCandidate {
+	return newCatalogIndex(candidates).match(provider, item)
 }
 
 func EnrichWithOpenCodeCatalog(info *model.DeviceAIConfigInfo, metadata RuntimeProviderMetadata) *model.DeviceAIConfigInfo {
@@ -467,10 +569,12 @@ func EnrichWithOpenCodeCatalog(info *model.DeviceAIConfigInfo, metadata RuntimeP
 	for _, key := range keys {
 		candidates = append(candidates, byKey[key])
 	}
+	// 索引只依赖候选集合，整轮 enrich 复用一次，避免每个模型重建。
+	index := newCatalogIndex(candidates)
 	enrich := func(provider string, items []model.DeviceAIModelInfo) {
 		for i := range items {
 			item := &items[i]
-			candidate := matchCatalogModel(provider, *item, candidates)
+			candidate := index.match(provider, *item)
 			if candidate == nil {
 				continue
 			}

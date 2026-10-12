@@ -2,27 +2,20 @@ package app
 
 import (
 	"testing"
-
-	"launcher/internal/model"
 )
 
-func TestModelPromptForProviderAndModel(t *testing.T) {
-	profile := model.SemanticAgentProfile{ModelPromptPresets: []model.SemanticAgentModelPromptPreset{
-		{ID: "openai-codex", Provider: "openai", ModelPattern: "codex", Prompt: "codex prompt", Enabled: true, SortOrder: 10},
-		{ID: "xai-grok", Provider: "xai", ModelPattern: "grok", Prompt: "grok prompt", Enabled: true, SortOrder: 20},
-	}}
-	if got := modelPromptFor(profile, map[string]any{"model": "openai/gpt-5.3-codex"}); got != "codex prompt" {
-		t.Fatalf("expected codex preset, got %q", got)
-	}
-	if got := modelPromptFor(profile, map[string]any{"model": "xai/grok-4"}); got != "grok prompt" {
-		t.Fatalf("expected grok preset, got %q", got)
-	}
-	if got := modelPromptFor(profile, map[string]any{"model": "anthropic/claude"}); got != "" {
-		t.Fatalf("expected no preset, got %q", got)
-	}
-}
-
 func TestComposeSemanticPromptModes(t *testing.T) {
+	// 模型提示词由后端在建任务时注入，launcher 侧只按生效模式决定角色提示词的取舍。
+	if got := composeSemanticPrompt("agent", "", "agent"); got != "agent" {
+		t.Fatalf("agent mode: %q", got)
+	}
+	if got := composeSemanticPrompt("agent", "", "model"); got != "" {
+		t.Fatalf("model mode without model prompt: %q", got)
+	}
+	if got := composeSemanticPrompt("agent", "", "both"); got != "agent" {
+		t.Fatalf("both mode without model prompt: %q", got)
+	}
+
 	if got := composeSemanticPrompt("agent", "model", "agent"); got != "agent" {
 		t.Fatalf("agent mode: %q", got)
 	}

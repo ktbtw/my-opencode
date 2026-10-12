@@ -694,9 +694,10 @@ func (s *service) agentSemanticConfigContent(cfg model.AgentConfig, existing str
 	if skillRoot, ok := s.prepareSemanticAgentSkills(item); ok && skillRoot != "" {
 		content["skills"] = map[string]any{"paths": []string{skillRoot}, "urls": []string{}}
 	}
-	modelPrompt := modelPromptFor(item.profile, content)
+	// 模型专属提示词由后端在建任务时按会话实际模型注入（后端拿得到 model），
+	// 这里只按生效模式决定角色提示词是否写入 agent 配置。
 	agentPrompt := firstNonEmpty(strings.TrimSpace(item.profile.Prompt), strings.TrimSpace(item.prompt))
-	prompt := composeSemanticPrompt(agentPrompt, modelPrompt, item.profile.PromptMode)
+	prompt := composeSemanticPrompt(agentPrompt, "", item.profile.PromptMode)
 	if strings.TrimSpace(prompt) != "" {
 		agentMap, _ := content["agent"].(map[string]any)
 		if agentMap == nil {
@@ -720,33 +721,6 @@ func (s *service) agentSemanticConfigContent(cfg model.AgentConfig, existing str
 		return "", false
 	}
 	return string(data), true
-}
-
-func modelPromptFor(profile model.SemanticAgentProfile, content map[string]any) string {
-	modelRef, _ := content["model"].(string)
-	provider, modelID := splitProviderModel(modelRef)
-	for _, preset := range profile.ModelPromptPresets {
-		if !preset.Enabled || strings.TrimSpace(preset.Prompt) == "" {
-			continue
-		}
-		if preset.Provider != "" && !strings.Contains(strings.ToLower(provider), strings.ToLower(preset.Provider)) {
-			continue
-		}
-		pattern := strings.ToLower(strings.TrimSpace(preset.ModelPattern))
-		if pattern != "" && !strings.Contains(strings.ToLower(modelID), pattern) {
-			continue
-		}
-		return preset.Prompt
-	}
-	return ""
-}
-
-func splitProviderModel(modelRef string) (string, string) {
-	parts := strings.SplitN(strings.TrimSpace(modelRef), "/", 2)
-	if len(parts) == 2 {
-		return strings.ToLower(parts[0]), strings.ToLower(parts[1])
-	}
-	return "", strings.ToLower(modelRef)
 }
 
 func composeSemanticPrompt(agentPrompt, modelPrompt, mode string) string {

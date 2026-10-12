@@ -200,14 +200,13 @@ func TestAIConfigEnrichesClaudeVariantsFromRunningAgentProvider(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/provider" {
+		if r.URL.Path != providerMetadataPath {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-		  "connected": ["性价比日卡"],
-		  "all": [{
+		  "providers": [{
 		    "id": "性价比日卡",
 		    "models": {
 		      "claude-opus-4-6": {
@@ -244,6 +243,8 @@ func TestAIConfigEnrichesClaudeVariantsFromRunningAgentProvider(t *testing.T) {
 			Enabled: true,
 		}},
 	}
+	// 运行时代理元数据现在由后台补齐，先准备好再断言 enrich 结果。
+	primeProviderMetadata(t, svc, []int{port})
 	info, err := svc.AIConfig()
 	if err != nil {
 		t.Fatalf("ai config: %v", err)

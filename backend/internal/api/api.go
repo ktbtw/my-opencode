@@ -1495,6 +1495,19 @@ func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// 破甲模式：开关开启且本次模型为 DeepSeek 系列时，把破甲协议前置到系统提示词最前。
+	// 门控在后端再做一次（前端也会拦），避免非 DeepSeek 模型被注入。
+	deepSeekJailbreak := false
+	if a.jailbreakEnabledFor(operator.ID, req.AgentID) {
+		baseSystemPrompt, deepSeekJailbreak = applyDeepSeekJailbreak(baseSystemPrompt, req.Metadata["model"], true)
+	}
+	// 模型专属提示词：控制台「模型提示词预设」按本次会话实际模型匹配（生效模式 model/both），
+	// 命中则整段前置，由 opencode 侧置顶到基础提示词之前。
+	// 设备端的 agent 配置里拿不到会话模型，所以匹配只能放在建任务这一层。
+	modelPromptApplied := false
+	if prompt, ok := a.modelPromptForTask(operator.ID, req.AgentID, agent.SemanticAgentID, req.Metadata["model"]); ok {
+		baseSystemPrompt, modelPromptApplied = applyModelPrompt(baseSystemPrompt, prompt)
+	}
 	latencyLog("backend_api", "create_task_system_prompt_loaded", map[string]any{
 		"elapsed_ms":           time.Since(startedAt).Milliseconds(),
 		"step_ms":              time.Since(stepStartedAt).Milliseconds(),
@@ -1503,6 +1516,8 @@ func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 		"machine_id":           agent.MachineID,
 		"project_id":           req.ProjectID,
 		"system_prompt_length": len(baseSystemPrompt),
+		"deepseek_jailbreak":   deepSeekJailbreak,
+		"model_prompt":         modelPromptApplied,
 	})
 	stepStartedAt = time.Now()
 
