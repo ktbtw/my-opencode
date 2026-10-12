@@ -4662,10 +4662,10 @@ func (a *API) RestartDeviceAgent(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, result)
 }
 
-// syncDeviceAgentSemanticProfile 在重启前把设备当前语义 Agent 的最新角色提示词补推一次。
-// 控制台改提示词只写库，设备端仍持有上次下发时的快照；重启是设备最常用的刷新入口，
-// 借它把库里最新配置同步下去，用户不必先手动切一次语义 Agent 才能生效。
-// 设备端已是最新、语义 Agent 已被删除或禁用、launcher 不可达时都直接跳过，不阻断重启。
+// syncDeviceAgentSemanticProfile 在重启前把设备当前语义 Agent 的最新配置补推一次。
+// 控制台改提示词或技能只写库，设备端仍持有上次下发时的快照（角色提示词、技能文件都在里面）；
+// 重启是设备最常用的刷新入口，借它把库里最新配置同步下去，用户不必先手动切一次语义 Agent。
+// launcher 不可达、语义 Agent 已删除或禁用、角色提示词为空时跳过，不阻断重启。
 func (a *API) syncDeviceAgentSemanticProfile(ctx context.Context, operatorID int64, launcherID, agentID string) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
@@ -4689,9 +4689,6 @@ func (a *API) syncDeviceAgentSemanticProfile(ctx context.Context, operatorID int
 	// opencode 启动时会直接报 default agent not found。此时保持设备现状不动。
 	if strings.TrimSpace(profile.Prompt) == "" {
 		log.Printf("[semantic] restart sync skipped agent_id=%s semantic_agent_id=%s reason=empty_prompt", agentID, profile.ID)
-		return
-	}
-	if selection.Profile != nil && strings.TrimSpace(selection.Profile.Prompt) == strings.TrimSpace(profile.Prompt) {
 		return
 	}
 	if _, err := a.requestDeviceLauncher(ctx, operatorID, launcherID, fmt.Sprintf("req_semantic_agent_sync_save_%d", time.Now().UnixNano()), "device.launcher.semantic_agent_save", model.DeviceAgentSemanticSelectionPayload{

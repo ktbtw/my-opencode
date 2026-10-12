@@ -872,7 +872,7 @@ payload = {
     "channel": "latest",
     # 用 chr(10) 拼换行，避免在多层引号里写转义序列出错。
     "changelog": chr(10).join([
-        "- 内置逆向专家角色提示词改版：不再自称 Codex，改为本工作区执行层身份，并补充被问身份时的回答约束",
+        "- 内置技能描述改版：verify-framework、verify-shadowhook、image-to-code、ida-reverse 不再把宿主 Agent 称作 Codex，避免模型看到技能列表后自称 Codex",
     ]),
     "downloads": [
         {

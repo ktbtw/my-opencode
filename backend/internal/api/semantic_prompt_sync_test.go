@@ -293,16 +293,18 @@ func TestRestartDeviceAgentSkipsSyncWhenPromptIsEmpty(t *testing.T) {
 	}
 }
 
-func TestRestartDeviceAgentSkipsSyncWhenPromptMatches(t *testing.T) {
+func TestRestartDeviceAgentPushesOnEveryRestart(t *testing.T) {
 	mem := store.NewMemory(nil)
 	authManager := auth.NewManager(time.Hour)
 	b := broker.New()
 
+	// 设备端角色提示词与库里一致时仍要补推：技能描述、技能文件等同样存在快照里，
+	// 只比角色提示词会漏掉它们的更新。
 	want, ok := builtinSemanticAgentPrompt("reverse-android")
 	if !ok {
 		t.Fatal("missing builtin prompt for reverse-android")
 	}
-	var saved bool
+	var saved *model.DeviceAgentSemanticSelectionPayload
 	api := newTestAPI(mem, b, authManager, testAPIOptions{
 		launcherRequest: func(_ context.Context, _ int64, _, _, envType string, payload any) (model.DeviceLauncherResultPayload, error) {
 			switch envType {
@@ -322,7 +324,12 @@ func TestRestartDeviceAgentSkipsSyncWhenPromptMatches(t *testing.T) {
 					},
 				}, nil
 			case "device.launcher.semantic_agent_save":
-				saved = true
+				info, ok := payload.(model.DeviceAgentSemanticSelectionPayload)
+				if !ok {
+					t.Fatalf("unexpected payload type %#v", payload)
+				}
+				copied := info
+				saved = &copied
 				return model.DeviceLauncherResultPayload{Action: "semantic_agent_save", Success: true}, nil
 			case "device.launcher.restart_agent":
 				return model.DeviceLauncherResultPayload{Action: "restart_agent", Success: true}, nil
@@ -352,7 +359,13 @@ func TestRestartDeviceAgentSkipsSyncWhenPromptMatches(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("unexpected restart status: %d body=%s", rr.Code, rr.Body.String())
 	}
-	if saved {
-		t.Fatal("设备端提示词已是最新时不应重复下发")
+	if saved == nil {
+		t.Fatal("重启时未把最新的语义 Agent 配置推给设备")
+	}
+	if saved.SemanticAgent == nil || strings.TrimSpace(saved.SemanticAgent.Prompt) != want {
+		t.Fatalf("推送的配置不是最新版本: %+v", saved.SemanticAgent)
+	}
+	if len(saved.SemanticAgent.SkillDefinitions) == 0 {
+		t.Fatal("补推应带上技能定义，技能描述更新才能同步到设备")
 	}
 }
