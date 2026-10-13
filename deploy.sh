@@ -436,6 +436,54 @@ apk_version_line() {
   echo "$apk_version_name+$apk_version_code"
 }
 
+# 读取 APK 的签名证书 SHA-256（小写十六进制）。
+# release 构建使用 debug 签名配置，签名取决于构建机的 keystore，换机器会静默变成
+# 另一个签名，导致老用户无法覆盖安装，所以发布前必须和基线指纹比对。
+apk_signer_sha256() {
+  local apk="$1"
+  local sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+  local apksigner=""
+  if [ -n "$sdk" ] && [ -d "$sdk/build-tools" ]; then
+    apksigner="$(find "$sdk/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1)"
+  fi
+  if [ -z "$apksigner" ]; then
+    apksigner="$(command -v apksigner 2>/dev/null || true)"
+  fi
+  if [ -z "$apksigner" ]; then
+    echo "找不到 apksigner：请设置 ANDROID_SDK_ROOT/ANDROID_HOME，或把 apksigner 放进 PATH" >&2
+    return 1
+  fi
+  "$apksigner" verify --print-certs "$apk" 2>/dev/null \
+    | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+    | head -1 \
+    | tr 'A-Z' 'a-z'
+}
+
+# 发布前校验 APK 签名与基线一致（基线文件随仓库提交）。
+verify_apk_signer() {
+  local apk="$1"
+  local baseline="$ROOT_DIR/flutter_app/android/expected-signer-sha256.txt"
+  require_file "$baseline" "APK 签名基线文件"
+  local expected
+  local actual
+  expected="$(tr -d '[:space:]' < "$baseline" | tr 'A-Z' 'a-z')"
+  actual="$(apk_signer_sha256 "$apk")"
+  if [ -z "$actual" ]; then
+    echo "无法读取 APK 签名: $apk" >&2
+    exit 1
+  fi
+  if [ "$actual" != "$expected" ]; then
+    echo "APK 签名与历史版本不一致，已阻止发布：" >&2
+    echo "  expected=$expected" >&2
+    echo "  actual  =$actual" >&2
+    echo "老用户覆盖安装会失败（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。" >&2
+    echo "请确认构建机使用的是历史 keystore（~/.android/debug.keystore）；" >&2
+    echo "确实要更换签名时，同步更新 flutter_app/android/expected-signer-sha256.txt。" >&2
+    exit 1
+  fi
+  echo "APK 签名校验通过: $actual"
+}
+
 remote_file_sha256() {
   local path="$1"
   remote_ssh "if [ -f '$path' ]; then sha256sum '$path' | cut -d ' ' -f 1; fi" 2>/dev/null || true
@@ -1067,6 +1115,7 @@ fi
 
 if [ "$DEPLOY_MOBILE_APP" -eq 1 ]; then
   require_file "$APK_LOCAL" "Android APK"
+  verify_apk_signer "$APK_LOCAL"
   if [ "$ANDROID_ONLY" -eq 0 ]; then
     require_file "$WINDOWS_INSTALLER_LOCAL" "Windows EXE 安装包"
     if [ "$SKIP_MACOS" -eq 0 ]; then

@@ -157,11 +157,24 @@ AI配置页顶栏操作区最左侧新增同步图标（`sync_alt`，tooltip「�
 ## 12. 发布记录（2026-10-14）
 
 - Web：已发布，`/api/app/version` 与页面均指向 1.6.123+270。
-- Android APK：`chat-codex-1.6.123.apk`（35MB，sha256 `6857826d…7703`）已发布并通过线上 range/sha256 校验。
+- Android APK：`chat-codex-1.6.123.apk`（35MB，sha256 `81c4bb27…4ba5`）已发布并通过线上 range/sha256 校验。
 - Windows EXE：`chat-codex-windows-x64-setup.exe`（13MB，sha256 `d3e382cb…9fec`）在 Windows 构建机生成后发布，校验通过。
 - macOS DMG：**未发布**。本机只有 Command Line Tools，`flutter build macos` 需要完整 Xcode；
   发布脚本为此新增 `--skip-macos`（见 `更新发布指南.md` 第 5 节），本次版本元数据里没有 macOS 下载条目。
 - 版本说明只包含 1.6.123 的三条新增内容，已与 `release-history.json` 历史条目逐条比对，无重复。
+
+### Android 签名修复
+
+首次在本机构建时，APK 被本机新生成的 `~/.android/debug.keystore` 签名，与历史版本不一致
+（证书 `40570794…` vs 历史 `afa01b3d…`）。原因是 release 构建使用 debug 签名配置，
+签名随构建机变化。
+
+- 已从百度网盘备份 `/mac全备份/batch-06/Users_yuminghao_.android.part-000`
+  （sha256 与清单一致）恢复旧 Mac 的 `debug.keystore`，装回 `~/.android/debug.keystore`，
+  重新构建后签名回到 `afa01b3d…`，线上 APK 已用正确签名重发。
+- 归档：`~/Downloads/凭据/android-debug-keystore/`（含 README 与恢复步骤）。
+- 防回归：`deploy.sh` 发布前用 `flutter_app/android/expected-signer-sha256.txt` 校验签名，
+  不一致直接阻止发布（已做反向验证）。
 
 ## 13. 待办
 
