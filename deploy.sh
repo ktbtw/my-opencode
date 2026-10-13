@@ -25,6 +25,8 @@ SERVICE="chat-codex-backend"
 BACKEND_PORT="${CHAT_CODEX_BACKEND_PORT:-19081}"
 MODE="all"
 DRY_RUN=0
+# 必须在参数解析之前初始化：解析阶段会把 --skip-macos 置 1，放到后面的变量块会把它重置回 0。
+SKIP_MACOS=0
 CLI_ROOT="$ROOT_DIR/my-opencode/packages/opencode"
 CLI_PKG_JSON="$CLI_ROOT/package.json"
 APP_CHANGELOG_FILE="${CHAT_CODEX_APP_CHANGELOG_FILE:-$ROOT_DIR/flutter_app/release-notes.txt}"
@@ -91,7 +93,6 @@ BUILD_BACKEND=0
 BUILD_FRONTEND=0
 BUILD_MOBILE_APP=0
 ANDROID_ONLY=0
-SKIP_MACOS=0
 BUILD_ADMIN_WEB=0
 BUILD_CLI=0
 BUILD_LAUNCHER=0
@@ -932,6 +933,7 @@ echo "mode=$MODE"
 echo "server=$SERVER"
 echo "public_base=$PUBLIC_BASE"
 echo "backend_port=$BACKEND_PORT"
+echo "skip_macos=$SKIP_MACOS"
 if [ -n "$SSH_KEY" ]; then
   echo "ssh_key=$SSH_KEY"
 fi
