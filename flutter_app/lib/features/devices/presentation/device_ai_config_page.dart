@@ -14,9 +14,11 @@ import '../../../shared/widgets/widgets.dart';
 import '../../../shared/widgets/step_guide_dialog.dart';
 import '../../chat/data/chat_model.dart';
 import '../../chat/presentation/chat_provider.dart';
+import '../application/ai_config_sync.dart';
 import '../data/device_ai_config_model.dart';
 import '../data/device_model.dart';
 import 'device_provider.dart';
+import 'widgets/ai_config_sync_dialogs.dart';
 import 'widgets/model_speed_test_button.dart';
 import 'widgets/model_thinking_editor.dart';
 import 'widgets/raw_config_dialog.dart';
@@ -556,6 +558,161 @@ class _DeviceAIConfigPageState extends ConsumerState<DeviceAIConfigPage> {
     }
   }
 
+  /// 打开设备同步流程：选择目标设备 → 确认同步计划（含冲突处理）→ 写入目标设备。
+  Future<void> _openSyncFlow() async {
+    final config = _config;
+    if (config == null) return;
+    if (config.providers.isEmpty) {
+      _showMessage('当前设备还没有配置 AI 供应商');
+      return;
+    }
+    await AppLogService.log(
+      'device_ai_config_sync_opened',
+      data: {'machine_id': widget.machineId},
+    );
+    if (!mounted) return;
+    final repo = ref.read(deviceRepositoryProvider);
+    final target = await showDialog<DeviceModel>(
+      context: context,
+      builder: (dialogContext) => AiConfigSyncDeviceDialog(
+        currentMachineId: widget.machineId,
+        loadDevices: repo.getDevices,
+      ),
+    );
+    if (target == null || !mounted) return;
+    await AppLogService.log(
+      'device_ai_config_sync_target_selected',
+      data: {
+        'machine_id': widget.machineId,
+        'target_machine_id': target.machineId,
+      },
+    );
+    if (!mounted) return;
+    final result = await showDialog<AiConfigSyncApplyResult>(
+      context: context,
+      builder: (dialogContext) => AiConfigSyncPlanDialog(
+        sourceLabel: '本设备',
+        targetLabel: target.effectiveName,
+        loadPreview: () => _loadSyncPreview(target.machineId),
+        onApply: (selection, preview) =>
+            _applySync(target: target, selection: selection, preview: preview),
+      ),
+    );
+    if (result == null || !mounted) return;
+    // 目标设备配置已变化，失效其模型缓存，其他页面再次进入时重新拉取。
+    ref.invalidate(availableModelsProvider(target.machineId.trim()));
+    _showMessage('已同步到 ${target.effectiveName}：${_syncResultText(result)}');
+  }
+
+  String _syncResultText(AiConfigSyncApplyResult result) {
+    final parts = <String>[
+      if (result.addedCount > 0) '新增 ${result.addedCount} 个供应商',
+      if (result.updatedCount > 0) '更新 ${result.updatedCount} 个供应商',
+      if (result.keptCount > 0) '保留 ${result.keptCount} 个冲突项',
+      if (result.modelSynced) '默认模型已同步',
+    ];
+    return parts.isEmpty ? '没有需要同步的变化' : parts.join('，');
+  }
+
+  /// 并行读取两端配置并计算同步计划（弹窗内加载失败可重试）。
+  Future<AiConfigSyncPreview> _loadSyncPreview(String targetMachineId) async {
+    final repo = ref.read(deviceRepositoryProvider);
+    try {
+      final configs = await Future.wait([
+        repo.getDeviceAIConfig(widget.machineId),
+        repo.getDeviceAIConfig(targetMachineId),
+      ]);
+      final preview = buildAiConfigSyncPreview(
+        sourceRaw: configs[0].rawJson,
+        targetRaw: configs[1].rawJson,
+      );
+      await AppLogService.log(
+        'device_ai_config_sync_preview_ready',
+        data: {
+          'machine_id': widget.machineId,
+          'target_machine_id': targetMachineId,
+          'added_count': preview.plan.addedProviders.length,
+          'conflict_count': preview.plan.conflictProviders.length,
+          'identical_count': preview.plan.identicalProviders.length,
+          'target_only_count': preview.plan.targetOnlyProviders.length,
+          'model_changed': preview.plan.modelChanged,
+        },
+      );
+      return preview;
+    } catch (error) {
+      await AppLogService.log(
+        'device_ai_config_sync_preview_failed',
+        level: 'error',
+        data: {
+          'machine_id': widget.machineId,
+          'target_machine_id': targetMachineId,
+          'error': error.toString(),
+        },
+      );
+      rethrow;
+    }
+  }
+
+  /// 按用户选择合并配置并写入目标设备（单次 save-text）。
+  Future<AiConfigSyncApplyResult> _applySync({
+    required DeviceModel target,
+    required AiConfigSyncSelection selection,
+    required AiConfigSyncPreview preview,
+  }) async {
+    final repo = ref.read(deviceRepositoryProvider);
+    final plan = preview.plan;
+    final applyProviderIds = selection.resolveApplyProviderIds(plan);
+    final syncModel = selection.syncDefaultModel && plan.modelChanged;
+    if (applyProviderIds.isEmpty && !syncModel) {
+      throw StateError('当前选择没有需要同步的变化');
+    }
+    try {
+      final text = buildSyncedConfigText(
+        targetRaw: preview.targetRaw,
+        sourceRaw: preview.sourceRaw,
+        applyProviderIds: applyProviderIds,
+        syncDefaultModel: syncModel,
+      );
+      await repo.saveDeviceAIConfigText(
+        machineId: target.machineId,
+        text: text,
+      );
+      final result = AiConfigSyncApplyResult(
+        addedCount: plan.addedProviders.length,
+        updatedCount: plan.conflictProviders
+            .where((id) => applyProviderIds.contains(id))
+            .length,
+        keptCount: plan.conflictProviders
+            .where((id) => !applyProviderIds.contains(id))
+            .length,
+        modelSynced: syncModel,
+      );
+      await AppLogService.log(
+        'device_ai_config_sync_applied',
+        data: {
+          'machine_id': widget.machineId,
+          'target_machine_id': target.machineId,
+          'added_count': result.addedCount,
+          'updated_count': result.updatedCount,
+          'kept_count': result.keptCount,
+          'model_synced': result.modelSynced,
+        },
+      );
+      return result;
+    } catch (error) {
+      await AppLogService.log(
+        'device_ai_config_sync_apply_failed',
+        level: 'error',
+        data: {
+          'machine_id': widget.machineId,
+          'target_machine_id': target.machineId,
+          'error': error.toString(),
+        },
+      );
+      rethrow;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -570,6 +727,13 @@ class _DeviceAIConfigPageState extends ConsumerState<DeviceAIConfigPage> {
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 actions: [
+                  IconButton(
+                    tooltip: '同步到其他设备',
+                    onPressed: _loading || _saving || _textSaving
+                        ? null
+                        : _openSyncFlow,
+                    icon: const Icon(Icons.sync_alt_rounded),
+                  ),
                   IconButton(
                     tooltip: '编辑全局配置',
                     onPressed: _loading || _saving || _textSaving

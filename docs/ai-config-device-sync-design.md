@@ -1,6 +1,6 @@
 # AI 配置设备同步（设计稿）
 
-> 状态：待评审 ｜ 改动面：仅 Flutter App
+> 状态：已确认，按方案 A 实施 ｜ 改动面：仅 Flutter App
 
 ## 1. 需求
 
@@ -128,9 +128,17 @@ AI配置页顶栏操作区最左侧新增同步图标（`sync_alt`，tooltip「�
 - 版本号：1.6.123+270（按现有节奏递增），release-notes.txt 只写本版新增。
 - 仅 Flutter 一个端有改动 → 部署走 frontend-only / mobile-app-only，不动后端与 Launcher。
 
-## 9. 决策点（待确认）
+## 9. 决策结果（2026-10-13 确认）
 
-1. 技术路线：确认走「方案 A：Flutter 端合并」？
-2. 冲突默认值：推荐「默认使用设备A的配置，可逐项改」；备选「必须逐项选择后才能点开始同步」。
-3. 默认模型：随同步（开关默认勾选）可以吗？还是默认不勾选？
-4. 同步范围：按全量同步（不做部分勾选）。如需「勾选部分供应商」，请说明。
+1. 技术路线：方案 A（Flutter 端合并 + 复用现有接口）。
+2. 冲突默认值：默认「使用设备A的配置」，可逐项改为保留目标设备。
+3. 默认模型：随同步写入，弹窗内开关默认勾选。
+4. 同步范围：全量同步（不做部分勾选）。
+
+## 10. 实施记录
+
+- 新增 `lib/features/devices/application/ai_config_sync.dart`（JSONC 清洗 / 差异计划 / 合并）。
+- 新增 `lib/features/devices/presentation/widgets/ai_config_sync_dialogs.dart`（设备选择 + 同步确认）。
+- `lib/features/devices/presentation/device_ai_config_page.dart` 增加顶栏同步图标与流程编排。
+- 测试：`test/features/devices/application/ai_config_sync_test.dart`、`test/features/devices/presentation/ai_config_sync_dialogs_test.dart`。
+- 版本：Flutter 1.6.123+270。
