@@ -154,7 +154,17 @@ AI配置页顶栏操作区最左侧新增同步图标（`sync_alt`，tooltip「�
   4. 磁盘配置文件与设备端二次上报一致，20/20 项校验通过。
 - Web 已发布：https://www.xyapi.top/codex （1.6.123+270），线上 `main.dart.js` 已包含本功能。
 
-## 12. 待办
+## 12. 发布记录（2026-10-14）
 
-- Android APK / Windows EXE / macOS DMG 未在本机构建（本机无 Android SDK 与 Windows 构建环境），需要时按既有流程在对应构建机执行。
+- Web：已发布，`/api/app/version` 与页面均指向 1.6.123+270。
+- Android APK：`chat-codex-1.6.123.apk`（35MB，sha256 `6857826d…7703`）已发布并通过线上 range/sha256 校验。
+- Windows EXE：`chat-codex-windows-x64-setup.exe`（13MB，sha256 `d3e382cb…9fec`）在 Windows 构建机生成后发布，校验通过。
+- macOS DMG：**未发布**。本机只有 Command Line Tools，`flutter build macos` 需要完整 Xcode；
+  发布脚本为此新增 `--skip-macos`（见 `更新发布指南.md` 第 5 节），本次版本元数据里没有 macOS 下载条目。
+- 版本说明只包含 1.6.123 的三条新增内容，已与 `release-history.json` 历史条目逐条比对，无重复。
+
+## 13. 待办
+
+- 装好 Xcode 后用同一版本号补发 DMG：`./deploy.sh --mobile-app-only`（需要 `CHAT_CODEX_WINDOWS_INSTALLER` 指向已构建的 EXE）。
 - 线上真实两台设备联调（用真实账号在两台在线设备间点一次同步）由使用者在 web 端确认。
+- `git push` 到 GitHub 未执行：本机 GitHub SSH 不通（未开代理），提交都在本地。
