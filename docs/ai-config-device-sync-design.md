@@ -142,3 +142,19 @@ AI配置页顶栏操作区最左侧新增同步图标（`sync_alt`，tooltip「�
 - `lib/features/devices/presentation/device_ai_config_page.dart` 增加顶栏同步图标与流程编排。
 - 测试：`test/features/devices/application/ai_config_sync_test.dart`、`test/features/devices/presentation/ai_config_sync_dialogs_test.dart`。
 - 版本：Flutter 1.6.123+270。
+
+## 11. 验证记录（2026-10-14）
+
+- `flutter analyze`：本功能相关文件无告警（仓库其余历史 info/warning 与本改动无关）。
+- `flutter test` 全量：684 个用例通过，其中新增 27 个（JSONC 清洗 / 差异计划 / 合并保真 / 弹窗交互）。
+- 真实设备链路沙箱端到端（两个 launcher 0.1.192 实例，独立 HOME/XDG，中继指向不可达地址，未注册到线上账号）：
+  1. 读取两端 `raw_json`（源设备配置文件带 JSONC 注释，验证端上清洗）；
+  2. 计划分类正确：新增 grok、冲突 openai、仅目标设备有 local、默认模型有差异；
+  3. `save-text` 写回后回读：冲突项被源设备覆盖（含真实密钥）、新增项带入密钥、目标设备独有供应商与 `mcp`/`$schema` 保持不动、默认模型已更新；
+  4. 磁盘配置文件与设备端二次上报一致，20/20 项校验通过。
+- Web 已发布：https://www.xyapi.top/codex （1.6.123+270），线上 `main.dart.js` 已包含本功能。
+
+## 12. 待办
+
+- Android APK / Windows EXE / macOS DMG 未在本机构建（本机无 Android SDK 与 Windows 构建环境），需要时按既有流程在对应构建机执行。
+- 线上真实两台设备联调（用真实账号在两台在线设备间点一次同步）由使用者在 web 端确认。
