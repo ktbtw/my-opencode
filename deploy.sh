@@ -1,6 +1,8 @@
 #!/bin/bash
 # chat-codex 部署脚本
-# 用法: ./deploy.sh [all|--deploy-built-only|--backend-only|--frontend-only|--mobile-app-only|--android-only|--admin-web-only|--cli-only|--launcher-only|--runtime-only]
+# 用法: ./deploy.sh [all|--deploy-built-only|--backend-only|--frontend-only|--mobile-app-only|--android-only|--admin-web-only|--cli-only|--launcher-only|--runtime-only] [--skip-macos]
+#   --skip-macos: 与 --mobile-app-only 搭配使用，本次不构建/不发布 macOS DMG（例如构建机尚未安装 Xcode），
+#                 APK 与 Windows EXE 正常发布，版本元数据里暂不提供 macOS 下载条目。
 
 set -euo pipefail
 
@@ -30,13 +32,16 @@ APP_RELEASE_HISTORY_FILE="${CHAT_CODEX_APP_RELEASE_HISTORY_FILE:-$ROOT_DIR/flutt
 CLI_CHANGELOG_FILE="${CHAT_CODEX_CLI_CHANGELOG_FILE:-$ROOT_DIR/my-opencode/opencode-release-notes.txt}"
 
 usage() {
-  echo "用法: ./deploy.sh [all|--deploy-built-only|--backend-only|--frontend-only|--mobile-app-only|--android-only|--admin-web-only|--cli-only|--launcher-only|--runtime-only]"
+  echo "用法: ./deploy.sh [all|--deploy-built-only|--backend-only|--frontend-only|--mobile-app-only|--android-only|--admin-web-only|--cli-only|--launcher-only|--runtime-only] [--skip-macos]"
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     all|--deploy-built-only|--backend-only|--frontend-only|--mobile-app-only|--android-only|--admin-web-only|--cli-only|--launcher-only|--runtime-only)
       MODE="$1"
+      ;;
+    --skip-macos)
+      SKIP_MACOS=1
       ;;
     --dry-run)
       DRY_RUN=1
@@ -86,6 +91,7 @@ BUILD_BACKEND=0
 BUILD_FRONTEND=0
 BUILD_MOBILE_APP=0
 ANDROID_ONLY=0
+SKIP_MACOS=0
 BUILD_ADMIN_WEB=0
 BUILD_CLI=0
 BUILD_LAUNCHER=0
@@ -967,7 +973,7 @@ if [ "$BUILD_FRONTEND" -eq 1 ]; then
       echo "Android APK 版本不匹配: expected=$VERSION_NAME+$VERSION_CODE actual=$APK_VERSION_LINE" >&2
       exit 1
     fi
-    if [ "$ANDROID_ONLY" -eq 0 ]; then
+    if [ "$ANDROID_ONLY" -eq 0 ] && [ "$SKIP_MACOS" -eq 0 ]; then
       build_macos_package
     fi
   fi
@@ -975,7 +981,11 @@ if [ "$BUILD_FRONTEND" -eq 1 ]; then
   COPYFILE_DISABLE=1 bsdtar --no-xattrs --no-mac-metadata -C build/web -czf "$WEB_CODEX_TAR_LOCAL" .
   ls -lh "$WEB_TAR_LOCAL"
   if [ "$BUILD_MOBILE_APP" -eq 1 ]; then
-    ls -lh "$APK_LOCAL" "$MACOS_PACKAGE_LOCAL"
+    if [ "$ANDROID_ONLY" -eq 0 ] && [ "$SKIP_MACOS" -eq 0 ]; then
+      ls -lh "$APK_LOCAL" "$MACOS_PACKAGE_LOCAL"
+    else
+      ls -lh "$APK_LOCAL"
+    fi
   fi
   ls -lh "$WEB_CODEX_TAR_LOCAL"
 fi
@@ -991,7 +1001,7 @@ if [ "$BUILD_MOBILE_APP" -eq 1 ] && [ "$BUILD_FRONTEND" -eq 0 ]; then
     echo "Android APK 版本不匹配: expected=$VERSION_NAME+$VERSION_CODE actual=$APK_VERSION_LINE" >&2
     exit 1
   fi
-  if [ "$ANDROID_ONLY" -eq 0 ]; then
+  if [ "$ANDROID_ONLY" -eq 0 ] && [ "$SKIP_MACOS" -eq 0 ]; then
     build_macos_package
     ls -lh "$APK_LOCAL" "$MACOS_PACKAGE_LOCAL"
   else
@@ -1057,14 +1067,19 @@ if [ "$DEPLOY_MOBILE_APP" -eq 1 ]; then
   require_file "$APK_LOCAL" "Android APK"
   if [ "$ANDROID_ONLY" -eq 0 ]; then
     require_file "$WINDOWS_INSTALLER_LOCAL" "Windows EXE 安装包"
-    require_file "$MACOS_PACKAGE_LOCAL" "macOS DMG 安装包"
+    if [ "$SKIP_MACOS" -eq 0 ]; then
+      require_file "$MACOS_PACKAGE_LOCAL" "macOS DMG 安装包"
+    fi
   fi
   APK_SHA256="$(file_sha256 "$APK_LOCAL")"
   if [ "$ANDROID_ONLY" -eq 0 ]; then
     WINDOWS_INSTALLER_SHA256="$(file_sha256 "$WINDOWS_INSTALLER_LOCAL")"
-    MACOS_PACKAGE_SHA256="$(file_sha256 "$MACOS_PACKAGE_LOCAL")"
   else
     WINDOWS_INSTALLER_SHA256=""
+  fi
+  if [ "$ANDROID_ONLY" -eq 0 ] && [ "$SKIP_MACOS" -eq 0 ]; then
+    MACOS_PACKAGE_SHA256="$(file_sha256 "$MACOS_PACKAGE_LOCAL")"
+  else
     MACOS_PACKAGE_SHA256=""
   fi
 fi
@@ -1136,13 +1151,17 @@ fi
 if [ "$DEPLOY_MOBILE_APP" -eq 1 ] && [ "$DEPLOY_FRONTEND" -eq 0 ]; then
   if [ "$ANDROID_ONLY" -eq 1 ]; then
     log_section "上传 Android APK 与版本元数据"
+  elif [ "$SKIP_MACOS" -eq 1 ]; then
+    log_section "上传 Android APK、Windows EXE 与版本元数据（本次不含 macOS DMG）"
   else
     log_section "上传 Android APK、Windows EXE、macOS DMG 与版本元数据"
   fi
   upload_file "$APK_LOCAL" "/tmp/app-release.apk"
   if [ "$ANDROID_ONLY" -eq 0 ]; then
     upload_file "$WINDOWS_INSTALLER_LOCAL" "/tmp/$WINDOWS_INSTALLER_FILENAME"
-    upload_file "$MACOS_PACKAGE_LOCAL" "/tmp/$MACOS_PACKAGE_FILENAME"
+    if [ "$SKIP_MACOS" -eq 0 ]; then
+      upload_file "$MACOS_PACKAGE_LOCAL" "/tmp/$MACOS_PACKAGE_FILENAME"
+    fi
   fi
   if [ "$ANDROID_ONLY" -eq 1 ]; then
     log_section "合并已有桌面端下载条目"
@@ -1183,16 +1202,21 @@ PY
       cat $APK_DIR/version.json
     "
   else
-    remote_ssh "
+    # 桌面端安装：--skip-macos 时只安装 APK 与 Windows EXE，线上已有的 macOS DMG 保持不动。
+    remote_install="
       mkdir -p $APK_DIR &&
       install -m 644 /tmp/app-release.apk $APK_DIR/app-release.apk &&
-      install -m 644 /tmp/$WINDOWS_INSTALLER_FILENAME $APK_DIR/$WINDOWS_INSTALLER_FILENAME &&
-      install -m 644 /tmp/$MACOS_PACKAGE_FILENAME $APK_DIR/$MACOS_PACKAGE_FILENAME &&
+      install -m 644 /tmp/$WINDOWS_INSTALLER_FILENAME $APK_DIR/$WINDOWS_INSTALLER_FILENAME"
+    if [ "$SKIP_MACOS" -eq 0 ]; then
+      remote_install="$remote_install &&
+      install -m 644 /tmp/$MACOS_PACKAGE_FILENAME $APK_DIR/$MACOS_PACKAGE_FILENAME"
+    fi
+    remote_install="$remote_install &&
       install -m 644 /tmp/version.json $APK_DIR/version.json &&
       ls -lh $APK_DIR &&
       echo '--- app version.json ---' &&
-      cat $APK_DIR/version.json
-    "
+      cat $APK_DIR/version.json"
+    remote_ssh "$remote_install"
   fi
 fi
 
@@ -1323,18 +1347,24 @@ if [ "$DEPLOY_FRONTEND" -eq 1 ]; then
   if [ "$DEPLOY_MOBILE_APP" -eq 1 ]; then
     upload_file "$APK_LOCAL" "/tmp/app-release.apk"
     upload_file "$WINDOWS_INSTALLER_LOCAL" "/tmp/$WINDOWS_INSTALLER_FILENAME"
-    upload_file "$MACOS_PACKAGE_LOCAL" "/tmp/$MACOS_PACKAGE_FILENAME"
+    if [ "$SKIP_MACOS" -eq 0 ]; then
+      upload_file "$MACOS_PACKAGE_LOCAL" "/tmp/$MACOS_PACKAGE_FILENAME"
+    fi
     upload_file "$VERSION_JSON_LOCAL" "/tmp/version.json"
-    remote_ssh "
+    remote_install="
     mkdir -p $APK_DIR &&
     install -m 644 /tmp/app-release.apk $APK_DIR/app-release.apk &&
-    install -m 644 /tmp/$WINDOWS_INSTALLER_FILENAME $APK_DIR/$WINDOWS_INSTALLER_FILENAME &&
-    install -m 644 /tmp/$MACOS_PACKAGE_FILENAME $APK_DIR/$MACOS_PACKAGE_FILENAME &&
+    install -m 644 /tmp/$WINDOWS_INSTALLER_FILENAME $APK_DIR/$WINDOWS_INSTALLER_FILENAME"
+    if [ "$SKIP_MACOS" -eq 0 ]; then
+      remote_install="$remote_install &&
+    install -m 644 /tmp/$MACOS_PACKAGE_FILENAME $APK_DIR/$MACOS_PACKAGE_FILENAME"
+    fi
+    remote_install="$remote_install &&
     install -m 644 /tmp/version.json $APK_DIR/version.json &&
     ls -lh $APK_DIR &&
     echo '--- app version.json ---' &&
-    cat $APK_DIR/version.json
-  "
+    cat $APK_DIR/version.json"
+    remote_ssh "$remote_install"
   fi
   remote_ssh "
       mkdir -p $CODEX_WEB_DIR &&
@@ -1578,11 +1608,13 @@ if [ "$VERIFY_MOBILE_APP" -eq 1 ]; then
     echo
     verify_download_range "$PUBLIC_BASE/api/app/download?artifact=$WINDOWS_INSTALLER_FILENAME&v=$VERSION_CODE" 60
     echo
-    verify_download_range "$PUBLIC_BASE/api/app/download?artifact=$MACOS_PACKAGE_FILENAME&v=$VERSION_CODE" 60
-    echo
     verify_download_sha256 "$PUBLIC_BASE/api/app/download?artifact=$WINDOWS_INSTALLER_FILENAME&v=$VERSION_CODE" "$WINDOWS_INSTALLER_SHA256" 300
-    echo
-    verify_download_sha256 "$PUBLIC_BASE/api/app/download?artifact=$MACOS_PACKAGE_FILENAME&v=$VERSION_CODE" "$MACOS_PACKAGE_SHA256" 300
+    if [ "$SKIP_MACOS" -eq 0 ]; then
+      echo
+      verify_download_range "$PUBLIC_BASE/api/app/download?artifact=$MACOS_PACKAGE_FILENAME&v=$VERSION_CODE" 60
+      echo
+      verify_download_sha256 "$PUBLIC_BASE/api/app/download?artifact=$MACOS_PACKAGE_FILENAME&v=$VERSION_CODE" "$MACOS_PACKAGE_SHA256" 300
+    fi
   fi
 fi
 
