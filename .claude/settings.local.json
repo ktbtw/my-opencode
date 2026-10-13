@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter create:*)",
+      "Bash(flutter pub:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(flutter build:*)",
+      "Bash(git commit:*)",
+      "Bash(flutter run:*)",
+      "Bash(pkill -f \"flutter run\")",
+      "Bash(pkill -f \"flutter_tools\")",
+      "Bash(python3 -m http.server 3000)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/)",
+      "Bash(open:*)",
+      "mcp__playwright__playwright_screenshot",
+      "mcp__playwright__playwright_navigate",
+      "Bash(git remote:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(ssh:*)",
+      "Bash(curl:*)",
+      "Bash(pkill -f \"serve-relay\")",
+      "Bash(nohup bun:*)",
+      "Bash(export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 all_proxy=socks5://127.0.0.1:7897)",
+      "Bash(python3 -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\('OK' if 'access_token' in d else d\\)\")",
+      "Bash(go build:*)",
+      "Bash(scp -i /Users/yuminghao/Downloads/chat-codex/root.pem /Users/yuminghao/Downloads/chat-codex/backend/chat-codex-server root@220.167.100.153:/opt/chat-codex/backend/chat-codex-server)",
+      "Bash(scp -i /Users/yuminghao/Downloads/chat-codex/root.pem /Users/yuminghao/Downloads/chat-codex/flutter_app/build/app/outputs/flutter-apk/app-release.apk root@220.167.100.153:/opt/chat-codex/apk/app-release.apk)",
+      "Bash(python3 -m json.tool)",
+      "Bash(ping -c 2 -t 3 10.126.126.2)"
+    ]
+  }
+}
