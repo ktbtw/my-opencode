@@ -157,7 +157,7 @@ AI配置页顶栏操作区最左侧新增同步图标（`sync_alt`，tooltip「�
 ## 12. 发布记录（2026-10-14）
 
 - Web：已发布，`/api/app/version` 与页面均指向 1.6.123+270。
-- Android APK：`chat-codex-1.6.123.apk`（35MB，sha256 `81c4bb27…4ba5`）已发布并通过线上 range/sha256 校验。
+- Android APK：`chat-codex-1.6.123.apk`（35MB，sha256 `c8927037…2bfa`，发行版签名 `608f0718…`）已发布并通过线上 range/sha256 校验。
 - Windows EXE：`chat-codex-windows-x64-setup.exe`（13MB，sha256 `d3e382cb…9fec`）在 Windows 构建机生成后发布，校验通过。
 - macOS DMG：**未发布**。本机只有 Command Line Tools，`flutter build macos` 需要完整 Xcode；
   发布脚本为此新增 `--skip-macos`（见 `更新发布指南.md` 第 5 节），本次版本元数据里没有 macOS 下载条目。
