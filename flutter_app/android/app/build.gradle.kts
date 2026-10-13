@@ -1,8 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// release 签名材料随私有仓库提交（android/key.properties + android/keystore/），
+// 任何构建机 clone 后产出的 APK 签名都一致；缺少文件时直接失败，不再静默退回 debug 签名。
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (!keystorePropertiesFile.exists()) {
+    throw GradleException(
+        "缺少 ${keystorePropertiesFile.path}：release 签名依赖它（见 更新发布指南.md「Android 签名」）"
+    )
+}
+val keystoreProperties = Properties().apply {
+    keystorePropertiesFile.inputStream().use { load(it) }
 }
 
 repositories {
@@ -15,6 +29,15 @@ android {
     namespace = "com.chatcodex.chat_codex_app"
     compileSdk = 36
     ndkVersion = "27.0.12077973"
+
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+        }
+    }
 
     sourceSets {
         getByName("main") {
@@ -66,9 +89,7 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }

@@ -170,9 +170,13 @@ AI配置页顶栏操作区最左侧新增同步图标（`sync_alt`，tooltip「�
 签名随构建机变化。
 
 - 已从百度网盘备份 `/mac全备份/batch-06/Users_yuminghao_.android.part-000`
-  （sha256 与清单一致）恢复旧 Mac 的 `debug.keystore`，装回 `~/.android/debug.keystore`，
-  重新构建后签名回到 `afa01b3d…`，线上 APK 已用正确签名重发。
-- 归档：`~/Downloads/凭据/android-debug-keystore/`（含 README 与恢复步骤）。
+  （sha256 与清单一致）恢复旧 Mac 的 `debug.keystore` 应急，并加了签名基线校验。
+- 最终按发行版规范改为使用发行版 keystore：`flutter_app/android/keystore/chat-codex.jks`
+  （即工作目录的 `xycard.jks`，证书 `608f0718…`，DN `CN=yu`），`key.properties` 与
+  keystore 随私有仓库提交，`android/app/build.gradle.kts` 改为显式
+  `signingConfigs.release`，缺少签名文件直接构建失败。
+- **签名变更影响**：1.6.123 之前的 APK 都是 `afa01b3d…`（debug 派生），改用发行版签名后
+  已装旧版的设备需要卸载重装一次；1.6.123 起签名固定为 `608f0718…`。
 - 防回归：`deploy.sh` 发布前用 `flutter_app/android/expected-signer-sha256.txt` 校验签名，
   不一致直接阻止发布（已做反向验证）。
 
