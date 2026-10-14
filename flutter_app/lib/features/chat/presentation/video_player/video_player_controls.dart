@@ -104,13 +104,19 @@ class VideoPlayerControls extends StatelessWidget {
                   size: buttonSize,
                 ),
                 _ControlButton(
-                  icon: PlayerIcons.skipBack(PlayerMetrics.button, Colors.white),
+                  icon: PlayerIcons.skipBack(
+                    PlayerMetrics.button,
+                    Colors.white,
+                  ),
                   onTap: () => onSkip(-10),
                   size: buttonSize,
                   tooltip: '快退 10 秒',
                 ),
                 _ControlButton(
-                  icon: PlayerIcons.skipForward(PlayerMetrics.button, Colors.white),
+                  icon: PlayerIcons.skipForward(
+                    PlayerMetrics.button,
+                    Colors.white,
+                  ),
                   onTap: () => onSkip(10),
                   size: buttonSize,
                   tooltip: '快进 10 秒',
@@ -134,7 +140,8 @@ class VideoPlayerControls extends StatelessWidget {
                   const Spacer(),
 
                 _ControlButton(
-                  label: '${speed % 1 == 0 ? speed.toStringAsFixed(1) : speed}×',
+                  label:
+                      '${speed % 1 == 0 ? speed.toStringAsFixed(1) : speed}×',
                   active: speedMenuOpen || (speed - 1).abs() > 0.001,
                   onTap: onToggleSpeedMenu,
                   size: buttonSize,
@@ -142,8 +149,14 @@ class VideoPlayerControls extends StatelessWidget {
                 ),
                 _ControlButton(
                   icon: fullscreen
-                      ? PlayerIcons.fullscreenExit(PlayerMetrics.button, Colors.white)
-                      : PlayerIcons.fullscreen(PlayerMetrics.button, Colors.white),
+                      ? PlayerIcons.fullscreenExit(
+                          PlayerMetrics.button,
+                          Colors.white,
+                        )
+                      : PlayerIcons.fullscreen(
+                          PlayerMetrics.button,
+                          Colors.white,
+                        ),
                   onTap: onToggleFullscreen,
                   size: buttonSize,
                   tooltip: fullscreen ? '退出全屏' : '全屏',
@@ -364,9 +377,7 @@ class _ControlButton extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null
-        ? button
-        : Tooltip(message: tooltip!, child: button);
+    return tooltip == null ? button : Tooltip(message: tooltip!, child: button);
   }
 }
 

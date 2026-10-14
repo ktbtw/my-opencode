@@ -153,6 +153,8 @@ class AppTheme {
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: false,
+        iconTheme: IconThemeData(size: AppIconMetrics.statusBar),
+        actionsIconTheme: IconThemeData(size: AppIconMetrics.statusBar),
         titleTextStyle: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
@@ -161,6 +163,13 @@ class AppTheme {
       ),
     );
   }
+}
+
+/// 状态栏图标统一尺寸。各页面仍可通过颜色表达禁用、选中等状态。
+class AppIconMetrics {
+  AppIconMetrics._();
+
+  static const double statusBar = 19;
 }
 
 // 响应式断点

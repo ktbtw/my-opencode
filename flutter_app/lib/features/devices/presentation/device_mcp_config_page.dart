@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -540,19 +541,19 @@ class _DeviceMCPConfigPageState extends ConsumerState<DeviceMCPConfigPage> {
               AppTopBar(
                 title: 'MCP配置',
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 actions: [
                   IconButton(
                     tooltip: 'MCP商店',
                     onPressed: actionsEnabled ? _openStore : null,
-                    icon: const Icon(Icons.storefront_outlined),
+                    icon: const AppStatusIcon(Icons.storefront_outlined),
                   ),
                   IconButton(
                     tooltip: '编辑全局配置',
                     onPressed: actionsEnabled ? _openRawEditor : null,
-                    icon: const Icon(Icons.edit_note_rounded),
+                    icon: const AppStatusIcon(Icons.edit_note_rounded),
                   ),
                 ],
               ),

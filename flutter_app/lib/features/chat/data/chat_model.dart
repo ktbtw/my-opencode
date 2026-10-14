@@ -1032,7 +1032,8 @@ class TaskModel {
       createdAt: j['created_at'] != null
           ? DateTime.tryParse(j['created_at'] as String)
           : null,
-      modelRef: (j['metadata'] as Map<String, dynamic>?)?['model']
+      modelRef:
+          (j['metadata'] as Map<String, dynamic>?)?['model']
               ?.toString()
               .trim() ??
           '',
@@ -1767,9 +1768,11 @@ class ImageGenerationOptions {
   final int? count;
   final String? quality;
   final String? format;
+
   /// xAI 用比例替代 OpenAI 的尺寸，二者互斥。
   final String? aspectRatio;
   final String? resolution;
+
   /// 视频时长，秒。xAI 视频接口接受 1 到 15。
   final int? duration;
 
@@ -1904,7 +1907,11 @@ class ImageGenerationCapabilities {
 
   static List<String> _list(Object? value) {
     if (value is! List) return const [];
-    return value.whereType<String>().map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    return value
+        .whereType<String>()
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
   }
 
   static int? _int(Object? value) {
@@ -2018,11 +2025,7 @@ bool looksLikeImageGenerationModel(
 
 /// 仅凭模型名/供应商名判断是不是 DeepSeek 系列。
 /// 破甲模式只在 DeepSeek 系列模型上开放（长按机器人图标生效）。
-bool looksLikeDeepSeekModel(
-  String providerID,
-  String modelID,
-  String name,
-) {
+bool looksLikeDeepSeekModel(String providerID, String modelID, String name) {
   return '$providerID $modelID $name'.toLowerCase().contains('deepseek');
 }
 
@@ -2084,10 +2087,7 @@ List<AttachedFile> attachedFilesFromParts(List<dynamic>? parts) {
   return files;
 }
 
-AttachedFile? attachedFileFromPart(
-  Map<String, dynamic> part, {
-  int index = 0,
-}) {
+AttachedFile? attachedFileFromPart(Map<String, dynamic> part, {int index = 0}) {
   final url = part['url']?.toString().trim() ?? '';
   final filename = part['filename']?.toString().trim() ?? '';
   if (url.isEmpty && filename.isEmpty) return null;

@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -358,7 +359,7 @@ class SettingsPage extends ConsumerWidget {
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+          icon: const AppStatusIcon(Icons.arrow_back_ios_new),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: const Text(

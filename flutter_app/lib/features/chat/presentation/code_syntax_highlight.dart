@@ -48,21 +48,51 @@ CodeLanguage codeLanguageFromFilename(String filename) {
 const _maxHighlightChars = 200 * 1024;
 
 class _Styles {
-  static const key = TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w600);
+  static const key = TextStyle(
+    color: Color(0xFF2563EB),
+    fontWeight: FontWeight.w600,
+  );
   static const string = TextStyle(color: Color(0xFF0F766E));
   static const number = TextStyle(color: Color(0xFFB45309));
   static const constant = TextStyle(color: Color(0xFF7C3AED));
-  static const comment = TextStyle(color: Color(0xFF8FA3BF), fontStyle: FontStyle.italic);
-  static const keyword = TextStyle(color: Color(0xFFBE185D), fontWeight: FontWeight.w600);
-  static const tagName = TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w600);
+  static const comment = TextStyle(
+    color: Color(0xFF8FA3BF),
+    fontStyle: FontStyle.italic,
+  );
+  static const keyword = TextStyle(
+    color: Color(0xFFBE185D),
+    fontWeight: FontWeight.w600,
+  );
+  static const tagName = TextStyle(
+    color: Color(0xFF2563EB),
+    fontWeight: FontWeight.w600,
+  );
   static const attribute = TextStyle(color: Color(0xFFB45309));
   static const punct = TextStyle(color: Color(0xFF64748B));
-  static const heading = TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.w700);
-  static const link = TextStyle(color: Color(0xFF0F766E), decoration: TextDecoration.underline);
-  static const marker = TextStyle(color: Color(0xFFBE185D), fontWeight: FontWeight.w700);
-  static const code = TextStyle(color: Color(0xFF0F766E), backgroundColor: Color(0xFFE8EDF3));
-  static const error = TextStyle(color: Color(0xFFDC2626), fontWeight: FontWeight.w700);
-  static const warn = TextStyle(color: Color(0xFFD97706), fontWeight: FontWeight.w600);
+  static const heading = TextStyle(
+    color: Color(0xFF1D4ED8),
+    fontWeight: FontWeight.w700,
+  );
+  static const link = TextStyle(
+    color: Color(0xFF0F766E),
+    decoration: TextDecoration.underline,
+  );
+  static const marker = TextStyle(
+    color: Color(0xFFBE185D),
+    fontWeight: FontWeight.w700,
+  );
+  static const code = TextStyle(
+    color: Color(0xFF0F766E),
+    backgroundColor: Color(0xFFE8EDF3),
+  );
+  static const error = TextStyle(
+    color: Color(0xFFDC2626),
+    fontWeight: FontWeight.w700,
+  );
+  static const warn = TextStyle(
+    color: Color(0xFFD97706),
+    fontWeight: FontWeight.w600,
+  );
   static const info = TextStyle(color: Color(0xFF2563EB));
 }
 
@@ -93,9 +123,15 @@ final _rulesByLanguage = <CodeLanguage, List<_Rule>>{
     _Rule(RegExp(r'#[^\n]*'), _Styles.comment),
     _Rule(RegExp(r'"(?:[^"\\\n]|\\.)*"'), _Styles.string),
     _Rule(RegExp(r"'[^'\n]*'"), _Styles.string),
-    _Rule(RegExp(r'^[ \t]*(?:-\s+)?[A-Za-z0-9_.\-/]+(?=\s*[:=])', multiLine: true), _Styles.key),
+    _Rule(
+      RegExp(r'^[ \t]*(?:-\s+)?[A-Za-z0-9_.\-/]+(?=\s*[:=])', multiLine: true),
+      _Styles.key,
+    ),
     _Rule(RegExp(r'-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?'), _Styles.number),
-    _Rule(RegExp(r'\b(?:true|false|null|yes|no|on|off)\b', caseSensitive: false), _Styles.constant),
+    _Rule(
+      RegExp(r'\b(?:true|false|null|yes|no|on|off)\b', caseSensitive: false),
+      _Styles.constant,
+    ),
     _Rule(RegExp(r'[:\-=]'), _Styles.punct),
   ],
   CodeLanguage.xml: [
@@ -115,7 +151,10 @@ final _rulesByLanguage = <CodeLanguage, List<_Rule>>{
     _Rule(RegExp(r'\*\*[^*\n]+\*\*'), _Styles.heading),
     _Rule(RegExp(r'\[[^\]\n]*\]\([^)\n]*\)'), _Styles.link),
     _Rule(RegExp(r'^>[^\n]*', multiLine: true), _Styles.comment),
-    _Rule(RegExp(r'^[ \t]*(?:[-*+]|\d+\.)[ \t]', multiLine: true), _Styles.marker),
+    _Rule(
+      RegExp(r'^[ \t]*(?:[-*+]|\d+\.)[ \t]', multiLine: true),
+      _Styles.marker,
+    ),
     _Rule(RegExp(r'\*[^*\n]+\*|_[^_\n]+_'), _Styles.comment),
   ],
   CodeLanguage.log: [
@@ -124,7 +163,10 @@ final _rulesByLanguage = <CodeLanguage, List<_Rule>>{
     _Rule(RegExp(r'\b(?:WARN|WARNING|警告)\b'), _Styles.warn),
     _Rule(RegExp(r'\b(?:INFO|NOTICE)\b'), _Styles.info),
     _Rule(RegExp(r'\b(?:DEBUG|TRACE|VERBOSE)\b'), _Styles.comment),
-    _Rule(RegExp(r'\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b'), _Styles.comment),
+    _Rule(
+      RegExp(r'\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b'),
+      _Styles.comment,
+    ),
     _Rule(RegExp(r'-?\d+(?:\.\d+)?'), _Styles.number),
   ],
 };
@@ -135,7 +177,9 @@ final _blockComment = RegExp(r'/\*[\s\S]*?\*/');
 final _doubleQuoted = RegExp(r'"(?:[^"\\\n]|\\.)*"');
 final _singleQuoted = RegExp(r"'(?:[^'\\\n]|\\.)*'");
 final _backtickQuoted = RegExp(r'`(?:[^`\\]|\\.)*`');
-final _numberLiteral = RegExp(r'0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?');
+final _numberLiteral = RegExp(
+  r'0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?',
+);
 final _constantLiteral = RegExp(
   r'\b(?:true|false|null|nil|None|True|False|undefined|NaN|self)\b',
 );

@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -313,24 +314,24 @@ class _DeviceSkillConfigPageState extends ConsumerState<DeviceSkillConfigPage> {
               AppTopBar(
                 title: 'Skill配置',
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () => context.pop(),
                 ),
                 actions: [
                   IconButton(
                     tooltip: '搜索 Skill',
                     onPressed: _showSearch,
-                    icon: const Icon(Icons.search_rounded),
+                    icon: const AppStatusIcon(Icons.search_rounded),
                   ),
                   IconButton(
                     tooltip: 'Skill商店',
                     onPressed: _saving ? null : _openStore,
-                    icon: const Icon(Icons.storefront_outlined),
+                    icon: const AppStatusIcon(Icons.storefront_outlined),
                   ),
                   IconButton(
                     tooltip: '导入 Skill',
                     onPressed: _saving ? null : _importSkill,
-                    icon: const Icon(Icons.file_upload_outlined),
+                    icon: const AppStatusIcon(Icons.file_upload_outlined),
                   ),
                 ],
               ),

@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
@@ -415,23 +416,23 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
       // 分块大小与并发数由服务端按会员等级下发：普通 512KB 单并发，会员 5MB 多并发。
       final policy = await repo.fetchUploadPolicy();
       await repo.uploadDeviceDirectoryFileChunkedStreamed(
-            machineId: widget.machineId,
-            path: _joinPath(_currentPath, name),
-            totalBytes: totalBytes,
-            openRead: () => readStream,
-            chunkSize: policy.chunkSize,
-            concurrency: policy.concurrency,
-            resume: policy.resumeEnabled,
-            onProgress: (value) {
-              notifications.update(
-                operationId: operationId,
-                message: value.stage,
-                progress: value.totalBytes <= 0
-                    ? 0
-                    : value.uploadedBytes / value.totalBytes,
-              );
-            },
+        machineId: widget.machineId,
+        path: _joinPath(_currentPath, name),
+        totalBytes: totalBytes,
+        openRead: () => readStream,
+        chunkSize: policy.chunkSize,
+        concurrency: policy.concurrency,
+        resume: policy.resumeEnabled,
+        onProgress: (value) {
+          notifications.update(
+            operationId: operationId,
+            message: value.stage,
+            progress: value.totalBytes <= 0
+                ? 0
+                : value.uploadedBytes / value.totalBytes,
           );
+        },
+      );
       notifications.succeed(operationId, title: '文件上传完成', message: name);
       if (!mounted) return;
       await _loadPath(_currentPath);
@@ -620,12 +621,12 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.delete_outline_rounded),
+                      : const AppStatusIcon(Icons.delete_outline_rounded),
                 ),
                 IconButton(
                   tooltip: '退出编辑',
                   onPressed: _deleting ? null : _exitEditMode,
-                  icon: const Icon(Icons.close_rounded),
+                  icon: const AppStatusIcon(Icons.close_rounded),
                 ),
                 const SizedBox(width: 8),
               ]
@@ -633,7 +634,7 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
                 IconButton(
                   tooltip: '创建 Agent 指南',
                   onPressed: _busy ? null : _showAgentCreateGuide,
-                  icon: const Icon(Icons.help_outline_rounded),
+                  icon: const AppStatusIcon(Icons.help_outline_rounded),
                 ),
                 IconButton(
                   tooltip: _uploading ? '上传中' : '上传文件',
@@ -644,7 +645,7 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.upload_file_rounded),
+                      : const AppStatusIcon(Icons.upload_file_rounded),
                 ),
                 PopupMenuButton<_DirectoryCreateAction>(
                   tooltip: _creatingEntry ? '创建中' : '新建',
@@ -655,7 +656,7 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.add_rounded),
+                      : const AppStatusIcon(Icons.add_rounded),
                   onSelected: _createEntry,
                   itemBuilder: (_) => const [
                     PopupMenuItem(
@@ -663,7 +664,7 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
                       child: ListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.note_add_outlined),
+                        leading: AppStatusIcon(Icons.note_add_outlined),
                         title: Text('新建文件'),
                       ),
                     ),
@@ -672,7 +673,9 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
                       child: ListTile(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.create_new_folder_outlined),
+                        leading: AppStatusIcon(
+                          Icons.create_new_folder_outlined,
+                        ),
                         title: Text('新建文件夹'),
                       ),
                     ),
@@ -689,7 +692,7 @@ class _DeviceDirectoryPageState extends ConsumerState<DeviceDirectoryPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.add_box_rounded),
+                      : const AppStatusIcon(Icons.add_box_rounded),
                 ),
                 const SizedBox(width: 8),
               ],

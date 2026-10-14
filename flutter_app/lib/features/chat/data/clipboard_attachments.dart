@@ -14,10 +14,7 @@ class ClipboardPasteResult {
   final List<AttachedFile> attachments;
   final String? insertText;
 
-  const ClipboardPasteResult({
-    this.attachments = const [],
-    this.insertText,
-  });
+  const ClipboardPasteResult({this.attachments = const [], this.insertText});
 
   bool get hasAttachments => attachments.isNotEmpty;
   bool get hasInsertText => insertText != null && insertText!.isNotEmpty;
@@ -36,12 +33,7 @@ Future<List<AttachedFile>> collectClipboardAttachments({
     if (path.isEmpty) continue;
     final bytes = await readFileBytes(path);
     if (bytes == null || bytes.isEmpty) continue;
-    files.add(
-      buildAttachedFile(
-        filename: p.basename(path),
-        bytes: bytes,
-      ),
-    );
+    files.add(buildAttachedFile(filename: p.basename(path), bytes: bytes));
   }
   if (files.isNotEmpty) return files;
 

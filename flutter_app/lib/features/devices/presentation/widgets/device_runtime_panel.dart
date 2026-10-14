@@ -46,10 +46,7 @@ class DeviceRuntimePanel extends StatelessWidget {
             const SizedBox(height: 14),
             Text(
               deviceOnline ? '设备尚未上报运行数据' : '设备离线，暂无运行数据',
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textMuted,
-              ),
+              style: const TextStyle(fontSize: 13, color: AppColors.textMuted),
             ),
             const SizedBox(height: 6),
             const Text(
@@ -88,11 +85,7 @@ class DeviceRuntimePanel extends StatelessWidget {
           ),
           if (data.primaryDisk != null) ...[
             const SizedBox(height: 14),
-            _DiskSection(
-              metrics: data,
-              compact: compact,
-              dimmed: stale,
-            ),
+            _DiskSection(metrics: data, compact: compact, dimmed: stale),
           ],
           const SizedBox(height: 14),
           _MetricBar(
@@ -264,9 +257,7 @@ class _MetricBar extends StatelessWidget {
                 style: TextStyle(
                   fontSize: dense ? 12 : 13,
                   fontWeight: FontWeight.w500,
-                  color: dimmed
-                      ? AppColors.textMuted
-                      : AppColors.textSecondary,
+                  color: dimmed ? AppColors.textMuted : AppColors.textSecondary,
                 ),
               ),
             ),
@@ -328,19 +319,10 @@ class _EnvironmentFacts extends StatelessWidget {
     }
     // Windows 没有 load average 语义，仅在可用时展示。
     if (metrics.loadAvailable && metrics.load1 > 0) {
-      facts.add(
-        _Fact(
-          label: '负载',
-          value: metrics.load1.toStringAsFixed(2),
-        ),
-      );
+      facts.add(_Fact(label: '负载', value: metrics.load1.toStringAsFixed(2)));
     }
 
-    return Wrap(
-      spacing: 24,
-      runSpacing: 12,
-      children: facts,
-    );
+    return Wrap(spacing: 24, runSpacing: 12, children: facts);
   }
 
   /// 把 GOOS/GOARCH 转为用户能看懂的系统名。

@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -55,6 +56,9 @@ class _InlineImageViewerPageState extends State<InlineImageViewerPage> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
+        leading: Navigator.of(context).canPop()
+            ? const AppStatusBackButton()
+            : null,
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         title: Text(
@@ -67,7 +71,7 @@ class _InlineImageViewerPageState extends State<InlineImageViewerPage> {
           IconButton(
             tooltip: '旋转',
             onPressed: _rotate,
-            icon: const Icon(Icons.rotate_right_rounded),
+            icon: const AppStatusIcon(Icons.rotate_right_rounded),
           ),
         ],
       ),
@@ -130,10 +134,7 @@ class _ImageLoadFailed extends StatelessWidget {
         children: [
           Icon(Icons.broken_image_outlined, color: Colors.white54, size: 40),
           SizedBox(height: 10),
-          Text(
-            '图片加载失败',
-            style: TextStyle(fontSize: 12, color: Colors.white70),
-          ),
+          Text('图片加载失败', style: TextStyle(fontSize: 12, color: Colors.white70)),
         ],
       ),
     );
@@ -165,11 +166,7 @@ class _InlineViewerFooter extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           children: [
-            const Icon(
-              Icons.image_outlined,
-              size: 18,
-              color: Colors.white70,
-            ),
+            const Icon(Icons.image_outlined, size: 18, color: Colors.white70),
             const SizedBox(width: 8),
             Expanded(
               child: Text(

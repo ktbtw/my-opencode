@@ -33,7 +33,8 @@ class _MermaidBlockNativeState extends State<_MermaidBlockNative> {
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;');
 
-    final html = '''<!DOCTYPE html>
+    final html =
+        '''<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -146,18 +147,25 @@ window.addEventListener('load',function(){
             color: const Color(0xFFF8FAFD),
             child: Row(
               children: [
-                const Icon(Icons.web_outlined,
-                    size: 13, color: AppColors.textMuted),
+                const Icon(
+                  Icons.web_outlined,
+                  size: 13,
+                  color: AppColors.textMuted,
+                ),
                 const SizedBox(width: 6),
-                const Text('HTML 预览',
-                    style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                const Text(
+                  'HTML 预览',
+                  style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                ),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => setState(() => _showPreview = !_showPreview),
                   child: Text(
                     _showPreview ? '收起' : '展开预览',
                     style: const TextStyle(
-                        fontSize: 11, color: AppColors.primary),
+                      fontSize: 11,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
               ],

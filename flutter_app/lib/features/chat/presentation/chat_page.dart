@@ -631,7 +631,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
       }
     }
     try {
-      await ref.read(deepSeekJailbreakProvider(widget.agentId).notifier).toggle();
+      await ref
+          .read(deepSeekJailbreakProvider(widget.agentId).notifier)
+          .toggle();
       if (!mounted) return;
       showAppFeedback(context, message: enabling ? '破甲模式已开启' : '破甲模式已关闭');
     } catch (error) {
@@ -1573,7 +1575,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
   Widget build(BuildContext context) {
     final chat = ref.watch(chatProvider(_chatKey));
     final selectedModel = ref.watch(selectedModelProvider(widget.agentId));
-    final jailbreakEnabled = ref.watch(deepSeekJailbreakProvider(widget.agentId));
+    final jailbreakEnabled = ref.watch(
+      deepSeekJailbreakProvider(widget.agentId),
+    );
     final availableModels =
         ref.watch(availableModelsProvider(_modelsKey)).valueOrNull ?? const [];
     final isMobile = AppBreakpoints.isMobile(context);
@@ -1594,11 +1598,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
         ModelLog.restoreTriggered('模型列表加载完成', widget.agentId, models.length);
         ref.read(selectedModelProvider(widget.agentId).notifier).init(models);
       } else if (next.hasError) {
-        ModelLog.restoreSkipped(
-          widget.agentId,
-          0,
-          '模型列表加载失败：${next.error}',
-        );
+        ModelLog.restoreSkipped(widget.agentId, 0, '模型列表加载失败：${next.error}');
       }
     });
 
@@ -1834,7 +1834,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                     ModelLog.pickerSelected(
                                       ref
                                           .read(
-                                            selectedModelProvider(widget.agentId),
+                                            selectedModelProvider(
+                                              widget.agentId,
+                                            ),
                                           )
                                           ?.metaKey,
                                       m?.metaKey,
@@ -2047,7 +2049,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
         child: Row(
           children: [
             IconButton(
-              icon: const AppStatusIcon(Icons.arrow_back_ios_new,),
+              icon: const AppStatusIcon(Icons.arrow_back_ios_new),
               onPressed: _leaveChat,
               tooltip: '返回设备详情',
             ),
@@ -2159,7 +2161,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   value: _ChatMoreAction.projectSettings,
                   child: ListTile(
                     dense: true,
-                    leading: AppStatusIcon(Icons.settings_outlined,),
+                    leading: AppStatusIcon(Icons.settings_outlined),
                     title: Text('项目设置'),
                   ),
                 ),
@@ -2167,7 +2169,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   value: _ChatMoreAction.switchAgent,
                   child: ListTile(
                     dense: true,
-                    leading: AppStatusIcon(Icons.swap_horiz_rounded,),
+                    leading: AppStatusIcon(Icons.swap_horiz_rounded),
                     title: Text('切换 Agent'),
                   ),
                 ),
@@ -2176,7 +2178,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   enabled: taskId != null,
                   child: ListTile(
                     dense: true,
-                    leading: const AppStatusIcon(Icons.account_tree_outlined,),
+                    leading: const AppStatusIcon(Icons.account_tree_outlined),
                     title: Text(
                       taskId == null
                           ? '子代理任务（暂无）'
@@ -2190,7 +2192,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   value: _ChatMoreAction.files,
                   child: ListTile(
                     dense: true,
-                    leading: AppStatusIcon(Icons.folder_open_rounded,),
+                    leading: AppStatusIcon(Icons.folder_open_rounded),
                     title: Text('工作目录文件'),
                   ),
                 ),
@@ -2713,7 +2715,8 @@ class _ContinuousReplySegment extends StatelessWidget {
                           if (showPlanCard && planCard != null)
                             Padding(
                               padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
-                              child: planCard!.status == 'completed' &&
+                              child:
+                                  planCard!.status == 'completed' &&
                                       message.state != MessageState.streaming
                                   ? _CompletedPlanSummary(plan: planCard!)
                                   : _PlanCard(plan: planCard!),
@@ -3939,8 +3942,7 @@ class _InlineFilePreview extends StatelessWidget {
   }
 
   /// 首帧封面是视频的展示素材，不单独算一张生成图片。
-  bool _isPoster(AiOutputFile file) =>
-      file.filename.endsWith('.poster.jpg');
+  bool _isPoster(AiOutputFile file) => file.filename.endsWith('.poster.jpg');
 
   List<AiOutputFile> get _videos =>
       files.where((item) => item.isVideo).toList();
@@ -3989,10 +3991,7 @@ class _InlineFilePreview extends StatelessWidget {
             ),
           ),
         if (_pictureCount == 1)
-          _InlineImageCard(
-            file: _pictures.first,
-            gallery: _pictures,
-          )
+          _InlineImageCard(file: _pictures.first, gallery: _pictures)
         else if (_pictureCount > 1)
           GridView.count(
             crossAxisCount: _columns,
@@ -4133,7 +4132,9 @@ class _ImageGenerationProgressCardState
                             ),
                           ),
                           child: Icon(
-                            widget.info.modelName.toLowerCase().contains('video')
+                            widget.info.modelName.toLowerCase().contains(
+                                  'video',
+                                )
                                 ? Icons.movie_creation_outlined
                                 : Icons.image_outlined,
                             color: AppColors.primary,
@@ -4218,10 +4219,7 @@ class _InlineVideoCard extends StatelessWidget {
   /// 未落盘的回退数据（上游中转站的临时地址，需要鉴权且会过期），
   /// 打开必然失败，直接提示重新生成，不再把用户送去上游网页。
   void _open(BuildContext context) {
-    showAppFeedback(
-      context,
-      message: '该视频未保存到设备上，无法在应用内播放；请重新生成一次',
-    );
+    showAppFeedback(context, message: '该视频未保存到设备上，无法在应用内播放；请重新生成一次');
   }
 
   @override
@@ -4352,8 +4350,7 @@ class _InlineImageCard extends StatelessWidget {
   }
 
   /// 优先用父级传入的整轮图片；未提供时退化为只看当前这张。
-  List<AiOutputFile> get _gallery =>
-      gallery.isNotEmpty ? gallery : [file];
+  List<AiOutputFile> get _gallery => gallery.isNotEmpty ? gallery : [file];
 
   int get _galleryIndex {
     if (gallery.isEmpty) return 0;
@@ -4694,9 +4691,7 @@ class _ArtifactImageCardState extends State<_ArtifactImageCard> {
                   onTap: () => _open(bytes),
                   child: Stack(
                     fit: StackFit.expand,
-                    children: [
-                      Image.memory(bytes, fit: BoxFit.cover),
-                    ],
+                    children: [Image.memory(bytes, fit: BoxFit.cover)],
                   ),
                 ),
               ),
@@ -4847,9 +4842,10 @@ class _AttachmentChip extends StatelessWidget {
   const _AttachmentChip({super.key, required this.file});
 
   void _open(BuildContext context) {
-    Navigator.of(context, rootNavigator: true).push(
-      MaterialPageRoute(builder: (_) => AttachmentViewerPage(file: file)),
-    );
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).push(MaterialPageRoute(builder: (_) => AttachmentViewerPage(file: file)));
   }
 
   @override
@@ -4870,10 +4866,7 @@ class _AttachmentChip extends StatelessWidget {
         : _FileChip(file: file);
     return GestureDetector(
       onTap: () => _open(context),
-      child: Tooltip(
-        message: '${file.filename} · 点击查看',
-        child: child,
-      ),
+      child: Tooltip(message: '${file.filename} · 点击查看', child: child),
     );
   }
 }
@@ -5063,6 +5056,7 @@ class _BubbleContent extends ConsumerWidget {
 
   /// 连续回复合并成一段时，统计行与复制按钮只在段末渲染一次。
   final bool showStats;
+
   /// 连续回复合并成一段时，任务卡片（执行计划）只在段内出现一次。
   final bool showPlanCard;
 
@@ -6609,6 +6603,7 @@ class QuestionBanner extends StatefulWidget {
   final QuestionRequestInfo question;
   final void Function(String requestId, List<List<String>> answers) onSubmit;
   final void Function(String requestId) onReject;
+
   /// 每次自增都会把收起状态重新展开，用于切回前台或用户试图发消息时提醒。
   final int expandTick;
 
@@ -6806,11 +6801,7 @@ class _QuestionBannerState extends State<QuestionBanner>
       onTap: () => _setCollapsed(false),
       child: Row(
         children: [
-          const Icon(
-            Icons.quiz_outlined,
-            size: 16,
-            color: AppColors.primary,
-          ),
+          const Icon(Icons.quiz_outlined, size: 16, color: AppColors.primary),
           const SizedBox(width: 6),
           const Text(
             '需要选择',
@@ -6826,10 +6817,7 @@ class _QuestionBannerState extends State<QuestionBanner>
               remaining > 0 ? '$remaining 题待作答' : '已作答，待提交',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppColors.textMuted,
-              ),
+              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
             ),
           ),
           IconButton(
@@ -6855,11 +6843,7 @@ class _QuestionBannerState extends State<QuestionBanner>
       children: [
         Row(
           children: [
-            const Icon(
-              Icons.quiz_outlined,
-              size: 16,
-              color: AppColors.primary,
-            ),
+            const Icon(Icons.quiz_outlined, size: 16, color: AppColors.primary),
             const SizedBox(width: 6),
             const Text(
               '需要选择',
@@ -6928,9 +6912,7 @@ class _QuestionBannerState extends State<QuestionBanner>
                   ? Icons.check_circle_outline_rounded
                   : Icons.radio_button_unchecked_rounded,
               size: 13,
-              color: _canSubmit
-                  ? AppColors.statusSuccess
-                  : AppColors.textMuted,
+              color: _canSubmit ? AppColors.statusSuccess : AppColors.textMuted,
             ),
             const SizedBox(width: 5),
             Expanded(
@@ -7161,7 +7143,9 @@ class _QuestionStepItem extends StatelessWidget {
                     height: 12,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: done ? AppColors.statusSuccess : Colors.transparent,
+                      color: done
+                          ? AppColors.statusSuccess
+                          : Colors.transparent,
                       border: Border.all(
                         color: done ? AppColors.statusSuccess : color,
                         width: 1.5,
@@ -7248,9 +7232,7 @@ class _QuestionOptionTile extends StatelessWidget {
                       borderRadius: multiple ? BorderRadius.circular(4) : null,
                       color: selected ? AppColors.primary : AppColors.surface,
                       border: Border.all(
-                        color: selected
-                            ? AppColors.primary
-                            : AppColors.border,
+                        color: selected ? AppColors.primary : AppColors.border,
                         width: 1.5,
                       ),
                     ),
@@ -8483,7 +8465,6 @@ class _InputAreaState extends ConsumerState<_InputArea> {
 }
 
 class _GoalSettingsButton extends StatelessWidget {
-
   final GoalSettings settings;
   final _GoalProgressSummary progress;
   final VoidCallback onTap;
@@ -9099,9 +9080,7 @@ class _GoalSettingsSheetState extends ConsumerState<_GoalSettingsSheet> {
                   child: FilledButton.icon(
                     onPressed: _busy ? null : _resume,
                     icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                    label: Text(
-                      '继续执行（从第 ${latestGoalEntry.iteration + 1} 轮）',
-                    ),
+                    label: Text('继续执行（从第 ${latestGoalEntry.iteration + 1} 轮）'),
                   ),
                 ),
               ],
@@ -9709,10 +9688,9 @@ class _ImageOptionsBar extends StatelessWidget {
 
   // 每一项的取值完全由模型能力决定；没有上报时退回到通用默认，
   // 而不是按 OpenAI 旧列表硬编码——那样 xAI 会显示一堆它不认识的尺寸。
-  List<String> get _sizes =>
-      (capabilities?.sizes.isNotEmpty == true
-          ? capabilities!.sizes
-          : ImageGenerationOptions.sizes);
+  List<String> get _sizes => (capabilities?.sizes.isNotEmpty == true
+      ? capabilities!.sizes
+      : ImageGenerationOptions.sizes);
   List<String> get _aspectRatios => capabilities?.aspectRatios ?? const [];
   List<String> get _resolutions => capabilities?.resolutions ?? const [];
   List<String> get _qualities => (capabilities?.qualities.isNotEmpty == true
@@ -9721,7 +9699,8 @@ class _ImageOptionsBar extends StatelessWidget {
   List<String> get _formats => (capabilities?.formats.isNotEmpty == true
       ? capabilities!.formats
       : ImageGenerationOptions.formats);
-  int get _maxCount => capabilities?.maxCount ?? ImageGenerationOptions.maxCount;
+  int get _maxCount =>
+      capabilities?.maxCount ?? ImageGenerationOptions.maxCount;
 
   static String _sizeLabel(String value) => _sizeLabels[value] ?? value;
   static String _qualityLabel(String value) => _qualityLabels[value] ?? value;
@@ -10155,10 +10134,7 @@ class _ImageOptionChip extends StatelessWidget {
           children: [
             Text(
               label,
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppColors.textMuted,
-              ),
+              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
             ),
             const SizedBox(width: 5),
             Text(

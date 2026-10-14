@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
@@ -317,19 +318,19 @@ class _DeviceEnvConfigPageState extends ConsumerState<DeviceEnvConfigPage> {
               AppTopBar(
                 title: title,
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 actions: [
                   IconButton(
                     tooltip: '常用指令',
                     onPressed: _showCommandDialog,
-                    icon: const Icon(Icons.library_books_rounded),
+                    icon: const AppStatusIcon(Icons.library_books_rounded),
                   ),
                   IconButton(
                     tooltip: '刷新',
                     onPressed: _saving ? null : _load,
-                    icon: const Icon(Icons.refresh_rounded),
+                    icon: const AppStatusIcon(Icons.refresh_rounded),
                   ),
                 ],
               ),

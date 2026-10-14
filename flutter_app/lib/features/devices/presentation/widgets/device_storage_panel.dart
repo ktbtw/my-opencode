@@ -120,9 +120,7 @@ class _DeviceStoragePanelState extends ConsumerState<DeviceStoragePanel> {
       setState(() => _usage = usageAfter);
       showAppFeedback(
         context,
-        message: result.hasFreed
-            ? '已释放 ${result.freedLabel}'
-            : '没有可释放的空间',
+        message: result.hasFreed ? '已释放 ${result.freedLabel}' : '没有可释放的空间',
       );
     } catch (error) {
       if (!mounted) return;
@@ -246,7 +244,8 @@ class _DeviceStoragePanelState extends ConsumerState<DeviceStoragePanel> {
                   outlined: true,
                   icon: Icons.cleaning_services_rounded,
                   loading: _clearing,
-                  onPressed: (!widget.deviceOnline ||
+                  onPressed:
+                      (!widget.deviceOnline ||
                           _clearing ||
                           usage.clearableBytes <= 0)
                       ? null

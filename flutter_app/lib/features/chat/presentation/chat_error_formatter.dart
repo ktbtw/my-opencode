@@ -93,8 +93,7 @@ bool _isImageMessage(String text) {
 bool _isImageProviderUnsupported(String text) {
   final lower = text.toLowerCase();
   return lower.contains('image generation is not supported') ||
-      (lower.contains('not supported for provider') &&
-          lower.contains('image'));
+      (lower.contains('not supported for provider') && lower.contains('image'));
 }
 
 // 缺 key："OpenAI API key is required for image generation"。

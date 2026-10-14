@@ -63,7 +63,9 @@ class _AttachmentDropTargetState extends State<AttachmentDropTarget> {
       if (bytes.isEmpty) continue;
       final filename = file.name.trim().isNotEmpty
           ? file.name
-          : (path.isNotEmpty ? path.split(RegExp(r'[\\/]')).last : 'dropped.bin');
+          : (path.isNotEmpty
+                ? path.split(RegExp(r'[\\/]')).last
+                : 'dropped.bin');
       result.add((
         filename: filename,
         mimeType: file.mimeType?.trim().isNotEmpty == true

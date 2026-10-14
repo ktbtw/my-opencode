@@ -692,7 +692,7 @@ class _DeviceDetailPageState extends ConsumerState<DeviceDetailPage>
       child: Row(
         children: [
           IconButton(
-              icon: const AppStatusIcon(Icons.arrow_back_ios_new,),
+            icon: const AppStatusIcon(Icons.arrow_back_ios_new),
             onPressed: () => context.go('/devices'),
           ),
           const SizedBox(width: 4),
@@ -856,10 +856,7 @@ class _DeviceInfoPanel extends ConsumerWidget {
             InfoBlock(label: '最近在线', value: _formatDateTime(device.lastSeen!)),
           ],
           const SizedBox(height: 18),
-          _DeviceEntries(
-            device: device,
-            style: _DeviceEntriesStyle.inline,
-          ),
+          _DeviceEntries(device: device, style: _DeviceEntriesStyle.inline),
         ],
       ),
     );
@@ -1389,7 +1386,10 @@ class _DeviceEntries extends ConsumerWidget {
   final DeviceModel device;
   final _DeviceEntriesStyle style;
 
-  const _DeviceEntries({required this.device, this.style = _DeviceEntriesStyle.inline});
+  const _DeviceEntries({
+    required this.device,
+    this.style = _DeviceEntriesStyle.inline,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1549,16 +1549,10 @@ Future<void> _showLauncherDialog(
     builder: (dialogContext) {
       final height = MediaQuery.of(dialogContext).size.height;
       return Dialog(
-        insetPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 24,
-        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         backgroundColor: Colors.transparent,
         child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: 560,
-            maxHeight: height * 0.86,
-          ),
+          constraints: BoxConstraints(maxWidth: 560, maxHeight: height * 0.86),
           child: Container(
             decoration: BoxDecoration(
               color: AppColors.surface,
@@ -1599,9 +1593,8 @@ Future<void> _showProjectMemoryDefaults(
 ) async {
   await showDialog<void>(
     context: context,
-    builder: (_) => _DeviceProjectMemoryDefaultsDialog(
-      machineId: device.machineId,
-    ),
+    builder: (_) =>
+        _DeviceProjectMemoryDefaultsDialog(machineId: device.machineId),
   );
 }
 
@@ -7175,14 +7168,10 @@ class _OverviewFacts extends StatelessWidget {
       ),
       InfoBlock(
         label: 'Agent 数量',
-        value:
-            '${device.runningAgentCount} 启动 / ${device.totalAgentCount} 总计',
+        value: '${device.runningAgentCount} 启动 / ${device.totalAgentCount} 总计',
       ),
       if (device.lastSeen != null)
-        InfoBlock(
-          label: '最近在线',
-          value: _formatDateTime(device.lastSeen!),
-        ),
+        InfoBlock(label: '最近在线', value: _formatDateTime(device.lastSeen!)),
     ];
 
     if (compact) {
@@ -7224,10 +7213,7 @@ class _DeviceEntriesRail extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        _DeviceEntries(
-          device: device,
-          style: _DeviceEntriesStyle.list,
-        ),
+        _DeviceEntries(device: device, style: _DeviceEntriesStyle.list),
       ],
     );
   }

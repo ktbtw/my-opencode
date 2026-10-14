@@ -27,7 +27,6 @@ class DeviceStorageCategory {
       clearable: json['clearable'] == true,
     );
   }
-
 }
 
 /// 一次完整的占用统计。

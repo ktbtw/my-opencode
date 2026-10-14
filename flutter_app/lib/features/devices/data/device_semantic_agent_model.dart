@@ -353,7 +353,8 @@ int runtimePreflightDisplayProgress(
       if (downloaded > stagePercent) stagePercent = downloaded;
     }
   }
-  final estimated = stageStart[index] + (stageSpan[index] * stagePercent) ~/ 100;
+  final estimated =
+      stageStart[index] + (stageSpan[index] * stagePercent) ~/ 100;
   if (estimated > progress) progress = estimated;
   return progress.clamp(0, 100);
 }

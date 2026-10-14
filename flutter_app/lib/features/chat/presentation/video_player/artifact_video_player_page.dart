@@ -43,7 +43,8 @@ class ArtifactVideoPlayerPage extends StatefulWidget {
   });
 
   @override
-  State<ArtifactVideoPlayerPage> createState() => _ArtifactVideoPlayerPageState();
+  State<ArtifactVideoPlayerPage> createState() =>
+      _ArtifactVideoPlayerPageState();
 }
 
 class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
@@ -100,8 +101,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   List<AiArtifact> get _playlist =>
       widget.playlist.isEmpty ? [widget.artifact] : widget.playlist;
 
-  AiArtifact get _current =>
-      _playlist[_index.clamp(0, _playlist.length - 1)];
+  AiArtifact get _current => _playlist[_index.clamp(0, _playlist.length - 1)];
 
   bool get _hasNext => _playlist.length > 1 && _index < _playlist.length - 1;
 
@@ -142,7 +142,8 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
     final saved = await PlayerProgressStore.read(widget.taskId, _current.id);
     if (saved == null || saved <= Duration.zero) return;
     final duration = controller.value.duration;
-    if (duration > Duration.zero && saved >= duration - const Duration(seconds: 3)) {
+    if (duration > Duration.zero &&
+        saved >= duration - const Duration(seconds: 3)) {
       return;
     }
     await controller.seekTo(saved);
@@ -399,7 +400,8 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
       return;
     }
     try {
-      final supported = await _pipChannel.invokeMethod<bool>('isSupported') ?? false;
+      final supported =
+          await _pipChannel.invokeMethod<bool>('isSupported') ?? false;
       if (!supported) {
         showAppFeedback(context, message: '当前设备暂不支持画中画');
         return;
@@ -1376,7 +1378,10 @@ class _GestureHud extends StatelessWidget {
     return Align(
       alignment: forward ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
-        padding: EdgeInsets.only(left: forward ? 0 : 16, right: forward ? 16 : 0),
+        padding: EdgeInsets.only(
+          left: forward ? 0 : 16,
+          right: forward ? 16 : 0,
+        ),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
           decoration: BoxDecoration(

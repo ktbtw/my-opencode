@@ -51,6 +51,7 @@ class DeviceRepository {
   /// 必须大于后端等待设备回执的超时（[app] 里 upload_chunk 为 2 分钟），
   /// 否则客户端会先放弃并重试，而重试又排在设备端同一把锁后面，越试越糟。
   static const Duration _chunkBaseTimeout = Duration(seconds: 130);
+
   /// 单个分块的最大重试次数。
   static const int _chunkMaxAttempts = 4;
 
@@ -1122,16 +1123,12 @@ class DeviceRepository {
   }) async {
     const empty = (received: <int>{}, receivedBytes: 0, resumable: false);
     try {
-      final data = await ApiClient.post(
-        '$basePath/status',
-        {
-          'path': path,
-          'upload_id': uploadId,
-          'size': size,
-          'total_chunks': totalChunks,
-        },
-        timeout: const Duration(seconds: 30),
-      );
+      final data = await ApiClient.post('$basePath/status', {
+        'path': path,
+        'upload_id': uploadId,
+        'size': size,
+        'total_chunks': totalChunks,
+      }, timeout: const Duration(seconds: 30));
       final raw = data['status'];
       final status = raw is Map<String, dynamic>
           ? raw
@@ -1245,7 +1242,10 @@ class DeviceRepository {
       policy = await fetchUploadPolicy();
     }
     final effectiveChunkSize = chunkSize ?? policy!.chunkSize;
-    final effectiveConcurrency = max(1, concurrency ?? policy?.concurrency ?? 1);
+    final effectiveConcurrency = max(
+      1,
+      concurrency ?? policy?.concurrency ?? 1,
+    );
     if (effectiveChunkSize <= 0) {
       throw ArgumentError.value(effectiveChunkSize, 'chunkSize', '必须大于 0');
     }
@@ -1320,27 +1320,22 @@ class DeviceRepository {
           ? '续传：设备已有 ${received.length}/$totalChunks 分块'
           : '准备上传',
     );
-    await ApiClient.post(
-      '$basePath/create',
-      {
-        'path': path,
-        'upload_id': actualUploadId,
-        'size': totalBytes,
-        'total_chunks': totalChunks,
-        // 只要设备侧已有同一会话就声明续传（即使还没收到分块），
-        // 避免 create 被当成重复创建而失败。
-        if (resume && status.resumable) 'resume': true,
-      },
-      timeout: const Duration(seconds: 60),
-    );
+    await ApiClient.post('$basePath/create', {
+      'path': path,
+      'upload_id': actualUploadId,
+      'size': totalBytes,
+      'total_chunks': totalChunks,
+      // 只要设备侧已有同一会话就声明续传（即使还没收到分块），
+      // 避免 create 被当成重复创建而失败。
+      if (resume && status.resumable) 'resume': true,
+    }, timeout: const Duration(seconds: 60));
 
     final chunkUrl = '$basePath/chunk';
     // 单块超时：按块大小估算传输时间，再叠加固定等待，避免误杀慢链路。
     final chunkTimeout =
         _chunkBaseTimeout +
         Duration(
-          milliseconds:
-              (effectiveChunkSize / 1024 / 1024 * 2000).round(),
+          milliseconds: (effectiveChunkSize / 1024 / 1024 * 2000).round(),
         );
 
     Future<void> uploadChunk(int chunkIndex, Uint8List chunk) async {
@@ -1452,10 +1447,13 @@ class DeviceRepository {
     void submit(int index, Uint8List chunk) {
       late final Future<void> task;
       task = uploadChunk(index, chunk)
-          .then<void>((_) {}, onError: (Object error, StackTrace stack) {
-            firstError ??= error;
-            firstStack ??= stack;
-          })
+          .then<void>(
+            (_) {},
+            onError: (Object error, StackTrace stack) {
+              firstError ??= error;
+              firstStack ??= stack;
+            },
+          )
           .whenComplete(() => inFlight.remove(task));
       inFlight.add(task);
     }
@@ -1507,17 +1505,13 @@ class DeviceRepository {
       completedChunks: completedChunks,
       stage: '等待设备合并',
     );
-    final data = await ApiClient.post(
-      '$basePath/complete',
-      {
-        'path': path,
-        'upload_id': actualUploadId,
-        'size': totalBytes,
-        'total_chunks': totalChunks,
-        'sha256': fileHash,
-      },
-      timeout: const Duration(minutes: 3),
-    );
+    final data = await ApiClient.post('$basePath/complete', {
+      'path': path,
+      'upload_id': actualUploadId,
+      'size': totalBytes,
+      'total_chunks': totalChunks,
+      'sha256': fileHash,
+    }, timeout: const Duration(minutes: 3));
     progress(
       uploadedBytes: totalBytes,
       completedChunks: totalChunks,

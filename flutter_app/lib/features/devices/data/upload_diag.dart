@@ -73,8 +73,7 @@ class UploadDiag {
       'sent_chunks': chunkDurationsMs.length,
       if (chunkDurationsMs.isNotEmpty)
         'chunk_ms_avg':
-            chunkDurationsMs.reduce((a, b) => a + b) ~/
-            chunkDurationsMs.length,
+            chunkDurationsMs.reduce((a, b) => a + b) ~/ chunkDurationsMs.length,
       if (chunkDurationsMs.isNotEmpty)
         'chunk_ms_max': chunkDurationsMs.reduce((a, b) => a > b ? a : b),
       if (error != null) 'error': error,

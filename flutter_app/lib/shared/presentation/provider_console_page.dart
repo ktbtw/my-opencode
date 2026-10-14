@@ -1,3 +1,4 @@
+import '../widgets/app_status_icon.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -165,16 +166,19 @@ class _ProviderConsolePageState extends State<ProviderConsolePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: Navigator.of(context).canPop()
+            ? const AppStatusBackButton()
+            : null,
         title: const Text('供应商控制台'),
         actions: [
           IconButton(
             tooltip: '刷新',
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const AppStatusIcon(Icons.refresh_outlined),
             onPressed: _reload,
           ),
           IconButton(
             tooltip: '外部打开',
-            icon: const Icon(Icons.open_in_new_rounded),
+            icon: const AppStatusIcon(Icons.open_in_new_rounded),
             onPressed: _openExternal,
           ),
         ],

@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/config/api_client.dart';
@@ -59,7 +60,7 @@ class _AppReleaseHistoryPageState extends State<AppReleaseHistoryPage> {
                 title: '更新历史',
                 leading: IconButton(
                   tooltip: '返回',
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 15),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () {
                     if (context.canPop()) {
                       context.pop();
@@ -71,7 +72,7 @@ class _AppReleaseHistoryPageState extends State<AppReleaseHistoryPage> {
                 actions: [
                   IconButton(
                     tooltip: '刷新更新历史',
-                    icon: const Icon(Icons.refresh_rounded, size: 19),
+                    icon: const AppStatusIcon(Icons.refresh_rounded),
                     onPressed: _refresh,
                   ),
                 ],

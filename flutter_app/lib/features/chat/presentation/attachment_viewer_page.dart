@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -141,6 +142,9 @@ class _AttachmentViewerPageState extends State<AttachmentViewerPage> {
     return Scaffold(
       backgroundColor: isImage ? Colors.black : AppColors.background,
       appBar: AppBar(
+        leading: Navigator.of(context).canPop()
+            ? const AppStatusBackButton()
+            : null,
         backgroundColor: isImage ? Colors.black : AppColors.surface,
         foregroundColor: isImage ? Colors.white : AppColors.textPrimary,
         title: Text(
@@ -162,7 +166,7 @@ class _AttachmentViewerPageState extends State<AttachmentViewerPage> {
           tooltip: '旋转',
           onPressed: () =>
               setState(() => _quarterTurns = (_quarterTurns + 1) % 4),
-          icon: const Icon(Icons.rotate_right_rounded),
+          icon: const AppStatusIcon(Icons.rotate_right_rounded),
         ),
         IconButton(
           tooltip: '保存到本地',
@@ -176,7 +180,7 @@ class _AttachmentViewerPageState extends State<AttachmentViewerPage> {
                     color: Colors.white,
                   ),
                 )
-              : const Icon(Icons.download_rounded),
+              : const AppStatusIcon(Icons.download_rounded),
         ),
       ];
     }
@@ -185,13 +189,15 @@ class _AttachmentViewerPageState extends State<AttachmentViewerPage> {
         IconButton(
           tooltip: '复制全部',
           onPressed: _copyAll,
-          icon: const Icon(Icons.copy_all_rounded),
+          icon: const AppStatusIcon(Icons.copy_all_rounded),
         ),
       if (_textual)
         IconButton(
           tooltip: _editing ? '完成编辑' : '编辑',
           onPressed: () => setState(() => _editing = !_editing),
-          icon: Icon(_editing ? Icons.check_rounded : Icons.edit_outlined),
+          icon: AppStatusIcon(
+            _editing ? Icons.check_rounded : Icons.edit_outlined,
+          ),
         ),
       IconButton(
         tooltip: '保存到本地',
@@ -202,7 +208,7 @@ class _AttachmentViewerPageState extends State<AttachmentViewerPage> {
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : const Icon(Icons.download_rounded),
+            : const AppStatusIcon(Icons.download_rounded),
       ),
     ];
   }

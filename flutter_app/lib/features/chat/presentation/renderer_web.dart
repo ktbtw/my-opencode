@@ -11,7 +11,8 @@ void openUrl(String url) {
 
 Widget buildMermaid(String code) => _MermaidBlockWeb(code: code);
 
-Widget buildHtmlPreview(String htmlContent) => _HtmlPreviewBlockWeb(htmlContent: htmlContent);
+Widget buildHtmlPreview(String htmlContent) =>
+    _HtmlPreviewBlockWeb(htmlContent: htmlContent);
 
 // ─── Mermaid Web 实现 ─────────────────────────────────────────
 class _MermaidBlockWeb extends StatefulWidget {
@@ -29,7 +30,8 @@ class _MermaidBlockWebState extends State<_MermaidBlockWeb> {
   @override
   void initState() {
     super.initState();
-    _viewId = 'mermaid-${DateTime.now().millisecondsSinceEpoch}-${widget.code.hashCode.abs()}';
+    _viewId =
+        'mermaid-${DateTime.now().millisecondsSinceEpoch}-${widget.code.hashCode.abs()}';
     _registerView();
   }
 
@@ -38,7 +40,8 @@ class _MermaidBlockWebState extends State<_MermaidBlockWeb> {
         .replaceAll('&', '&amp;')
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;');
-    final htmlContent = '''<!DOCTYPE html>
+    final htmlContent =
+        '''<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>body{margin:0;padding:8px;background:#f8fafd;display:flex;justify-content:center;}
 .mermaid{max-width:100%;}</style>
@@ -106,7 +109,8 @@ class _HtmlPreviewBlockWebState extends State<_HtmlPreviewBlockWeb> {
   @override
   void initState() {
     super.initState();
-    _viewId = 'html-preview-${DateTime.now().millisecondsSinceEpoch}-${widget.htmlContent.hashCode.abs()}';
+    _viewId =
+        'html-preview-${DateTime.now().millisecondsSinceEpoch}-${widget.htmlContent.hashCode.abs()}';
     _registerView();
   }
 
@@ -140,15 +144,25 @@ class _HtmlPreviewBlockWebState extends State<_HtmlPreviewBlockWeb> {
             color: const Color(0xFFF8FAFD),
             child: Row(
               children: [
-                const Icon(Icons.web_outlined, size: 13, color: AppColors.textMuted),
+                const Icon(
+                  Icons.web_outlined,
+                  size: 13,
+                  color: AppColors.textMuted,
+                ),
                 const SizedBox(width: 6),
-                const Text('HTML 预览', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                const Text(
+                  'HTML 预览',
+                  style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                ),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => setState(() => _showPreview = !_showPreview),
                   child: Text(
                     _showPreview ? '收起' : '展开预览',
-                    style: const TextStyle(fontSize: 11, color: AppColors.primary),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
               ],
@@ -156,10 +170,7 @@ class _HtmlPreviewBlockWebState extends State<_HtmlPreviewBlockWeb> {
           ),
           const Divider(height: 1, color: AppColors.border),
           if (_showPreview)
-            SizedBox(
-              height: 400,
-              child: HtmlElementView(viewType: _viewId),
-            ),
+            SizedBox(height: 400, child: HtmlElementView(viewType: _viewId)),
         ],
       ),
     );

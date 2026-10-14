@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -169,7 +170,7 @@ class _DeviceMCPStorePageState extends State<DeviceMCPStorePage> {
               AppTopBar(
                 title: 'MCP商店',
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 actions: [
@@ -767,7 +768,7 @@ class _StoreItemDetailPageState extends State<_StoreItemDetailPage> {
               AppTopBar(
                 title: widget.item.title,
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 actions: [

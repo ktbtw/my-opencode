@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -745,6 +746,9 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: Navigator.of(context).canPop()
+            ? const AppStatusBackButton()
+            : null,
         title: Text(widget.projectId.isEmpty ? '工作目录' : widget.projectId),
         actions: [
           const AppNotificationCenterButton(),
@@ -757,7 +761,7 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.upload_file_rounded),
+                : const AppStatusIcon(Icons.upload_file_outlined),
           ),
           IconButton(
             tooltip: _creating ? '创建中' : '新建',
@@ -768,12 +772,12 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.add_rounded),
+                : const AppStatusIcon(Icons.add_outlined),
           ),
           IconButton(
             tooltip: '刷新',
             onPressed: _loading || _busy ? null : () => _loadPath(_currentPath),
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const AppStatusIcon(Icons.refresh_outlined),
           ),
           const SizedBox(width: 8),
         ],

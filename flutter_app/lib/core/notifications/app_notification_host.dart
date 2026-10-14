@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../services/app_navigation.dart';
 import '../services/app_foreground.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_theme.dart';
 import 'app_notification_controller.dart';
 import 'app_notification_model.dart';
 
@@ -153,7 +154,7 @@ class AppNotificationCenterButton extends ConsumerWidget {
         label: Text(state.unreadCount > 99 ? '99+' : '${state.unreadCount}'),
         child: Icon(
           Icons.notifications_none_rounded,
-          size: 19,
+          size: AppIconMetrics.statusBar,
           color: color ?? AppColors.textSecondary,
         ),
       ),

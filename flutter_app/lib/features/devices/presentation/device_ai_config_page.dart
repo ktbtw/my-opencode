@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -723,7 +724,7 @@ class _DeviceAIConfigPageState extends ConsumerState<DeviceAIConfigPage> {
               AppTopBar(
                 title: 'AI配置',
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 actions: [
@@ -732,21 +733,21 @@ class _DeviceAIConfigPageState extends ConsumerState<DeviceAIConfigPage> {
                     onPressed: _loading || _saving || _textSaving
                         ? null
                         : _openSyncFlow,
-                    icon: const Icon(Icons.sync_alt_rounded),
+                    icon: const AppStatusIcon(Icons.sync_alt_rounded),
                   ),
                   IconButton(
                     tooltip: '编辑全局配置',
                     onPressed: _loading || _saving || _textSaving
                         ? null
                         : _openRawEditor,
-                    icon: const Icon(Icons.edit_note_rounded),
+                    icon: const AppStatusIcon(Icons.edit_note_rounded),
                   ),
                   IconButton(
                     tooltip: '新增供应商',
                     onPressed: _loading || _saving || _textSaving
                         ? null
                         : () => _openProviderEditor(),
-                    icon: const Icon(Icons.add_rounded),
+                    icon: const AppStatusIcon(Icons.add_rounded),
                   ),
                 ],
               ),

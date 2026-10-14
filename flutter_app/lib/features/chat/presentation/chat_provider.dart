@@ -85,12 +85,7 @@ class SelectedModelNotifier extends StateNotifier<ModelInfo?> {
       final match = models.where((model) => model.metaKey == saved).firstOrNull;
       if (match != null) {
         state = match;
-        ModelLog.restoreMatched(
-          agentId,
-          saved,
-          match.metaKey,
-          via: '完整键匹配',
-        );
+        ModelLog.restoreMatched(agentId, saved, match.metaKey, via: '完整键匹配');
         return;
       }
 
@@ -1384,7 +1379,8 @@ class ChatNotifier extends StateNotifier<ChatState> {
       final userText = task.userText;
       final attachedFiles = task.attachedFiles;
       // 只发附件、不写字的消息也要保留：靠附件才能还原这一轮的用户输入。
-      if ((userText != null && userText.isNotEmpty) || attachedFiles.isNotEmpty) {
+      if ((userText != null && userText.isNotEmpty) ||
+          attachedFiles.isNotEmpty) {
         msgs.add(
           ChatMessage(
             id: 'user_${task.taskId}',
@@ -1869,8 +1865,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final latestGoal = _latestGoalProgressEntry();
     // 继续目标（forceGoal）要越过 terminal 检查：上次目标停在 paused
     // 正是继续的前提，不能被「目标已终止就不自动带 goal」挡掉。
-    final allowConfiguredGoal =
-        forceGoal || latestGoal?.isTerminal != true;
+    final allowConfiguredGoal = forceGoal || latestGoal?.isTerminal != true;
     final goal =
         commandGoal ??
         (allowConfiguredGoal &&

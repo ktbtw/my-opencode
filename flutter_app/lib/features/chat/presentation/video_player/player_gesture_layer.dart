@@ -18,7 +18,8 @@ class PlayerGestureLayer extends StatefulWidget {
   final ValueChanged<int> onDoubleTapSeek;
 
   /// 竖向拖动：进度比例 0–1 与「左亮度 / 右音量」标识。
-  final void Function({required bool brightness, required double delta}) onVerticalDrag;
+  final void Function({required bool brightness, required double delta})
+  onVerticalDrag;
 
   /// 竖向拖动开始：通知是亮度（左半屏）还是音量（右半屏）。
   final ValueChanged<bool>? onVerticalDragStart;
@@ -111,10 +112,7 @@ class _PlayerGestureLayerState extends State<PlayerGestureLayer> {
               _dragging = false;
               widget.onHorizontalSeekEnd?.call();
             },
-      child: AbsorbPointer(
-        absorbing: _dragging,
-        child: widget.child,
-      ),
+      child: AbsorbPointer(absorbing: _dragging, child: widget.child),
     );
   }
 }

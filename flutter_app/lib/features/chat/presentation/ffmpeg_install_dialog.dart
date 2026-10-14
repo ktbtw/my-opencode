@@ -26,7 +26,9 @@ Future<void> ensureFfmpegForVideo({
   required String machineId,
 }) async {
   final id = machineId.trim();
-  if (id.isEmpty || _readyDevices.contains(id) || _dismissedDevices.contains(id)) {
+  if (id.isEmpty ||
+      _readyDevices.contains(id) ||
+      _dismissedDevices.contains(id)) {
     return;
   }
   final repo = ref.read(deviceRepositoryProvider);

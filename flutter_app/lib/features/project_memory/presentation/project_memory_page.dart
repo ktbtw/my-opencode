@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -580,7 +581,7 @@ class _ProjectMemoryPageState extends ConsumerState<ProjectMemoryPage> {
                 leading: IconButton(
                   tooltip: '返回',
                   onPressed: () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back),
+                  icon: const AppStatusIcon(Icons.arrow_back),
                 ),
                 actions: [
                   PopupMenuButton<String>(
@@ -601,7 +602,7 @@ class _ProjectMemoryPageState extends ConsumerState<ProjectMemoryPage> {
                         enabled: machineOnline && scope != null,
                         child: const ListTile(
                           contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.folder_copy_outlined),
+                          leading: AppStatusIcon(Icons.folder_copy_outlined),
                           title: Text('项目身份'),
                         ),
                       ),
@@ -610,12 +611,12 @@ class _ProjectMemoryPageState extends ConsumerState<ProjectMemoryPage> {
                         enabled: memorySettings.valueOrNull != null,
                         child: const ListTile(
                           contentPadding: EdgeInsets.zero,
-                          leading: Icon(Icons.tune_outlined),
+                          leading: AppStatusIcon(Icons.tune_outlined),
                           title: Text('项目记忆设置'),
                         ),
                       ),
                     ],
-                    icon: const Icon(Icons.more_vert),
+                    icon: const AppStatusIcon(Icons.more_vert),
                   ),
                 ],
               ),

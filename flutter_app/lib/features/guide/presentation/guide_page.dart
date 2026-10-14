@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -195,7 +196,7 @@ class _GuidePageState extends State<GuidePage> {
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, size: 15),
+            icon: const AppStatusIcon(Icons.arrow_back_ios_new),
             onPressed: () => context.go('/devices'),
           ),
           const SizedBox(width: 8),
@@ -209,9 +210,8 @@ class _GuidePageState extends State<GuidePage> {
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(
+            icon: const AppStatusIcon(
               Icons.refresh,
-              size: 18,
               color: AppColors.textSecondary,
             ),
             tooltip: '刷新',

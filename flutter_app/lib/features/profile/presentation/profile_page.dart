@@ -576,10 +576,7 @@ class _MembershipBadge extends StatelessWidget {
   final String tier;
   final String label;
 
-  const _MembershipBadge({
-    required this.tier,
-    required this.label,
-  });
+  const _MembershipBadge({required this.tier, required this.label});
 
   bool get _isMember => tier == 'plus' || tier == 'pro';
 

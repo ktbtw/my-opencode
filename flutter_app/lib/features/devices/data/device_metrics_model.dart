@@ -107,9 +107,7 @@ class DeviceMetrics {
   /// 占用率最高的分区，用于卡片主展示。
   DiskMetric? get primaryDisk {
     if (disks.isEmpty) return null;
-    return disks.reduce(
-      (a, b) => a.usedPercent >= b.usedPercent ? a : b,
-    );
+    return disks.reduce((a, b) => a.usedPercent >= b.usedPercent ? a : b);
   }
 
   /// 数据新鲜度：距采集时间的秒数。优先用服务端接收时间，

@@ -43,7 +43,10 @@ class UploadPolicy {
     final tier = (json['tier'] as String?)?.trim().toLowerCase() ?? 'free';
     final isMember =
         json['is_member'] as bool? ?? (tier == 'plus' || tier == 'pro');
-    final chunkSize = _positiveInt(json['chunk_size'], UploadPolicy.free.chunkSize);
+    final chunkSize = _positiveInt(
+      json['chunk_size'],
+      UploadPolicy.free.chunkSize,
+    );
     return UploadPolicy(
       tier: tier,
       isMember: isMember,

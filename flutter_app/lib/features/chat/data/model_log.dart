@@ -46,16 +46,12 @@ class ModelLog {
       step('恢复', '后端未保存模型，使用默认模型（agent=$agentId）');
 
   /// 保存值在可用列表中找不到对应模型。
-  static void restoreNotFound(String agentId, String saved, int modelCount) => step(
-    '恢复',
-    '保存值 "$saved" 在可用列表中无匹配，保持未选中（候选$modelCount个，agent=$agentId）',
-  );
+  static void restoreNotFound(String agentId, String saved, int modelCount) =>
+      step('恢复', '保存值 "$saved" 在可用列表中无匹配，保持未选中（候选$modelCount个，agent=$agentId）');
 
   /// 本次恢复结果被更新的操作取代，丢弃。
-  static void restoreStale(String agentId, String saved) => step(
-    '恢复',
-    '结果已过期：期间发生了新的选择或恢复，丢弃本次结果（保存值="$saved"，agent=$agentId）',
-  );
+  static void restoreStale(String agentId, String saved) =>
+      step('恢复', '结果已过期：期间发生了新的选择或恢复，丢弃本次结果（保存值="$saved"，agent=$agentId）');
 
   /// 跳过恢复。
   static void restoreSkipped(String agentId, int modelCount, String reason) =>
@@ -90,29 +86,25 @@ class ModelLog {
   }) => step(
     '列表',
     '解析结果：供应商$providers个（已连接$connectedProviders个），'
-    '因未连接跳过$skippedProvider个，因已废弃跳过$skippedDeprecated个，'
-    '最终模型$models个',
+        '因未连接跳过$skippedProvider个，因已废弃跳过$skippedDeprecated个，'
+        '最终模型$models个',
   );
 
   /// 打开模型选择面板。
-  static void pickerOpened(int modelCount, String? selected) => step(
-    '列表',
-    '打开选择面板：可选$modelCount个，当前选中=${selected ?? '默认模型'}',
-  );
+  static void pickerOpened(int modelCount, String? selected) =>
+      step('列表', '打开选择面板：可选$modelCount个，当前选中=${selected ?? '默认模型'}');
 
   /// 面板展示统计（搜索后）。
   static void pickerShown(String search, int total, int filtered, int groups) =>
       step(
         '列表',
         '面板展示：搜索词="${search.isEmpty ? '（无）' : search}"，'
-        '匹配$filtered/$total个，供应商$groups组',
+            '匹配$filtered/$total个，供应商$groups组',
       );
 
   /// 用户在面板中选中模型。
-  static void pickerSelected(String? from, String? to) => step(
-    '列表',
-    '用户选中：${from ?? '默认模型'} → ${to ?? '默认模型（重置）'}',
-  );
+  static void pickerSelected(String? from, String? to) =>
+      step('列表', '用户选中：${from ?? '默认模型'} → ${to ?? '默认模型（重置）'}');
 
   /// 选中结果已写入后端。
   static void selectSaved(
@@ -123,7 +115,7 @@ class ModelLog {
   ) => step(
     '列表',
     '选择已保存到后端：${previous ?? '默认模型'} → ${next ?? '默认模型'}，'
-    '耗时$elapsedMs毫秒（agent=$agentId）',
+        '耗时$elapsedMs毫秒（agent=$agentId）',
   );
 
   /// 选中结果写入后端失败。

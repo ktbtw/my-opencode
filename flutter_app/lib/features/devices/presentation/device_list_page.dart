@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -131,11 +132,7 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
         children: [
-          const Icon(
-            Icons.terminal_rounded,
-            color: AppColors.primary,
-            size: 20,
-          ),
+          const AppStatusIcon(Icons.terminal_rounded, color: AppColors.primary),
           const SizedBox(width: 10),
           Text(
             'Chat Codex',
@@ -148,9 +145,8 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
           if (compact)
             PopupMenuButton<_DeviceTopBarAction>(
               tooltip: '更多操作',
-              icon: const Icon(
-                Icons.more_vert_rounded,
-                size: 20,
+              icon: const AppStatusIcon(
+                Icons.more_vert_outlined,
                 color: AppColors.textSecondary,
               ),
               onSelected: (action) {
@@ -174,7 +170,7 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
                   value: _DeviceTopBarAction.profile,
                   child: ListTile(
                     dense: true,
-                    leading: const Icon(Icons.person_outline, size: 18),
+                    leading: const AppStatusIcon(Icons.person_outline),
                     title: Text(displayName),
                   ),
                 ),
@@ -182,7 +178,7 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
                   value: _DeviceTopBarAction.settings,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(Icons.settings_outlined, size: 18),
+                    leading: AppStatusIcon(Icons.settings_outlined),
                     title: Text('设置'),
                   ),
                 ),
@@ -190,10 +186,7 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
                   value: _DeviceTopBarAction.downloads,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(
-                      Icons.download_for_offline_outlined,
-                      size: 18,
-                    ),
+                    leading: AppStatusIcon(Icons.download_for_offline_outlined),
                     title: Text(hasNoDevices ? 'Launcher（开始接入设备）' : 'Launcher'),
                   ),
                 ),
@@ -201,7 +194,7 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
                   value: _DeviceTopBarAction.refresh,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(Icons.refresh_rounded, size: 18),
+                    leading: AppStatusIcon(Icons.refresh_rounded),
                     title: Text('刷新'),
                   ),
                 ),
@@ -209,27 +202,24 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
             )
           else ...[
             IconButton(
-              icon: const Icon(
+              icon: const AppStatusIcon(
                 Icons.person_outline,
-                size: 18,
                 color: AppColors.textSecondary,
               ),
               tooltip: '个人信息 - $displayName',
               onPressed: () => _showProfileSheet(context),
             ),
             IconButton(
-              icon: const Icon(
+              icon: const AppStatusIcon(
                 Icons.settings_outlined,
-                size: 18,
                 color: AppColors.textSecondary,
               ),
               tooltip: '设置',
               onPressed: () => context.push('/settings'),
             ),
             IconButton(
-              icon: const Icon(
+              icon: const AppStatusIcon(
                 Icons.download_for_offline_outlined,
-                size: 18,
                 color: AppColors.textSecondary,
               ),
               tooltip: 'Launcher',
@@ -237,9 +227,8 @@ class _DeviceListPageState extends ConsumerState<DeviceListPage>
                   _openLauncherEntry(context, hasNoDevices: hasNoDevices),
             ),
             IconButton(
-              icon: const Icon(
-                Icons.refresh,
-                size: 18,
+              icon: const AppStatusIcon(
+                Icons.refresh_outlined,
                 color: AppColors.textSecondary,
               ),
               tooltip: '刷新',

@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/config/api_client.dart';
@@ -245,7 +246,7 @@ class _DeviceSkillStorePageState extends State<DeviceSkillStorePage> {
               AppTopBar(
                 title: 'Skill商店',
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+                  icon: const AppStatusIcon(Icons.arrow_back_ios_new),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ),
