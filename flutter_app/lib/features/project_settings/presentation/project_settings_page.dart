@@ -94,7 +94,11 @@ class _ProjectSettingsPageState extends ConsumerState<ProjectSettingsPage> {
         : '沿用全局：${global.downloadDirectory?.trim().isNotEmpty == true ? global.downloadDirectory!.trim() : '系统默认下载目录'}';
 
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(
+        backgroundColor: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
         leading: Navigator.of(context).canPop()
             ? const AppStatusBackButton()
             : null,
@@ -107,73 +111,78 @@ class _ProjectSettingsPageState extends ConsumerState<ProjectSettingsPage> {
           child: Container(height: 1, color: AppColors.border),
         ),
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(
-          vertical: AppSpacing.md,
-          horizontal: AppSpacing.md,
-        ),
-        children: [
-          _ProjectHeaderCard(
-            name: widget.projectName,
-            project: widget.project,
+      // 内容区用统一的页面渐变底（与设备配置页、项目记忆页一致），
+      // 白卡片靠底色深浅与描边浮起来，而不是白压白。
+      body: PageBackground(
+        child: ListView(
+          padding: const EdgeInsets.symmetric(
+            vertical: AppSpacing.md,
+            horizontal: AppSpacing.md,
           ),
-          const SizedBox(height: AppSpacing.lg),
-          const _SectionHeader(title: '对话显示'),
-          _ProjectSwitchTile(
-            icon: Icons.speed_outlined,
-            title: '显示连接状态',
-            subtitle: '在对话顶部显示连接延迟、接收速率和同步进度',
-            value: settings.showConnectionStatus,
-            enabled: enabled,
-            onChanged: (value) => _save(
-              (notifier) => notifier.update(showConnectionStatus: value),
+          children: [
+            _ProjectHeaderCard(
+              name: widget.projectName,
+              project: widget.project,
             ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          const _SectionHeader(title: '文件与下载'),
-          _ProjectActionTile(
-            icon: Icons.download_outlined,
-            title: '交付文件下载目录',
-            subtitle: directoryValue,
-            // 已覆盖时值就是自定义目录，此时动作是"更改"。
-            actionLabel: !_directorySupported
-                ? null
-                : hasCustomDirectory
-                ? '更改'
-                : '选择',
-            enabled: enabled && _directorySupported,
-            onTap: () => _save(_pickDirectory),
-          ),
-          if (hasCustomDirectory) ...[
-            const SizedBox(height: AppSpacing.sm),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: enabled
-                    ? () => _save(
-                        (notifier) => notifier.update(resetDirectory: true),
-                      )
-                    : null,
-                icon: const Icon(Icons.settings_backup_restore_rounded, size: 16),
-                label: const Text('恢复为全局下载目录'),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.textSecondary,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  minimumSize: const Size(44, 40),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
+            const SizedBox(height: AppSpacing.lg),
+            const _SectionHeader(title: '对话显示'),
+            _ProjectSwitchTile(
+              icon: Icons.speed_outlined,
+              title: '显示连接状态',
+              subtitle: '在对话顶部显示连接延迟、接收速率和同步进度',
+              value: settings.showConnectionStatus,
+              enabled: enabled,
+              onChanged: (value) => _save(
+                (notifier) => notifier.update(showConnectionStatus: value),
               ),
             ),
-          ],
-          const SizedBox(height: AppSpacing.sm),
-          const _HintNote(
-            text: '项目目录优先于全局目录。新的下载会使用此位置，已有文件保留原位。',
-          ),
-          if (_saving) ...[
             const SizedBox(height: AppSpacing.md),
-            const _SavingIndicator(),
+            const _SectionHeader(title: '文件与下载'),
+            _ProjectActionTile(
+              icon: Icons.download_outlined,
+              title: '交付文件下载目录',
+              subtitle: directoryValue,
+              // 已覆盖时值就是自定义目录，此时动作是"更改"。
+              actionLabel: !_directorySupported
+                  ? null
+                  : hasCustomDirectory
+                  ? '更改'
+                  : '选择',
+              enabled: enabled && _directorySupported,
+              onTap: () => _save(_pickDirectory),
+            ),
+            if (hasCustomDirectory) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: enabled
+                      ? () => _save(
+                          (notifier) => notifier.update(resetDirectory: true),
+                        )
+                      : null,
+                  icon: const Icon(
+                    Icons.settings_backup_restore_rounded,
+                    size: 16,
+                  ),
+                  label: const Text('恢复为全局下载目录'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.textSecondary,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: const Size(44, 40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.sm),
+            const _HintNote(text: '项目目录优先于全局目录。新的下载会使用此位置，已有文件保留原位。'),
+            if (_saving) ...[
+              const SizedBox(height: AppSpacing.md),
+              const _SavingIndicator(),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
