@@ -355,3 +355,24 @@
 | 第一批 | 注册表基础设施 + `chat.base_prompt` / `chat.question_policy` / `chat.orchestration_prompt` 端到端 | 控制台改 → 设备拉取 → 问「你是谁」只答人设 |
 | 第二批 | `mode.*` + `chat.environment` / `chat.skills_header` | plan 模式与技能块文案可控 |
 | 第三批 | `job.*` + `message.*`（含风控校验） | 标题/摘要/记忆等行为可控且解析不破 |
+
+---
+
+## 十、实施进度（滚动更新）
+
+### 第一批：B1/B2/B3 端到端
+
+| 项 | 状态 | 证据 |
+|----|------|------|
+| 运行时槽位覆盖（`prompt_slots`） | ✅ 已发布 1.15.123 | 单测 6/6、typecheck 通过；线上 `opencode-darwin-arm64.zip` 拆包命中 `prompt_slots` 与三个槽位 ID |
+| 后端注册表/存储/解析/接口/推送 | ✅ 已发布 | 单测通过；线上 `prompt_templates` 表、`semantic_agents.prompt_templates_json` 列、两条 admin 路由（401）均核实 |
+| launcher 落盘 + 配置声明 | ✅ 已发布 0.1.193 | 单测 5 项通过（落盘/清空/manifest/空 agent_id/无 manifest） |
+| 控制台：平台默认编辑页 | ✅ 已上线 | `/codex-admin/prompts.html` 200；服务器文件核实 |
+| 控制台：语义 Agent 覆盖编辑 | ✅ 已上线 | `prompts.js` 打包通过；服务器文件命中 `overrideList/loadAgents/prompt_templates` |
+| 控制台：设备 Agent 覆盖编辑 | ⏳ 未做 | 后端已支持 `device_settings.prompt_template.<slot>` |
+| **设备端升级 + 端到端验证** | ⏳ 待办 | 设备仍为 launcher 0.1.192 / opencode 1.15.122；升级需在 App 点「更新」或手动替换并重启 Agent |
+
+### 待办与依赖
+
+- 端到端验证是第二批的进入门槛（用户要求每批验证后再进入下一批）。
+- 设备升级两种方式：**(a)** 用户在 App 内点「更新」；**(b)** 命令行替换 `~/.my-opencode-launcher/bin/` 与 `versions/` 并重启 Agent（会打断当前会话，需用户确认）。
