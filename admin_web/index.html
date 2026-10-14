@@ -62,6 +62,7 @@
           <a href="#runtime-catalog" data-view="runtime"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#cpu"></use></svg><span>运行时环境</span><span class="nav-count" data-count="runtime"></span></a>
           <a href="#environment-presets" data-view="environment"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#sliders-horizontal"></use></svg><span>环境变量预设</span><span class="nav-count" data-count="environment"></span></a>
           <a href="#model-prompt-presets" data-view="modelPrompts"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#faders"></use></svg><span>模型提示词预设</span><span class="nav-count" data-count="modelPrompts"></span></a>
+          <a href="#prompt-registry" data-view="prompts"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#command"></use></svg><span>提示词管理</span><span class="nav-count" data-count="prompts"></span></a>
           <p class="nav-group-label">运营管理</p>
           <a href="#operators" data-view="operators"><svg class="icon" aria-hidden="true"><use href="./assets/icons.svg#users"></use></svg><span>会员管理</span><span class="nav-count" data-count="operators"></span></a>
         </nav>
@@ -604,6 +605,64 @@
               <span>描述</span>
               <textarea id="toolFieldDescription" rows="3"></textarea>
             </label>
+          </section>
+          <section class="form-section prompt-editor-section hidden">
+            <div class="section-title">
+              <h3 id="promptSlotTitle">提示词槽位</h3>
+              <span id="promptSlotMeta">主对话</span>
+            </div>
+            <p id="promptSlotDescription" class="muted">控制台配置优先于运行时内置默认；冲突时以控制台配置为准。</p>
+            <div class="view-switch" id="promptLevelTabs" role="group" aria-label="覆盖层级">
+              <button type="button" data-prompt-level="platform" aria-pressed="true">平台默认</button>
+              <button type="button" data-prompt-level="semantic" aria-pressed="false">语义 Agent</button>
+              <button type="button" data-prompt-level="device" aria-pressed="false">设备 Agent</button>
+            </div>
+
+            <div id="promptPlatformBlock">
+              <p class="muted">平台默认对所有设备生效；留空表示回落到运行时内置默认。</p>
+              <label>
+                <span>平台默认值</span>
+                <textarea id="promptPlatformValue" rows="12" spellcheck="false" placeholder="留空表示使用运行时内置默认"></textarea>
+              </label>
+              <p id="promptPlatformHint" class="muted"></p>
+              <div class="prompt-level-actions">
+                <button id="promptViewDefaultButton" class="text-button" type="button">查看内置默认</button>
+                <button id="promptResetButton" class="secondary-button" type="button">恢复内置默认</button>
+              </div>
+            </div>
+
+            <div id="promptSemanticBlock" class="hidden">
+              <label>
+                <span>语义 Agent</span>
+                <select id="promptSemanticAgentSelect"></select>
+              </label>
+              <label>
+                <span>该语义 Agent 的覆盖（留空 = 继承平台默认）</span>
+                <textarea id="promptSemanticValue" rows="10" spellcheck="false" placeholder="留空表示继承平台默认"></textarea>
+              </label>
+              <p id="promptSemanticHint" class="muted"></p>
+              <div class="prompt-level-actions">
+                <button id="promptSemanticLoadButton" class="text-button" type="button">载入当前生效值</button>
+                <button id="promptSemanticClearButton" class="text-button" type="button">清除该层覆盖</button>
+              </div>
+            </div>
+
+            <div id="promptDeviceBlock" class="hidden">
+              <label>
+                <span>设备 Agent（仅列出在线设备）</span>
+                <select id="promptDeviceAgentSelect"></select>
+              </label>
+              <label>
+                <span>该设备 Agent 的覆盖（留空 = 继承语义 Agent）</span>
+                <textarea id="promptDeviceValue" rows="10" spellcheck="false" placeholder="留空表示继承语义 Agent / 平台默认"></textarea>
+              </label>
+              <p id="promptDeviceHint" class="muted"></p>
+              <div class="prompt-level-actions">
+                <button id="promptDeviceLoadButton" class="text-button" type="button">载入当前生效值</button>
+                <button id="promptDeviceClearButton" class="text-button" type="button">清除该层覆盖</button>
+                <button id="promptDeviceRefreshButton" class="text-button" type="button">刷新设备列表</button>
+              </div>
+            </div>
           </section>
         </div>
 

@@ -221,6 +221,7 @@ kbd { font: 11px Geist, sans-serif; border: 1px solid var(--border); border-radi
 .model-prompt-row { border: 1px solid var(--border-light); border-radius: 6px; padding: 13px; background: #fbfcfb; }
 .model-prompt-row .switch-row input[type="checkbox"] { width: 16px; height: 16px; min-width: 16px; padding: 0; }
 .model-prompt-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.prompt-level-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .model-prompt-row .text-button { margin-top: 8px; }
 
 @media (max-width: 1100px) {

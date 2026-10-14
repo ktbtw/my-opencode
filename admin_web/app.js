@@ -32,6 +32,18 @@ const state = {
   mcpCatalog: [],
   environmentPresets: [],
   modelPromptPresets: [],
+  promptRegistry: [],
+  promptDeviceAgents: [],
+  promptEditor: {
+    slotId: "",
+    level: "platform",
+    platformDraft: "",
+    semanticAgentId: "",
+    semanticDraft: "",
+    deviceValue: "",
+    deviceDraft: "",
+    effective: null,
+  },
   runtimeCatalog: [],
   toolCatalog: [],
   operators: [],
@@ -120,6 +132,29 @@ const el = {
   skillEditorSections: document.querySelectorAll(".skill-editor-section"),
   environmentEditorSections: document.querySelectorAll(".environment-editor-section"),
   modelPromptEditorSections: document.querySelectorAll(".model-prompt-editor-section"),
+  promptEditorSections: document.querySelectorAll(".prompt-editor-section"),
+  promptSlotTitle: document.querySelector("#promptSlotTitle"),
+  promptSlotMeta: document.querySelector("#promptSlotMeta"),
+  promptSlotDescription: document.querySelector("#promptSlotDescription"),
+  promptLevelTabs: document.querySelectorAll("[data-prompt-level]"),
+  promptPlatformBlock: document.querySelector("#promptPlatformBlock"),
+  promptPlatformValue: document.querySelector("#promptPlatformValue"),
+  promptPlatformHint: document.querySelector("#promptPlatformHint"),
+  promptViewDefaultButton: document.querySelector("#promptViewDefaultButton"),
+  promptResetButton: document.querySelector("#promptResetButton"),
+  promptSemanticBlock: document.querySelector("#promptSemanticBlock"),
+  promptSemanticAgentSelect: document.querySelector("#promptSemanticAgentSelect"),
+  promptSemanticValue: document.querySelector("#promptSemanticValue"),
+  promptSemanticHint: document.querySelector("#promptSemanticHint"),
+  promptSemanticLoadButton: document.querySelector("#promptSemanticLoadButton"),
+  promptSemanticClearButton: document.querySelector("#promptSemanticClearButton"),
+  promptDeviceBlock: document.querySelector("#promptDeviceBlock"),
+  promptDeviceAgentSelect: document.querySelector("#promptDeviceAgentSelect"),
+  promptDeviceValue: document.querySelector("#promptDeviceValue"),
+  promptDeviceHint: document.querySelector("#promptDeviceHint"),
+  promptDeviceLoadButton: document.querySelector("#promptDeviceLoadButton"),
+  promptDeviceClearButton: document.querySelector("#promptDeviceClearButton"),
+  promptDeviceRefreshButton: document.querySelector("#promptDeviceRefreshButton"),
   modelPromptFieldId: document.querySelector("#modelPromptFieldId"),
   modelPromptFieldName: document.querySelector("#modelPromptFieldName"),
   modelPromptFieldProvider: document.querySelector("#modelPromptFieldProvider"),
@@ -267,6 +302,59 @@ function bootstrap() {
   el.agentModelPromptPresets.addEventListener("change", markEditorDirty);
   el.agentFieldPromptMode.addEventListener("change", markEditorDirty);
   el.saveGlobalModelPromptButton.addEventListener("click", saveGlobalModelPrompts);
+  el.promptLevelTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      switchPromptEditorLevel(tab.dataset.promptLevel || "platform");
+    });
+  });
+  el.promptPlatformValue.addEventListener("input", markEditorDirty);
+  el.promptSemanticValue.addEventListener("input", () => {
+    state.promptEditor.semanticDraft = el.promptSemanticValue.value;
+    markEditorDirty();
+  });
+  el.promptDeviceValue.addEventListener("input", () => {
+    state.promptEditor.deviceDraft = el.promptDeviceValue.value;
+    markEditorDirty();
+  });
+  el.promptSemanticAgentSelect.addEventListener("change", () => selectPromptSemanticAgent(el.promptSemanticAgentSelect.value));
+  el.promptDeviceAgentSelect.addEventListener("change", () => selectPromptDeviceAgent(el.promptDeviceAgentSelect.value));
+  el.promptDeviceRefreshButton.addEventListener("click", refreshPromptDeviceAgents);
+  el.promptViewDefaultButton.addEventListener("click", () => {
+    const slot = promptSlotByID(state.promptEditor.slotId);
+    if (!slot) return;
+    el.promptPlatformHint.textContent = `内置默认 ${String(slot.default || "").length} 字：${promptTextPreview(slot.default, 300)}`;
+  });
+  el.promptResetButton.addEventListener("click", () => {
+    const slot = promptSlotByID(state.promptEditor.slotId);
+    if (slot) resetPromptSlot(slot, el.promptResetButton);
+  });
+  el.promptSemanticLoadButton.addEventListener("click", () => {
+    const slot = promptSlotByID(state.promptEditor.slotId);
+    if (!slot) return;
+    state.promptEditor.semanticDraft = promptInheritedValue(slot) || "";
+    el.promptSemanticValue.value = state.promptEditor.semanticDraft;
+    markEditorDirty();
+  });
+  el.promptSemanticClearButton.addEventListener("click", () => {
+    state.promptEditor.semanticDraft = "";
+    el.promptSemanticValue.value = "";
+    markEditorDirty();
+  });
+  el.promptDeviceLoadButton.addEventListener("click", () => {
+    const effective = (state.promptEditor.effective || []).find((item) => item.slot_id === state.promptEditor.slotId);
+    if (!effective) {
+      showToast("请先选择设备 Agent");
+      return;
+    }
+    state.promptEditor.deviceDraft = effective.effective || "";
+    el.promptDeviceValue.value = state.promptEditor.deviceDraft;
+    markEditorDirty();
+  });
+  el.promptDeviceClearButton.addEventListener("click", () => {
+    state.promptEditor.deviceDraft = "";
+    el.promptDeviceValue.value = "";
+    markEditorDirty();
+  });
   el.addRuntimeVersionButton.addEventListener("click", () => addRuntimeNestedItem("version"));
   el.addRuntimeMirrorButton.addEventListener("click", () => addRuntimeNestedItem("mirror"));
   el.addRuntimeArtifactButton.addEventListener("click", () => addRuntimeNestedItem("artifact"));
@@ -401,7 +489,7 @@ function syncViewChrome() {
   setButtonLabel(el.newButton, chrome.newText);
   el.breadcrumbTitle.textContent = chrome.title;
   el.listTitle.textContent = state.view === "operators" ? "用户目录" : "资源目录";
-  el.statusFilterGroup.classList.toggle("hidden", state.view === "operators");
+  el.statusFilterGroup.classList.toggle("hidden", state.view === "operators" || state.view === "prompts");
   el.newButton.classList.toggle("hidden", !chrome.canCreate);
   el.emptyTitle.textContent = chrome.emptyTitle;
   el.emptyDescription.textContent = chrome.emptyDescription;
@@ -442,6 +530,8 @@ function dispatchViewLoad() {
       return loadEnvironmentPresets();
     case "modelPrompts":
       return loadModelPromptPresets();
+    case "prompts":
+      return loadPromptRegistry();
     case "tools":
       return loadToolCatalog();
     case "operators":
@@ -595,6 +685,396 @@ async function loadModelPromptPresets() {
   }
 }
 
+// ===== 提示词管理（全量提示词注册表）=====
+// 槽位定义来自后端 /api/admin/prompt-registry；取值链为
+// 设备 Agent → 语义 Agent → 平台默认 → 运行时内置默认，留空即继承上一层。
+
+const promptCategoryLabels = { chat: "主对话", mode: "模式", job: "内部任务", message: "消息片段" };
+const promptScopeLabels = { platform: "平台默认", semantic: "语义 Agent", device: "设备 Agent" };
+const promptRiskLabels = { low: "低", medium: "中", high: "高" };
+
+function promptCategoryLabel(value) {
+  return promptCategoryLabels[value] || value || "其他";
+}
+
+function promptScopeLabel(value) {
+  return promptScopeLabels[value] || value;
+}
+
+function promptRiskLabel(value) {
+  return promptRiskLabels[value] || value || "低";
+}
+
+function promptSlotByID(id) {
+  return state.promptRegistry.find((item) => item.id === id) || null;
+}
+
+function promptTextPreview(text, limit = 220) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return "（空）";
+  return trimmed.length > limit ? `${trimmed.slice(0, limit)}…` : trimmed;
+}
+
+function promptInheritedValue(slot) {
+  return slot && slot.platform_set ? slot.platform_value : (slot ? slot.default : "");
+}
+
+// 槽位卡片：展示覆盖层级、风险、覆盖统计与当前生效文本（平台值优先，否则内置默认）。
+function promptSlotCardTemplate(item) {
+  const scopes = (item.scope || []).map(promptScopeLabel).join(" / ");
+  const overrides = Array.isArray(item.overrides) ? item.overrides : [];
+  const deviceCount = Number(item.device_override_count || 0);
+  const preview = promptTextPreview(item.platform_set ? item.platform_value : item.default);
+  const variables = Array.isArray(item.variables) ? item.variables : [];
+  return `
+    <article class="recommendation-card">
+      <div class="card-head">
+        <div>
+          <h2>${escapeHtml(item.id)}</h2>
+          <p class="muted">${escapeHtml(promptCategoryLabel(item.category))}</p>
+        </div>
+        <span class="pill ${item.platform_set ? "enabled" : "disabled"}">${item.platform_set ? "平台已覆盖" : "内置默认"}</span>
+      </div>
+      <p class="card-description">可覆盖层级：${escapeHtml(scopes || "平台默认")}；留空即继承上一层。</p>
+      <div class="pill-row">
+        <span class="pill">${escapeHtml(promptCategoryLabel(item.category))}</span>
+        <span class="pill ${item.risk === "high" ? "warning" : ""}">风险 ${escapeHtml(promptRiskLabel(item.risk))}</span>
+        ${overrides.length ? `<span class="pill">语义覆盖 ${overrides.length}</span>` : ""}
+        ${deviceCount ? `<span class="pill">设备覆盖 ${deviceCount}</span>` : ""}
+        ${variables.length ? `<span class="pill">占位符 ${variables.length}</span>` : ""}
+      </div>
+      <div class="card-code multiline" title="${escapeAttr(preview)}">${escapeHtml(preview)}</div>
+      <div class="card-actions">
+        <button class="secondary-button" type="button" data-action="edit" data-id="${escapeAttr(item.id)}">编辑</button>
+        <button class="secondary-button" type="button" data-action="reset" data-id="${escapeAttr(item.id)}"${item.platform_set ? "" : " disabled"}>恢复默认</button>
+      </div>
+    </article>
+  `;
+}
+
+async function loadPromptRegistry() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
+  setBusy(el.refreshButton, true, "刷新中");
+  try {
+    const [registryData, agentsData] = await Promise.all([
+      apiGet("/api/admin/prompt-registry"),
+      apiGet("/api/admin/semantic-agents"),
+    ]);
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
+    state.promptRegistry = Array.isArray(registryData.items) ? registryData.items : [];
+    state.semanticAgents = Array.isArray(agentsData.items) ? agentsData.items : [];
+    render();
+  } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "资源加载失败，请重试";
+    if (error.statusCode === 401 || error.statusCode === 403) {
+      logout(error.message);
+    }
+    showToast(error.message || "加载提示词注册表失败");
+  } finally {
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
+  }
+}
+
+// 设备列表只在打开设备级编辑时按需加载：后端只返回在线设备（离线设备无法下发）。
+async function loadPromptDeviceAgents() {
+  try {
+    const data = await apiGet("/api/admin/prompt-registry/device-agents");
+    state.promptDeviceAgents = Array.isArray(data.items) ? data.items : [];
+  } catch (error) {
+    state.promptDeviceAgents = [];
+    showToast(error.message || "加载设备列表失败");
+  }
+}
+
+function renderPromptEditorChrome() {
+  const slot = promptSlotByID(state.promptEditor.slotId);
+  if (!slot) return;
+  el.promptSlotTitle.textContent = slot.id;
+  el.promptSlotMeta.textContent = `${promptCategoryLabel(slot.category)} · 风险 ${promptRiskLabel(slot.risk)}`;
+  const variables = Array.isArray(slot.variables) ? slot.variables : [];
+  const parts = ["覆盖顺序：设备 Agent → 语义 Agent → 平台默认 → 内置默认，留空即继承上一层。"];
+  if (variables.length) parts.push(`可用占位符：${variables.map((name) => `{{${name}}}`).join(" ")}（保存时缺失会被拒绝）`);
+  el.promptSlotDescription.textContent = parts.join(" ");
+}
+
+function promptEditorLevel() {
+  return state.promptEditor.level || "platform";
+}
+
+function renderPromptEditor() {
+  const slot = promptSlotByID(state.promptEditor.slotId);
+  if (!slot) return;
+  const level = promptEditorLevel();
+  el.promptLevelTabs.forEach((tab) => {
+    tab.setAttribute("aria-pressed", String(tab.dataset.promptLevel === level));
+  });
+  el.promptPlatformBlock.classList.toggle("hidden", level !== "platform");
+  el.promptSemanticBlock.classList.toggle("hidden", level !== "semantic");
+  el.promptDeviceBlock.classList.toggle("hidden", level !== "device");
+
+  const builtin = slot.default || "";
+  el.promptPlatformValue.value = state.promptEditor.platformDraft;
+  const platformSet = Boolean(slot.platform_set);
+  el.promptPlatformHint.textContent = `内置默认 ${builtin.length} 字；${platformSet ? `当前平台值 ${String(slot.platform_value || "").length} 字（revision ${slot.revision || 1}）` : "当前未设置平台值，设备端使用内置默认"}`;
+  el.promptResetButton.disabled = !platformSet;
+
+  renderPromptSemanticFields(slot);
+  renderPromptDeviceFields(slot);
+}
+
+function promptSemanticAgentLabel(agent) {
+  const name = agent.name || agent.id;
+  return `${name}（${agent.id}）`;
+}
+
+function renderPromptSemanticFields(slot) {
+  const agents = state.semanticAgents || [];
+  const previous = state.promptEditor.semanticAgentId;
+  const options = agents
+    .map((agent) => `<option value="${escapeAttr(agent.id)}">${escapeHtml(promptSemanticAgentLabel(agent))}</option>`)
+    .join("");
+  if (el.promptSemanticAgentSelect.innerHTML !== options) {
+    el.promptSemanticAgentSelect.innerHTML = options || `<option value="">暂无语义 Agent</option>`;
+  }
+  const fallback = agents.length ? agents[0].id : "";
+  const selected = agents.some((agent) => agent.id === previous) ? previous : fallback;
+  state.promptEditor.semanticAgentId = selected;
+  el.promptSemanticAgentSelect.value = selected;
+  el.promptSemanticAgentSelect.disabled = !agents.length;
+  if (state.promptEditor.semanticDraftSlot !== `${selected}|${slot.id}`) {
+    const agent = agents.find((item) => item.id === selected);
+    state.promptEditor.semanticDraft = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
+    state.promptEditor.semanticDraftSlot = `${selected}|${slot.id}`;
+  }
+  el.promptSemanticValue.value = state.promptEditor.semanticDraft;
+  const agent = agents.find((item) => item.id === selected);
+  const overrideCount = agent && agent.prompt_templates ? Object.keys(agent.prompt_templates).length : 0;
+  el.promptSemanticHint.textContent = agent
+    ? `${agent.name || agent.id} 当前覆盖了 ${overrideCount} 个槽位；继承值：${promptTextPreview(promptInheritedValue(slot), 80)}`
+    : "暂无可选的语义 Agent。";
+}
+
+function promptDeviceAgentLabel(item) {
+  const device = item.hostname || item.machine_id;
+  return `${device} / ${item.agent_name || item.agent_id}${item.semantic_agent_name ? ` · ${item.semantic_agent_name}` : ""}`;
+}
+
+function renderPromptDeviceFields(slot) {
+  const devices = state.promptDeviceAgents || [];
+  const options = devices
+    .map((item, index) => `<option value="${index}">${escapeHtml(promptDeviceAgentLabel(item))}</option>`)
+    .join("");
+  if (el.promptDeviceAgentSelect.innerHTML !== options) {
+    el.promptDeviceAgentSelect.innerHTML = options || `<option value="">暂无在线设备 Agent</option>`;
+  }
+  const previous = Number(state.promptEditor.deviceIndex);
+  const index = Number.isInteger(previous) && previous >= 0 && previous < devices.length ? previous : 0;
+  state.promptEditor.deviceIndex = index;
+  el.promptDeviceAgentSelect.value = String(index);
+  el.promptDeviceAgentSelect.disabled = !devices.length;
+  el.promptDeviceValue.value = state.promptEditor.deviceDraft;
+  const effective = (state.promptEditor.effective || []).find((item) => item.slot_id === slot.id);
+  if (!devices.length) {
+    el.promptDeviceHint.textContent = "当前没有在线设备 Agent；设备级覆盖只对在线设备下发，离线设备上线后会自动补齐。";
+    return;
+  }
+  const current = devices[index];
+  const applied = current.applied_revision ? `已下发 revision ${current.applied_revision}` : "尚未下发过提示词槽位";
+  el.promptDeviceHint.textContent = effective
+    ? `当前生效来源：${promptScopeLabel(effective.source)}；${applied}`
+    : applied;
+}
+
+async function loadPromptDeviceDetail() {
+  const devices = state.promptDeviceAgents || [];
+  const index = Number(state.promptEditor.deviceIndex);
+  const device = devices[index];
+  if (!device) {
+    state.promptEditor.effective = null;
+    state.promptEditor.deviceDraft = "";
+    renderPromptEditor();
+    return;
+  }
+  const query = `?machine_id=${encodeURIComponent(device.machine_id)}&agent_id=${encodeURIComponent(device.agent_id)}`;
+  try {
+    const data = await apiGet(`/api/admin/prompt-registry/device-overrides${query}`);
+    const items = Array.isArray(data.items) ? data.items : [];
+    const current = items.find((item) => item.slot_id === state.promptEditor.slotId);
+    state.promptEditor.effective = items;
+    state.promptEditor.deviceDraft = current ? current.device_value || "" : "";
+    state.promptEditor.deviceDraftKey = `${device.machine_id}|${device.agent_id}|${state.promptEditor.slotId}`;
+    renderPromptEditor();
+  } catch (error) {
+    state.promptEditor.effective = null;
+    showToast(error.message || "读取设备级覆盖失败");
+    renderPromptEditor();
+  }
+}
+
+function openPromptEditor(item) {
+  if (!item) return;
+  state.editing = item;
+  state.promptEditor = {
+    slotId: item.id,
+    level: "platform",
+    platformDraft: item.platform_value || "",
+    semanticAgentId: "",
+    semanticDraft: "",
+    semanticDraftSlot: "",
+    deviceIndex: 0,
+    deviceDraft: "",
+    deviceDraftKey: "",
+    effective: null,
+  };
+  el.drawerTitle.textContent = "编辑提示词槽位";
+  el.deleteButton.classList.add("hidden");
+  el.importJson.value = "";
+  showEditorSections("prompts");
+  renderPromptEditorChrome();
+  renderPromptEditor();
+  el.drawerOverlay.classList.remove("hidden");
+  el.drawerOverlay.setAttribute("aria-hidden", "false");
+  editorDidOpen();
+  el.promptPlatformValue.focus();
+  if (!state.promptDeviceAgents.length) {
+    loadPromptDeviceAgents().then(() => renderPromptEditor());
+  }
+}
+
+async function switchPromptEditorLevel(level) {
+  state.promptEditor.level = level;
+  renderPromptEditor();
+  if (level === "device") {
+    if (!state.promptDeviceAgents.length) {
+      await loadPromptDeviceAgents();
+    }
+    await loadPromptDeviceDetail();
+  }
+}
+
+async function selectPromptSemanticAgent(agentID) {
+  state.promptEditor.semanticAgentId = agentID;
+  state.promptEditor.semanticDraftSlot = "";
+  renderPromptEditor();
+}
+
+async function selectPromptDeviceAgent(index) {
+  state.promptEditor.deviceIndex = Number(index) || 0;
+  state.promptEditor.deviceDraftKey = "";
+  await loadPromptDeviceDetail();
+}
+
+async function refreshPromptDeviceAgents() {
+  await loadPromptDeviceAgents();
+  state.promptEditor.deviceDraftKey = "";
+  await loadPromptDeviceDetail();
+}
+
+async function savePromptEditor() {
+  const slot = promptSlotByID(state.promptEditor.slotId);
+  if (!slot) return;
+  const level = promptEditorLevel();
+  if (level === "platform") {
+    const content = el.promptPlatformValue.value;
+    if (!content.trim()) {
+      showToast("平台默认不能为空；如需回落内置默认，请用「恢复内置默认」");
+      return;
+    }
+    await runAdminAction({
+      button: el.saveButton,
+      busyText: "保存中",
+      pendingText: `正在保存「${slot.id}」平台默认...`,
+      successText: "平台默认已保存并下发到在线设备",
+      failureText: "保存平台默认失败",
+      action: async () => {
+        await apiPost(`/api/admin/prompt-templates/${encodeURIComponent(slot.id)}`, { content });
+        state.promptEditor.platformDraft = content;
+        await loadPromptRegistry();
+        renderPromptEditorChrome();
+        renderPromptEditor();
+      },
+    });
+    return;
+  }
+  if (level === "semantic") {
+    const agentID = el.promptSemanticAgentSelect.value;
+    if (!agentID) {
+      showToast("请先选择语义 Agent");
+      return;
+    }
+    const content = el.promptSemanticValue.value;
+    await runAdminAction({
+      button: el.saveButton,
+      busyText: "保存中",
+      pendingText: `正在保存「${slot.id}」语义 Agent 覆盖...`,
+      successText: content.trim() ? "语义 Agent 覆盖已保存并广播到绑定设备" : "语义 Agent 覆盖已清除",
+      failureText: "保存语义 Agent 覆盖失败",
+      action: async () => {
+        await apiPost("/api/admin/prompt-registry/semantic-overrides", {
+          semantic_agent_id: agentID,
+          overrides: { [slot.id]: content },
+        });
+        state.promptEditor.semanticDraft = content.trim() ? content : "";
+        state.promptEditor.semanticDraftSlot = "";
+        await loadPromptRegistry();
+        renderPromptEditorChrome();
+        renderPromptEditor();
+      },
+    });
+    return;
+  }
+  const device = (state.promptDeviceAgents || [])[Number(state.promptEditor.deviceIndex)];
+  if (!device) {
+    showToast("请先选择设备 Agent");
+    return;
+  }
+  const content = el.promptDeviceValue.value;
+  await runAdminAction({
+    button: el.saveButton,
+    busyText: "保存中",
+    pendingText: `正在保存「${slot.id}」设备 Agent 覆盖...`,
+    successText: content.trim() ? "设备 Agent 覆盖已保存并下发" : "设备 Agent 覆盖已清除",
+    failureText: "保存设备 Agent 覆盖失败",
+    action: async () => {
+      await apiPost("/api/admin/prompt-registry/device-overrides", {
+        machine_id: device.machine_id,
+        agent_id: device.agent_id,
+        semantic_agent_id: device.semantic_agent_id || "",
+        overrides: { [slot.id]: content },
+      });
+      await loadPromptRegistry();
+      await loadPromptDeviceDetail();
+      renderPromptEditorChrome();
+    },
+  });
+}
+
+async function resetPromptSlot(item, button = null) {
+  const confirmed = await confirmAction("恢复内置默认", `确认清除「${item.id}」的平台默认值？清除后该槽位回落到运行时内置文本。`);
+  if (!confirmed) return;
+  await runAdminAction({
+    button,
+    busyText: "恢复中",
+    pendingText: `正在恢复「${item.id}」的内置默认...`,
+    successText: "已恢复内置默认并下发到在线设备",
+    failureText: "恢复内置默认失败",
+    action: async () => {
+      await apiPost(`/api/admin/prompt-templates/${encodeURIComponent(item.id)}/reset`, {});
+      if (state.promptEditor.slotId === item.id) {
+        state.promptEditor.platformDraft = "";
+      }
+      await loadPromptRegistry();
+      if (!el.drawerOverlay.classList.contains("hidden")) {
+        renderPromptEditorChrome();
+        renderPromptEditor();
+      }
+    },
+  });
+}
+
 async function loadRuntimeCatalog() {
   const requestedView = state.view;
   const loadSequence = state.loadSequence;
@@ -673,6 +1153,18 @@ function renderStats() {
   el.statCategoriesLabel.textContent = chrome.categoryLabel;
   el.statTotal.textContent = items.length;
   el.statCategories.textContent = categories.size;
+  if (state.view === "prompts") {
+    const platformSet = items.filter((item) => item.platform_set).length;
+    const semanticSet = items.filter((item) => Array.isArray(item.overrides) && item.overrides.length).length;
+    const deviceSet = items.filter((item) => Number(item.device_override_count || 0) > 0).length;
+    el.statEnabledLabel.textContent = "平台已覆盖";
+    el.statDisabledLabel.textContent = "语义已覆盖";
+    el.statEnabled.textContent = platformSet;
+    el.statDisabled.textContent = semanticSet;
+    el.statCategoriesLabel.textContent = "设备已覆盖";
+    el.statCategories.textContent = deviceSet;
+    return;
+  }
   if (state.view === "operators") {
     // 用户没有启用/停用概念，改为展示会员与非会员数量。
     const members = items.filter((item) => (item.membership_tier || "free") !== "free").length;
@@ -732,6 +1224,12 @@ function renderCategoryFilter() {
       `<option value="all">全部供应商</option>`,
       ...providers.map((provider) => `<option value="${escapeAttr(provider)}">${escapeHtml(provider)}</option>`),
     ].join("");
+  } else if (state.view === "prompts") {
+    const categories = [...new Set(currentItems().map((item) => item.category || "chat"))].sort();
+    options = [
+      `<option value="all">全部分类</option>`,
+      ...categories.map((category) => `<option value="${escapeAttr(category)}">${escapeHtml(promptCategoryLabel(category))}</option>`),
+    ].join("");
   } else if (state.view === "operators") {
     options = [
       `<option value="all">全部等级</option>`,
@@ -771,11 +1269,13 @@ function filteredItems() {
         if (category !== "all" && (item.category || "通用") !== category) return false;
       } else if (state.view === "modelPrompts") {
         if (category !== "all" && (item.provider || "") !== category) return false;
+      } else if (state.view === "prompts") {
+        if (category !== "all" && (item.category || "chat") !== category) return false;
       } else if (state.view === "operators") {
         if (category !== "all" && (item.membership_tier || "free") !== category) return false;
       }
       // 会员视图不按启用状态过滤：用户本身没有启用/停用概念。
-      if (state.view === "operators") {
+      if (state.view === "operators" || state.view === "prompts") {
         if (!query) return true;
         return searchableTextForCurrentView(item).includes(query);
       }
@@ -809,6 +1309,8 @@ function currentItems() {
       return state.environmentPresets;
     case "modelPrompts":
       return state.modelPromptPresets;
+    case "prompts":
+      return state.promptRegistry;
     case "tools":
       return state.toolCatalog;
     case "operators":
@@ -832,6 +1334,8 @@ function cardForCurrentView(item) {
       return environmentPresetCardTemplate(item);
     case "modelPrompts":
       return modelPromptPresetCardTemplate(item);
+    case "prompts":
+      return promptSlotCardTemplate(item);
     case "tools":
       return toolCatalogCardTemplate(item);
     case "operators":
@@ -1198,6 +1702,10 @@ async function handleCardAction(event) {
     await deleteItem(item, false, button);
     return;
   }
+  if (action === "reset") {
+    await resetPromptSlot(item, button);
+    return;
+  }
   if (action === "set-membership") {
     await setMembershipTier(item, button);
   }
@@ -1243,6 +1751,10 @@ function openEditor(item = null) {
   }
   if (state.view === "modelPrompts") {
     openModelPromptEditor(item);
+    return;
+  }
+  if (state.view === "prompts") {
+    openPromptEditor(item);
     return;
   }
   if (state.view === "runtime") {
@@ -1423,6 +1935,18 @@ function closeEditor() {
   el.drawerOverlay.setAttribute("aria-hidden", "true");
   state.editing = null;
   state.runtimeDraft = null;
+  state.promptEditor = {
+    slotId: "",
+    level: "platform",
+    platformDraft: "",
+    semanticAgentId: "",
+    semanticDraft: "",
+    semanticDraftSlot: "",
+    deviceIndex: 0,
+    deviceDraft: "",
+    deviceDraftKey: "",
+    effective: null,
+  };
   showEditorSections("mcpCatalog");
 }
 
@@ -1725,6 +2249,10 @@ async function saveEditor(event) {
   }
   if (state.view === "modelPrompts") {
     await saveModelPromptEditor();
+    return;
+  }
+  if (state.view === "prompts") {
+    await savePromptEditor();
     return;
   }
   if (state.view === "runtime") {
@@ -2616,6 +3144,7 @@ function initialView() {
   if (hash === "runtime-catalog") return "runtime";
   if (hash === "environment-presets") return "environment";
   if (hash === "model-prompt-presets") return "modelPrompts";
+  if (hash === "prompt-registry") return "prompts";
   if (hash === "tool-catalog") return "tools";
   if (hash === "operators") return "operators";
   return "mcpCatalog";
@@ -2628,7 +3157,7 @@ function normalizeLegacyHash() {
 }
 
 function normalizeView(view) {
-  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "modelPrompts" || view === "tools" || view === "operators") {
+  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "modelPrompts" || view === "prompts" || view === "tools" || view === "operators") {
     return view;
   }
   return "mcpCatalog";
@@ -2648,6 +3177,8 @@ function hashForView(view) {
       return "environment-presets";
     case "modelPrompts":
       return "model-prompt-presets";
+    case "prompts":
+      return "prompt-registry";
     case "tools":
       return "tool-catalog";
     case "operators":
@@ -2731,6 +3262,18 @@ function viewChrome(view) {
       categoryLabel: "供应商数量",
       deleteTitle: "删除模型提示词预设",
     },
+    prompts: {
+      eyebrow: "Prompt Registry",
+      title: "提示词管理",
+      description: "集中管理运行时与编排的系统提示词槽位：平台默认统一生效，语义 Agent 与设备 Agent 可逐级覆盖，留空即继承上一层。",
+      newText: "",
+      canCreate: false,
+      emptyTitle: "没有匹配的提示词槽位",
+      emptyDescription: "调整筛选条件，或刷新槽位清单。",
+      totalLabel: "槽位总数",
+      categoryLabel: "分类数量",
+      deleteTitle: "删除提示词槽位",
+    },
     runtime: {
       eyebrow: "Managed Runtime",
       title: "运行时环境",
@@ -2766,6 +3309,7 @@ function statCategorySet(items) {
   if (state.view === "runtime") return new Set(items.flatMap((item) => item.tags || []));
   if (state.view === "environment" || state.view === "tools") return new Set(items.map((item) => item.category || "通用"));
   if (state.view === "modelPrompts") return new Set(items.map((item) => item.provider || "全部供应商"));
+  if (state.view === "prompts") return new Set(items.map((item) => item.category || "chat"));
   if (state.view === "operators") return new Set(items.map((item) => item.membership_tier || "free"));
   return new Set();
 }
@@ -2780,6 +3324,7 @@ function showEditorSections(mode) {
   const skill = mode === "skills";
   const environment = mode === "environment";
   const modelPrompts = mode === "modelPrompts";
+  const prompts = mode === "prompts";
   const runtime = mode === "runtime";
   const tool = mode === "tools";
   const mcp = mode === "mcpCatalog";
@@ -2789,6 +3334,7 @@ function showEditorSections(mode) {
   el.skillEditorSections.forEach((section) => section.classList.toggle("hidden", !skill));
   el.environmentEditorSections.forEach((section) => section.classList.toggle("hidden", !environment));
   el.modelPromptEditorSections.forEach((section) => section.classList.toggle("hidden", !modelPrompts));
+  el.promptEditorSections.forEach((section) => section.classList.toggle("hidden", !prompts));
   el.runtimeEditorSections.forEach((section) => section.classList.toggle("hidden", !runtime));
   el.toolEditorSections.forEach((section) => section.classList.toggle("hidden", !tool));
   el.catalogEditorFields.forEach((field) => field.classList.toggle("hidden", !catalog));
@@ -3489,6 +4035,11 @@ function searchableTextForCurrentView(item) {
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
+    case "prompts":
+      return [item.id, item.category, item.risk, item.platform_value, item.default]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
     case "runtime":
       return runtimeCatalogSearchableText(item);
     case "tools":
@@ -3859,7 +4410,7 @@ function setDisplayMode(mode) {
 }
 
 function updateNavCounts() {
-  const counts = { mcpCatalog: state.mcpCatalog.length, skills: state.skills.length, tools: state.toolCatalog.length, semantic: state.semanticAgents.length, runtime: state.runtimeCatalog.length, environment: state.environmentPresets.length, modelPrompts: state.modelPromptPresets.length, operators: state.operators.length };
+  const counts = { mcpCatalog: state.mcpCatalog.length, skills: state.skills.length, tools: state.toolCatalog.length, semantic: state.semanticAgents.length, runtime: state.runtimeCatalog.length, environment: state.environmentPresets.length, modelPrompts: state.modelPromptPresets.length, prompts: state.promptRegistry.length, operators: state.operators.length };
   document.querySelectorAll("[data-count]").forEach((count) => { count.textContent = state.loadedViews.has(count.dataset.count) ? counts[count.dataset.count] : ""; });
   el.navLinks.forEach((link) => { if (link.dataset.view === state.view) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current"); });
 }
@@ -3892,7 +4443,7 @@ async function requestCloseEditor() {
 }
 
 function consoleCommands() {
-  const views = ["mcpCatalog", "skills", "tools", "semantic", "runtime", "environment", "modelPrompts", "operators"];
+  const views = ["mcpCatalog", "skills", "tools", "semantic", "runtime", "environment", "modelPrompts", "prompts", "operators"];
   const commands = views.map((view) => ({ title: viewChrome(view).title, detail: "跳转到管理模块", action: () => switchView(view) }));
   commands.push({ title: "刷新当前模块", detail: "重新读取服务端数据", action: loadCurrentView });
   if (viewChrome(state.view).canCreate) commands.push({ title: viewChrome(state.view).newText, detail: "打开配置编辑器", action: () => openEditor() });
