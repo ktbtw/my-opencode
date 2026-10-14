@@ -573,7 +573,11 @@ func (a *API) dispatchChatQueueItem(operatorID int64, item model.ChatQueueItem) 
 		restoreDispatchFailure(err)
 		return nil, err
 	}
-	// 与 CreateTask 一致：排队任务同样按 metadata 里的模型注入模型专属提示词。
+	// 与 CreateTask 一致：排队任务同样按 metadata 里的模型注入破甲协议与模型专属提示词。
+	// 缺了破甲这一行时，开关打开也不会生效——只有 /api/tasks 直发路径会注入。
+	if a.jailbreakEnabledFor(operatorID, item.AgentID) {
+		baseSystemPrompt, _ = applyDeepSeekJailbreak(baseSystemPrompt, item.Metadata["model"], true)
+	}
 	if prompt, ok := a.modelPromptForTask(operatorID, item.AgentID, agent.SemanticAgentID, item.Metadata["model"]); ok {
 		baseSystemPrompt, _ = applyModelPrompt(baseSystemPrompt, prompt)
 	}
