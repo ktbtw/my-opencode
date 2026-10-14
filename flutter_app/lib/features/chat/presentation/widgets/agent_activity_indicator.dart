@@ -71,13 +71,19 @@ class AgentActivityIndicator extends StatelessWidget {
     if (stopping || message.statusHint == '正在停止') return '正在停止';
     if (statusHint.trim().isNotEmpty) return statusHint.trim();
     if (message.state != MessageState.streaming) {
-      if (message.historyDetails == HistoryDetailsState.loading) return '正在载入历史';
-      if (message.historyDetails == HistoryDetailsState.partial) return '历史尚未载入完整';
+      if (message.historyDetails == HistoryDetailsState.loading) {
+        return '正在载入历史';
+      }
+      if (message.historyDetails == HistoryDetailsState.partial) {
+        return '历史尚未载入完整';
+      }
     }
     if (message.streamRecovery == StreamRecovery.syncing) return '正在同步回复';
     if (message.streamRecovery == StreamRecovery.reconnecting) return '正在恢复连接';
     if (message.historyDetails == HistoryDetailsState.loading) return '正在载入历史';
-    if (message.historyDetails == HistoryDetailsState.partial) return '历史尚未载入完整';
+    if (message.historyDetails == HistoryDetailsState.partial) {
+      return '历史尚未载入完整';
+    }
     if (message.toolCalls.any((tool) => tool.isRunning)) return '正在使用工具';
     if (_hasText) return '正在生成回复';
     if (message.thinkingContent.trim().isNotEmpty) return '正在思考';
@@ -96,7 +102,9 @@ class AgentActivityIndicator extends StatelessWidget {
     if (stopping || message.statusHint == '正在停止') return null;
     if (statusHint.trim().isNotEmpty) return null;
     if (message.state != MessageState.streaming) {
-      if (message.historyDetails == HistoryDetailsState.loading) return '工具调用记录';
+      if (message.historyDetails == HistoryDetailsState.loading) {
+        return '工具调用记录';
+      }
       if (message.historyDetails == HistoryDetailsState.partial) {
         return '工具调用记录尚未完整';
       }

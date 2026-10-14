@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/config/sse_parser.dart';
+import '../../../core/notifications/app_notification_controller.dart';
+import '../../../core/notifications/app_notification_model.dart';
 import '../../../core/services/app_live_events.dart';
 import '../../../core/storage/app_storage.dart';
 
@@ -51,6 +53,20 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
       ...state,
       machine: {...current}..remove(agent),
     });
+  }
+
+  /// 「任务完成」通知（`chat-task:` + kind=agent + succeeded，metadata 带
+  /// machine_id/agent_id）：与通知中心同源，且带游标补拉，后台漏掉的事件也能补上。
+  /// 只在 App 运行期间新到的通知上登记，历史通知不补登记，避免冷启动刷出一堆旧完成。
+  void handleNotification(AppNotificationRecord record) {
+    if (record.kind != AppNotificationKind.agent) return;
+    if (record.status != AppNotificationStatus.succeeded) return;
+    if (!record.operationId.startsWith('chat-task:')) return;
+    final machine = _text(record.metadata['machine_id']);
+    final agent = _text(record.metadata['agent_id']);
+    if (machine.isEmpty || agent.isEmpty) return;
+    _setRunning(machine, agent, null);
+    _addCompleted(machine, agent);
   }
 
   /// 实时事件入口（task.updated / 重连 snapshot）。
@@ -185,9 +201,9 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
   static String _text(Object? value) => value?.toString().trim() ?? '';
 
   static Map<String, Set<String>> _readCompleted() {
-    final decoded = _decode(AppStorage.initialized
-        ? AppStorage.getString(_completedKey)
-        : null);
+    final decoded = _decode(
+      AppStorage.initialized ? AppStorage.getString(_completedKey) : null,
+    );
     if (decoded == null) return <String, Set<String>>{};
     return {
       for (final entry in decoded.entries)
@@ -200,9 +216,9 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
   }
 
   static Map<String, Map<String, String>> _readRunning() {
-    final decoded = _decode(AppStorage.initialized
-        ? AppStorage.getString(_runningKey)
-        : null);
+    final decoded = _decode(
+      AppStorage.initialized ? AppStorage.getString(_runningKey) : null,
+    );
     if (decoded == null) return <String, Map<String, String>>{};
     return {
       for (final entry in decoded.entries)
@@ -212,8 +228,8 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
               if (item.value.toString().trim().isNotEmpty)
                 item.key.toString(): item.value.toString().trim(),
           },
-      };
-    }
+    };
+  }
 
   static Map<String, dynamic>? _decode(String? raw) {
     final text = raw?.trim() ?? '';
@@ -237,6 +253,25 @@ final completedAgentsProvider =
       ref.listen<AsyncValue<SseEvent>>(appLiveStreamProvider, (_, next) {
         final event = next.valueOrNull;
         if (event != null) notifier.handleEvent(event);
+      });
+      // 通知中心里新出现的"任务完成"：第二信号，覆盖设备快照看不到该 Agent 的情况。
+      var hydrated = false;
+      final seen = <String>{};
+      ref.listen<AppNotificationState>(appNotificationControllerProvider, (
+        _,
+        next,
+      ) {
+        final records = [...next.active, ...next.recent];
+        if (!hydrated) {
+          // 首次（本地水合 + 补拉）只记已见，不补登记历史完成。
+          hydrated = true;
+          seen.addAll(records.map((record) => record.id));
+          return;
+        }
+        for (final record in records) {
+          if (!seen.add(record.id)) continue;
+          notifier.handleNotification(record);
+        }
       });
       return notifier;
     });

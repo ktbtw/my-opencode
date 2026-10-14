@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:chat_codex_app/core/config/sse_parser.dart';
+import 'package:chat_codex_app/core/notifications/app_notification_model.dart';
 import 'package:chat_codex_app/core/storage/app_storage.dart';
 import 'package:chat_codex_app/features/devices/presentation/completed_agents_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,21 @@ SseEvent snapshotEvent(List<Map<String, Object?>> agents) => SseEvent(
       {'machine_id': 'machine-a', 'agents': agents},
     ],
   }),
+);
+
+AppNotificationRecord taskCompletedNotification({
+  String agent = 'a-1',
+  String machine = 'machine-a',
+}) => AppNotificationRecord(
+  id: 'n-1',
+  operationId: 'chat-task:task-1',
+  title: '任务完成',
+  message: '已完成',
+  status: AppNotificationStatus.succeeded,
+  kind: AppNotificationKind.agent,
+  createdAt: DateTime(2026),
+  updatedAt: DateTime(2026),
+  metadata: {'machine_id': machine, 'agent_id': agent},
 );
 
 void main() {
@@ -98,6 +114,25 @@ void main() {
       ]),
     );
     expect(notifier.completedFor('machine-a'), isEmpty);
+  });
+
+  test('任务完成通知（通知中心同源）也能登记，非完成类通知不登记', () {
+    final notifier = CompletedAgentsNotifier();
+
+    notifier.handleNotification(
+      taskCompletedNotification().copyWith(
+        status: AppNotificationStatus.running,
+      ),
+    );
+    expect(notifier.completedFor('machine-a'), isEmpty);
+
+    notifier.handleNotification(
+      taskCompletedNotification().copyWith(operationId: 'agent-restart:1'),
+    );
+    expect(notifier.completedFor('machine-a'), isEmpty);
+
+    notifier.handleNotification(taskCompletedNotification());
+    expect(notifier.completedFor('machine-a'), {'a-1'});
   });
 
   test('App 被杀后重开：运行态与完成态都从本地恢复', () {
