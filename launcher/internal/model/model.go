@@ -405,6 +405,13 @@ type DeviceAgentSemanticSelectionInfo struct {
 	AvailableAgents  []SemanticAgentProfile `json:"available_agents,omitempty"`
 }
 
+// DeviceAgentPromptTemplatesInput 是后端下发的提示词槽位内容（控制台解析结果）。
+type DeviceAgentPromptTemplatesInput struct {
+	AgentID   string            `json:"agent_id"`
+	Revision  string            `json:"revision"`
+	Templates map[string]string `json:"templates"`
+}
+
 type DeviceAgentSemanticSelectionInput struct {
 	AgentID             string                `json:"agent_id"`
 	SemanticAgentID     string                `json:"semantic_agent_id"`

@@ -2360,6 +2360,25 @@ func (m *Memory) DeleteToolCatalogItem(id string) error {
 	return nil
 }
 
+func (m *Memory) ListPromptTemplates() (map[string]PromptTemplate, error) {
+	items, err := m.archive.ListPromptTemplates()
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		return map[string]PromptTemplate{}, nil
+	}
+	return items, nil
+}
+
+func (m *Memory) UpsertPromptTemplate(slotID, content string) (PromptTemplate, error) {
+	return m.archive.UpsertPromptTemplate(slotID, content)
+}
+
+func (m *Memory) DeletePromptTemplate(slotID string) error {
+	return m.archive.DeletePromptTemplate(slotID)
+}
+
 func (m *Memory) ListSemanticAgents(includeDisabled bool) ([]model.SemanticAgentProfile, error) {
 	if items, err := m.archive.ListSemanticAgents(includeDisabled); err == nil && items != nil {
 		m.mu.Lock()

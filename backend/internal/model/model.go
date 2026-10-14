@@ -1248,6 +1248,8 @@ type SemanticAgentProfile struct {
 	Prompt                string                           `json:"prompt,omitempty"`
 	PromptMode            string                           `json:"prompt_mode,omitempty"`
 	ModelPromptPresets    []SemanticAgentModelPromptPreset `json:"model_prompt_presets,omitempty"`
+	// PromptTemplates 是该语义 Agent 的提示词注册表覆盖（slot_id → 文本），留空表示继承平台默认。
+	PromptTemplates map[string]string `json:"prompt_templates,omitempty"`
 	SkillIDs              []string                         `json:"skill_ids,omitempty"`
 	MCPIDs                []string                         `json:"mcp_ids,omitempty"`
 	Skills                []string                         `json:"skills,omitempty"`

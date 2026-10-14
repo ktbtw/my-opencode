@@ -690,6 +690,11 @@ func (s *service) agentSemanticConfigContent(cfg model.AgentConfig, existing str
 	}
 	content["default_agent"] = item.opencodeName
 	content["instructions"] = appendOrchestrationInstruction(content["instructions"])
+	// 提示词注册表：把控制台解析后的槽位文件路径声明给运行时；
+	// 文件缺失或为空时运行时会回落到内置默认，所以这里声明即可，不必等待首次下发。
+	if slots := s.PromptSlotPaths(cfg.AgentID); len(slots) > 0 {
+		content["prompt_slots"] = slots
+	}
 	content["skills"] = map[string]any{"paths": []string{}, "urls": []string{}}
 	if skillRoot, ok := s.prepareSemanticAgentSkills(item); ok && skillRoot != "" {
 		content["skills"] = map[string]any{"paths": []string{skillRoot}, "urls": []string{}}

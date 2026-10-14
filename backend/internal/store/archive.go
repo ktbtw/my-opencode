@@ -56,6 +56,9 @@ type TaskArchive interface {
 	ListToolCatalog(includeDisabled bool) ([]model.ToolCatalogItem, error)
 	UpsertToolCatalogItem(item model.ToolCatalogItem) (*model.ToolCatalogItem, error)
 	DeleteToolCatalogItem(id string) error
+	ListPromptTemplates() (map[string]PromptTemplate, error)
+	UpsertPromptTemplate(slotID, content string) (PromptTemplate, error)
+	DeletePromptTemplate(slotID string) error
 	ListSemanticAgents(includeDisabled bool) ([]model.SemanticAgentProfile, error)
 	UpsertSemanticAgent(item model.SemanticAgentProfile) (*model.SemanticAgentProfile, error)
 	DeleteSemanticAgent(id string) error
@@ -232,6 +235,13 @@ func (noopArchive) UpsertToolCatalogItem(model.ToolCatalogItem) (*model.ToolCata
 	return nil, nil
 }
 func (noopArchive) DeleteToolCatalogItem(string) error { return nil }
+func (noopArchive) ListPromptTemplates() (map[string]PromptTemplate, error) {
+	return nil, nil
+}
+func (noopArchive) UpsertPromptTemplate(string, string) (PromptTemplate, error) {
+	return PromptTemplate{}, nil
+}
+func (noopArchive) DeletePromptTemplate(string) error { return nil }
 func (noopArchive) ListSemanticAgents(bool) ([]model.SemanticAgentProfile, error) {
 	return nil, nil
 }

@@ -4654,6 +4654,7 @@ func (a *API) RestartDeviceAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	requestID := fmt.Sprintf("req_launcher_agent_restart_%d", time.Now().UnixNano())
 	a.syncDeviceAgentSemanticProfile(r.Context(), operator.ID, launcherID, req.AgentID)
+	a.syncDeviceAgentPromptTemplates(r.Context(), operator.ID, launcherID, req.AgentID)
 	result, err := a.requestDeviceLauncher(r.Context(), operator.ID, launcherID, requestID, "device.launcher.restart_agent", req)
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})

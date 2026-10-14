@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"relay-server/internal/model"
+	"relay-server/internal/promptregistry"
 )
 
 const defaultSemanticAgentID = "coding-assistant"
@@ -216,6 +217,7 @@ func (a *API) UpdateSemanticAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.ID = id
+	req.PromptTemplates = promptregistry.SanitizeOverrides(promptregistry.ScopeSemantic, req.PromptTemplates)
 	stored, err := a.upsertSemanticAgent(req)
 	if err != nil {
 		write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

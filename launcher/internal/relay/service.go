@@ -51,6 +51,7 @@ type Service interface {
 	ImportGlobalSkill(model.DeviceSkillConfigInput) (*model.DeviceSkillConfigInfo, error)
 	AgentSemanticSelection(string) (model.DeviceAgentSemanticSelectionInfo, error)
 	SaveAgentSemanticSelection(model.DeviceAgentSemanticSelectionInput) (model.DeviceAgentSemanticSelectionInfo, error)
+	SaveAgentPromptTemplates(model.DeviceAgentPromptTemplatesInput) (string, error)
 	StartAgentSemanticPreflight(model.RuntimePreflightStartPayload, func(model.RuntimePreflightStatusPayload) error) error
 	RuntimeStatus(runtimeID string) (model.DeviceRuntimeStatus, error)
 	InstallRuntimes(model.RuntimePreflightStartPayload, func(model.RuntimePreflightStatusPayload) error) error

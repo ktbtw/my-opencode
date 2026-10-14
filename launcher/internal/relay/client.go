@@ -89,7 +89,7 @@ func connect(ctx context.Context, cfg config.Config, svc Service) error {
 				"device_runtime_v1",
 				binaryFrameCapability,
 			},
-			"projects":     []map[string]any{},
+			"projects": []map[string]any{},
 		},
 	}
 	if err := writeEnvelope(ctx, msg); err != nil {
@@ -246,6 +246,7 @@ func buildHandlers() map[string]handlerFunc {
 		"device.launcher.mcp_status":               handleLauncher,
 		"device.launcher.semantic_agent_get":       handleLauncher,
 		"device.launcher.semantic_agent_save":      handleLauncher,
+		"device.launcher.prompt_templates_save":    handleLauncher,
 		"device.launcher.skills_get":               handleLauncher,
 		"device.launcher.skills_save":              handleLauncher,
 		"device.launcher.skills_import":            handleLauncher,
@@ -487,6 +488,21 @@ func handleLauncher(env envelope, cfg config.Config, svc Service) envelope {
 			},
 		}
 	}
+	promptTemplatesPayload := func(agentID, revision string, success bool, errText string) envelope {
+		return envelope{
+			Type:      base.Type,
+			RequestID: base.RequestID,
+			SentAt:    base.SentAt,
+			Payload: map[string]any{
+				"machine_id": cfg.Relay.MachineID,
+				"agent_id":   agentID,
+				"revision":   revision,
+				"success":    success,
+				"error":      errText,
+				"state":      svc.State(),
+			},
+		}
+	}
 	skillPayload := func(action string, selection *model.DeviceAgentSkillSelectionInfo, success bool, errText string) envelope {
 		return envelope{
 			Type:      base.Type,
@@ -714,6 +730,15 @@ func handleLauncher(env envelope, cfg config.Config, svc Service) envelope {
 			return semanticPayload("semantic_agent_save", nil, false, err.Error())
 		}
 		return semanticPayload("semantic_agent_save", &selection, true, "")
+	case "device.launcher.prompt_templates_save":
+		var payload model.DeviceAgentPromptTemplatesInput
+		blob, _ := json.Marshal(env.Payload)
+		_ = json.Unmarshal(blob, &payload)
+		revision, err := svc.SaveAgentPromptTemplates(payload)
+		if err != nil {
+			return promptTemplatesPayload(payload.AgentID, "", false, err.Error())
+		}
+		return promptTemplatesPayload(payload.AgentID, revision, true, "")
 	case "device.launcher.skills_get", "device.launcher.skills_save":
 		var payload model.DeviceAgentSkillSelectionInput
 		blob, _ := json.Marshal(env.Payload)

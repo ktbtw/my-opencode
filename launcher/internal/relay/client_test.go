@@ -828,6 +828,10 @@ func (relayTestService) AgentSemanticSelection(string) (model.DeviceAgentSemanti
 	return model.DeviceAgentSemanticSelectionInfo{}, nil
 }
 
+func (relayTestService) SaveAgentPromptTemplates(model.DeviceAgentPromptTemplatesInput) (string, error) {
+	return "", nil
+}
+
 func (relayTestService) SaveAgentSemanticSelection(model.DeviceAgentSemanticSelectionInput) (model.DeviceAgentSemanticSelectionInfo, error) {
 	return model.DeviceAgentSemanticSelectionInfo{}, nil
 }
