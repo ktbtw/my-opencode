@@ -40,7 +40,6 @@ const state = {
     platformDraft: "",
     semanticAgentId: "",
     semanticDraft: "",
-    deviceValue: "",
     deviceDraft: "",
     effective: null,
   },
