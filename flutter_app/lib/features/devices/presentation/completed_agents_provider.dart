@@ -64,13 +64,20 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
   /// 「任务完成」通知（`chat-task:` + kind=agent + succeeded，metadata 带
   /// machine_id/agent_id）：与通知中心同源，且带游标补拉，后台漏掉的事件也能补上。
   /// 只在 App 运行期间新到的通知上登记，历史通知不补登记，避免冷启动刷出一堆旧完成。
-  void handleNotification(AppNotificationRecord record) {
+  ///
+  /// [requireRunning] 用于冷启动补拉：只认"App 死之前记着它在跑"的那一条，
+  /// 这样被杀期间结束的任务不会漏，而更早的历史通知也不会被翻出来重登记。
+  void handleNotification(
+    AppNotificationRecord record, {
+    bool requireRunning = false,
+  }) {
     if (record.kind != AppNotificationKind.agent) return;
     if (record.status != AppNotificationStatus.succeeded) return;
     if (!record.operationId.startsWith('chat-task:')) return;
     final machine = _text(record.metadata['machine_id']);
     final agent = _text(record.metadata['agent_id']);
     if (machine.isEmpty || agent.isEmpty) return;
+    if (requireRunning && (_running[machine]?[agent] ?? '').isEmpty) return;
     _setRunning(machine, agent, null);
     _addCompleted(machine, agent);
   }
@@ -126,9 +133,9 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
             entry['enabled'] != false &&
             !_offlineStatuses.contains(_text(entry['status']).toLowerCase());
         if (!online) {
-          // 掉线/停用只清运行态：显式登记过的完成是权威记录，
-          // 不因为设备一时看不见就被启发式抹掉（列表本来就按在线过滤）。
-          _setRunning(machine, agent, null);
+          // 掉线/停用什么都不动：显式登记过的完成是权威记录，不因为
+          // "一时看不见"被抹掉；运行态也要留着——任务可能正是在设备离线
+          // 期间结束的，等它回来（或补拉到完成通知）再判定。
           continue;
         }
         final task = _text(entry['current_task_id']);
@@ -270,9 +277,13 @@ final completedAgentsProvider =
       ) {
         final records = [...next.active, ...next.recent];
         if (!hydrated) {
-          // 首次（本地水合 + 补拉）只记已见，不补登记历史完成。
+          // 首次（本地水合 + 游标补拉）不翻旧账，只认"死前记着它在跑"的那些：
+          // 被杀期间结束的任务靠它们登记，更早的历史通知不会命中运行态。
           hydrated = true;
-          seen.addAll(records.map((record) => record.id));
+          for (final record in records) {
+            seen.add(record.id);
+            notifier.handleNotification(record, requireRunning: true);
+          }
           return;
         }
         for (final record in records) {

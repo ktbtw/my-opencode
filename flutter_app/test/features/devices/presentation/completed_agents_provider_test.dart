@@ -137,6 +137,38 @@ void main() {
     expect(notifier.completedFor('machine-a'), {'a-1'});
   });
 
+  test('被杀期间跑完：重开时补拉到的完成通知能登记（Agent 已掉线也算）', () {
+    // 死之前：快照里它在跑，运行态落盘。
+    CompletedAgentsNotifier().handleEvent(
+      snapshotEvent([
+        {'agent_id': 'a-1', 'status': 'online', 'current_task_id': 'task-1'},
+      ]),
+    );
+
+    // 重开：新实例恢复运行态；水合阶段只认"死前在跑"的那条通知。
+    final restarted = CompletedAgentsNotifier();
+    restarted.handleNotification(
+      taskCompletedNotification(),
+      requireRunning: true,
+    );
+    expect(restarted.completedFor('machine-a'), {'a-1'});
+
+    // 与运行态无关的历史完成通知不会因此被翻出来。
+    restarted.handleNotification(
+      taskCompletedNotification(agent: 'a-9'),
+      requireRunning: true,
+    );
+    expect(restarted.completedFor('machine-a'), {'a-1'});
+
+    // 设备离线也不会抹掉这条权威登记。
+    restarted.handleEvent(
+      snapshotEvent([
+        {'agent_id': 'a-1', 'status': 'offline'},
+      ]),
+    );
+    expect(restarted.completedFor('machine-a'), {'a-1'});
+  });
+
   test('App 被杀后重开：运行态与完成态都从本地恢复', () {
     final first = CompletedAgentsNotifier();
     first.handleEvent(
