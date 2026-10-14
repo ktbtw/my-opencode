@@ -38,6 +38,11 @@
     <p class="prompt-meta">选择语义 Agent 后可为它单独设置槽位内容；留空表示继承平台默认。</p>
     <label class="prompt-meta">语义 Agent：<select id="agentSelect"></select></label>
     <div id="overrideList"></div>
+    <h2>设备 Agent 覆盖</h2>
+    <p class="prompt-meta">选择设备上的对话 Agent，可为它单独设置槽位内容（优先级最高）；留空表示继承语义 Agent 与平台默认。</p>
+    <label class="prompt-meta">设备 Agent：<select id="deviceAgentSelect"></select></label>
+    <div id="deviceOverrideList"></div>
     <script type="module" src="./prompts.js"></script>
+    <script type="module" src="./prompts-device.js"></script>
   </body>
 </html>
