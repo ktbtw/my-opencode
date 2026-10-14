@@ -161,3 +161,57 @@
 4. 控制台（`./deploy.sh --admin-web-only`）
 
 建议 1+2 先发（机制），3+4 紧随（内容管理）；也可一次全发。
+
+---
+
+## 七、B 类提示词的分级覆盖设计（统一默认 + Agent 单独设置）
+
+需求：既要有"统一的一份"，也要允许不同 Agent 各自设计自己的 B1/B2/B3，未设置时继承上层。
+
+### 7.1 覆盖链（优先级从高到低）
+
+```
+设备 Agent（单个对话 Agent，如「造梦西游6」）
+        ↓ 未设置则继承
+语义 Agent（角色，如「逆向专家-安卓」/「编码助手」）
+        ↓ 未设置则继承
+平台默认（统一的一份）
+        ↓ 最终兜底
+运行时内置文本（unified.txt / QUESTION_POLICY / 编排说明）
+```
+
+### 7.2 存储
+
+| 层级 | 位置 | 说明 |
+|------|------|------|
+| 平台默认 | 新表 `prompt_templates(slot, content, revision, updated_at)` | slot ∈ `base_prompt` / `question_policy` / `orchestration_prompt`；初始化写入当前内置文本，行为不变 |
+| 语义 Agent | `semantic_agents.prompt_templates_json` | `{slot: content}`，缺省/空串 = 继承平台 |
+| 设备 Agent | `device_settings`（`operator_id` + `agent_id`，key 如 `prompt_template.base_prompt`） | 空 = 继承语义 Agent |
+
+### 7.3 解析与下发
+
+- **解析放在后端**（一处逻辑）：`resolvePromptTemplates(operatorID, deviceAgentID)` 按 设备 Agent → 语义 Agent → 平台默认
+  取第一个非空值，返回三份最终文本 + 各级来源 + revision/hash。
+- **下发**：launcher 启动 / Agent 重启 / 控制台保存后推送时，后端按设备 Agent 解析并下发；
+  launcher 原子写入 `~/.my-opencode-launcher/prompts/<agent_id>/{base,question_policy,orchestration}.md`，
+  并在 OPENCODE_CONFIG_CONTENT 声明文件路径。
+- **运行时**按会话读取文件；文件不存在则用内置默认（独立 CLI 与未配置账号不受影响）。
+- 语义 Agent 的覆盖变更会影响所有绑定它的设备 Agent → 推送时按绑定关系广播。
+
+### 7.4 控制台 UI
+
+- 新页「系统提示词（默认）」：平台默认的三个编辑器 + 恢复默认。
+- 「编辑语义 Agent」抽屉新增「系统提示词覆盖」区块：三个编辑器，留空显示"继承平台默认"，并提供"查看当前生效值"。
+- 设备 Agent 设置页同样提供三个覆盖项（留空显示"继承语义 Agent：<名称>"）。
+
+### 7.5 生效路径
+
+控制台保存 → 后端解析 → 推送到在线 launcher → 写入文件 → **下一条消息生效**（无需重启 Agent）。
+离线设备在下次启动 / Agent 重启时拉取。
+
+### 7.6 与前面方案的关系
+
+- 原「改动①：改 unified.txt 优先级表 + 身份条款」不再需要改代码：把带优先级表和身份条款的文本设为**平台默认**，
+  需要不同表现的语义 Agent 再各自覆盖即可。
+- 原「改动④：B3 未加载」由本机制直接修掉（改为真实文件读取）。
+- B4（环境信息）仍为自动生成；B5 技能块模板暂不开放（技能描述已由技能配置控制）。
