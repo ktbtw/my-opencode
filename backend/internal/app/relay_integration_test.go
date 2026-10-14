@@ -60,8 +60,8 @@ func (a relayTestArchive) GetOperatorMembershipTier(int64) (string, error) {
 }
 
 func (a relayTestArchive) SetOperatorMembershipTier(int64, string) error { return nil }
-func (a relayTestArchive) UsernameExists(string) (bool, error)    { return false, nil }
-func (a relayTestArchive) EmailExists(string) (bool, error)       { return false, nil }
+func (a relayTestArchive) UsernameExists(string) (bool, error)           { return false, nil }
+func (a relayTestArchive) EmailExists(string) (bool, error)              { return false, nil }
 func (a relayTestArchive) CreateOperator(string, string, string, string) (*model.Operator, error) {
 	return nil, nil
 }
@@ -71,7 +71,8 @@ func (a relayTestArchive) SetDeviceSetting(int64, string, string, string) error 
 func (a relayTestArchive) GetDeviceSettings(int64, string) (map[string]string, error) {
 	return nil, nil
 }
-func (a relayTestArchive) DeleteDeviceSettings(int64, string) error { return nil }
+func (a relayTestArchive) DeleteDeviceSettings(int64, string) error        { return nil }
+func (a relayTestArchive) DeleteDeviceSetting(int64, string, string) error { return nil }
 func (a relayTestArchive) ListDeviceSettingAgentIDs(int64, string) ([]string, error) {
 	return nil, nil
 }
@@ -137,6 +138,20 @@ func (a relayTestArchive) UpsertToolCatalogItem(model.ToolCatalogItem) (*model.T
 	return nil, nil
 }
 func (a relayTestArchive) DeleteToolCatalogItem(string) error { return nil }
+func (a relayTestArchive) ListPromptTemplates() (map[string]store.PromptTemplate, error) {
+	return nil, nil
+}
+func (a relayTestArchive) UpsertPromptTemplate(string, string) (store.PromptTemplate, error) {
+	return store.PromptTemplate{}, nil
+}
+func (a relayTestArchive) DeletePromptTemplate(string) error { return nil }
+func (a relayTestArchive) PromptTemplateAppliedRevision(int64, string) (string, error) {
+	return "", nil
+}
+func (a relayTestArchive) SetPromptTemplateAppliedRevision(int64, string, string) error { return nil }
+func (a relayTestArchive) PromptTemplateDeviceOverrideCounts() (map[string]int, error) {
+	return nil, nil
+}
 func (a relayTestArchive) ListSemanticAgents(bool) ([]model.SemanticAgentProfile, error) {
 	return nil, nil
 }

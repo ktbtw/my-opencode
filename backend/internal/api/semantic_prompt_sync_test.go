@@ -13,6 +13,7 @@ import (
 	"relay-server/internal/auth"
 	"relay-server/internal/broker"
 	"relay-server/internal/model"
+	"relay-server/internal/promptregistry"
 	"relay-server/internal/store"
 )
 
@@ -149,6 +150,7 @@ func TestRestartDeviceAgentPushesLatestSemanticPrompt(t *testing.T) {
 	b := broker.New()
 
 	var saved *model.DeviceAgentSemanticSelectionPayload
+	var promptPayload *promptTemplatesPayload
 	var restarted bool
 	api := newTestAPI(mem, b, authManager, testAPIOptions{
 		launcherRequest: func(_ context.Context, _ int64, _, _, envType string, payload any) (model.DeviceLauncherResultPayload, error) {
@@ -176,6 +178,14 @@ func TestRestartDeviceAgentPushesLatestSemanticPrompt(t *testing.T) {
 				copied := info
 				saved = &copied
 				return model.DeviceLauncherResultPayload{Action: "semantic_agent_save", Success: true}, nil
+			case "device.launcher.prompt_templates_save":
+				// 重启前补推提示词槽位（prompt_slots 清单 + 槽位文件）。
+				pushed, ok := payload.(promptTemplatesPayload)
+				if !ok {
+					t.Fatalf("unexpected payload type %#v", payload)
+				}
+				promptPayload = &pushed
+				return model.DeviceLauncherResultPayload{Action: "prompt_templates_save", Success: true}, nil
 			case "device.launcher.restart_agent":
 				restarted = true
 				return model.DeviceLauncherResultPayload{Action: "restart_agent", Success: true}, nil
@@ -207,6 +217,12 @@ func TestRestartDeviceAgentPushesLatestSemanticPrompt(t *testing.T) {
 	}
 	if !restarted {
 		t.Fatal("expected launcher restart call")
+	}
+	if promptPayload == nil {
+		t.Fatal("重启前未补推提示词槽位（prompt_slots）")
+	}
+	if promptPayload.AgentID != "agent_chat_codex" || len(promptPayload.Templates) != len(promptregistry.All()) {
+		t.Fatalf("补推的槽位清单不完整: %+v", promptPayload)
 	}
 	if saved == nil {
 		t.Fatal("重启前未把最新语义 Agent 提示词推给设备")
@@ -260,6 +276,8 @@ func TestRestartDeviceAgentSkipsSyncWhenPromptIsEmpty(t *testing.T) {
 			case "device.launcher.semantic_agent_save":
 				saved = true
 				return model.DeviceLauncherResultPayload{Action: "semantic_agent_save", Success: true}, nil
+			case "device.launcher.prompt_templates_save":
+				return model.DeviceLauncherResultPayload{Action: "prompt_templates_save", Success: true}, nil
 			case "device.launcher.restart_agent":
 				return model.DeviceLauncherResultPayload{Action: "restart_agent", Success: true}, nil
 			default:
@@ -331,6 +349,8 @@ func TestRestartDeviceAgentPushesOnEveryRestart(t *testing.T) {
 				copied := info
 				saved = &copied
 				return model.DeviceLauncherResultPayload{Action: "semantic_agent_save", Success: true}, nil
+			case "device.launcher.prompt_templates_save":
+				return model.DeviceLauncherResultPayload{Action: "prompt_templates_save", Success: true}, nil
 			case "device.launcher.restart_agent":
 				return model.DeviceLauncherResultPayload{Action: "restart_agent", Success: true}, nil
 			default:

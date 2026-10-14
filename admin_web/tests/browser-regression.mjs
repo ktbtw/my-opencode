@@ -42,17 +42,23 @@ try{
  check('document.querySelector("#grid").classList.contains("list-mode") && document.querySelector("#listViewButton").getAttribute("aria-pressed")==="true"','list display mode survives reload');
  run('press','Control+k');run('fill','#commandInput','Skill');run('press','Enter');ready();
  check('document.querySelector("#topbarTitle").textContent==="Skill 库" && document.querySelectorAll("#grid article").length===1','command search and keyboard navigation work');
- for(const [view,title] of [['tools','工具库'],['semantic','语义 Agent'],['runtime','运行时环境'],['environment','环境变量预设'],['modelPrompts','模型提示词预设'],['operators','会员管理']]){
+ for(const [view,title] of [['tools','工具库'],['semantic','语义 Agent'],['runtime','运行时环境'],['environment','环境变量预设'],['modelPrompts','模型提示词预设'],['prompts','提示词管理'],['operators','会员管理']]){
   run('scrollintoview',`a[data-view=${view}]`);run('click',`a[data-view=${view}]`);ready();
   check(`document.querySelector('#topbarTitle').textContent===${JSON.stringify(title)} && document.querySelectorAll('#grid article').length>0`,`${title} renders successfully`);
  }
  check('document.querySelector("#newButton").classList.contains("hidden") && document.querySelector("#statusFilterGroup").classList.contains("hidden")','membership view hides irrelevant resource controls');
- for(const view of ['skills','semantic','runtime','environment','modelPrompts','tools']){
+ for(const view of ['skills','semantic','runtime','environment','modelPrompts','prompts','tools']){
   run('scrollintoview',`a[data-view=${view}]`);run('click',`a[data-view=${view}]`);ready();run('click','#grid [data-action=edit]');
   run('wait','--fn','!document.querySelector("#drawerOverlay").classList.contains("hidden")');
   check('document.querySelector("#appView").inert && document.querySelector("#drawerOverlay input:focus")!==null',`${view} editor opens with keyboard focus`);
   if(view==='modelPrompts'){
    check('document.querySelector("#modelPromptFieldPrompt")!==null && [...document.querySelectorAll(".form-section")].filter(s=>!s.classList.contains("hidden")).length===1','model prompt editor shows only its own section');
+  }
+  if(view==='prompts'){
+   check('document.querySelector("#promptPlatformValue")!==null && document.querySelectorAll("#promptLevelTabs [data-prompt-level]").length===3 && [...document.querySelectorAll(".form-section")].filter(s=>!s.classList.contains("hidden")).length===1','prompt registry editor shows three override levels in one section');
+   run('click','[data-prompt-level=device]');
+   run('wait','--fn','document.querySelector("#promptDeviceAgentSelect").options.length>0');
+   check('document.querySelector("#promptDeviceValue").value.length>0','device level loads per-slot override detail');
   }
   run('press','Escape');
  }
