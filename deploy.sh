@@ -927,8 +927,8 @@ payload = {
     "channel": "latest",
     # 用 chr(10) 拼换行，避免在多层引号里写转义序列出错。
     "changelog": chr(10).join([
-        "- 支持控制台下发的提示词槽位：写入 prompts/<agent_id>/<slot_id>.txt 并在 opencode 配置里声明 prompt_slots",
-        "- 新增 device.launcher.prompt_templates_save 命令：原子写入 + manifest，运行时按会话读取，控制台改完下一条消息即生效",
+        "- 工作目录文件管理支持隐藏项：.env、.gitignore、.git/ 等以 . 开头的文件与目录不再被过滤",
+        "- 隐藏项与普通项一起排序，目录仍排在文件之前",
     ]),
     "downloads": [
         {

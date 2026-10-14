@@ -746,9 +746,8 @@ func (s *service) ProjectFiles(req model.ProjectFilesRequest) (model.DirectoryLi
 	}
 	items := make([]model.Directory, 0, len(entries))
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
+		// 工作目录文件管理要能看到隐藏项：.env、.gitignore、.git/ 这些
+		// 在项目里是正常内容，隐藏掉反而看不到配置与版本库。
 		childRelative := filepath.ToSlash(filepath.Join(relative, entry.Name()))
 		items = append(items, model.Directory{
 			Path:  childRelative,

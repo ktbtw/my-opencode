@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -616,6 +617,43 @@ func TestDirectoryFileMutationRejectsSymlinkEscape(t *testing.T) {
 	svc := &service{cfg: config.Config{Discovery: config.DiscoveryConfig{AllowedRoots: []string{root}}}}
 	if _, err := svc.CreateDirectoryFile(model.DirectoryFileRequest{Path: filepath.Join(link, "escaped.txt")}); err == nil {
 		t.Fatal("expected symlink escape rejected")
+	}
+}
+
+func TestProjectFilesListsHiddenEntries(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{".env", ".gitignore", "main.go"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	svc := &service{
+		agents: []model.Agent{{
+			AgentID:    "agent_hidden",
+			ProjectDir: root,
+		}},
+		processes: map[string]int{},
+	}
+
+	result, err := svc.ProjectFiles(model.ProjectFilesRequest{AgentID: "agent_hidden"})
+	if err != nil {
+		t.Fatalf("list project files: %v", err)
+	}
+	names := make([]string, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		names = append(names, entry.Name)
+	}
+	for _, want := range []string{".env", ".gitignore", ".git", "main.go"} {
+		if !slices.Contains(names, want) {
+			t.Fatalf("隐藏项 %q 没有出现在列表里：%v", want, names)
+		}
+	}
+	// 目录仍然排在文件前面。
+	if result.Entries[0].Name != ".git" || !result.Entries[0].IsDir {
+		t.Fatalf("目录应排在最前：%+v", result.Entries[0])
 	}
 }
 
