@@ -174,12 +174,14 @@ try {
   await cdp.evaluate('document.querySelector("[data-prompt-level=semantic]").click()');
   await cdp.waitFor('!document.querySelector("#promptSemanticBlock").classList.contains("hidden")');
   check(await cdp.evaluate('document.querySelector("#promptSemanticValue").value') === '语义版提问策略', '语义 Agent 层显示该 Agent 的覆盖值');
+  check(await cdp.evaluate('document.querySelector("#promptSemanticClearButton").disabled === false'), '已有语义覆盖时清除按钮可用');
 
   await cdp.evaluate('document.querySelector("[data-prompt-level=device]").click()');
   await cdp.waitFor('document.querySelector("#promptDeviceAgentSelect").options.length > 1 && !document.querySelector("#promptDeviceBlock").classList.contains("hidden")');
   await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "设备版提问策略"');
   check(await cdp.evaluate('document.querySelector("#promptDeviceHint").textContent.includes("设备 Agent")'), '设备层展示当前生效来源');
   check(await cdp.evaluate('document.querySelector("#promptDeviceAgentSelect").options[0].textContent.includes("fixture-host")'), '设备下拉列出在线设备 Agent');
+  check(await cdp.evaluate('document.querySelector("#promptDeviceClearButton").disabled === false'), '已有设备覆盖时清除按钮可用');
 
   // 下拉框必须是控制台自绘 UI：原生 select 隐藏，自定义触发器可用。
   check(await cdp.evaluate(`
@@ -210,11 +212,11 @@ try {
   await fetch(`${base}/_fixture/control`, { method: 'POST', body: JSON.stringify({ emptyDevices: false }) });
 
   await cdp.evaluate('document.querySelector("[data-prompt-level=platform]").click()');
-  await cdp.evaluate(`
+  await cdp.evaluate(`(() => {
     const input = document.querySelector("#promptPlatformValue");
     input.value = "控制台改写的平台提示词";
     input.dispatchEvent(new Event("input", { bubbles: true }));
-  `);
+  })()`);
   await cdp.evaluate('document.querySelector("#saveButton").click()');
   await cdp.waitFor('document.querySelector("#toast").textContent.includes("平台默认已保存")');
   await cdp.waitFor('document.querySelector("#promptPlatformHint").textContent.includes("revision 3")');
@@ -226,6 +228,10 @@ try {
   await cdp.waitFor('document.querySelector("#toast").textContent.includes("已恢复内置默认")');
   await cdp.waitFor('document.querySelector("#promptPlatformHint").textContent.includes("当前未设置平台值")');
   check(true, '恢复内置默认走确认弹窗并生效');
+  check(await cdp.evaluate('document.querySelector("#promptPlatformValue").value') === '需要用户确认时先提问。', '平台未覆盖时编辑框直接展示内置默认（无需手动点击）');
+  await cdp.evaluate('document.querySelector("#saveButton").click()');
+  await cdp.waitFor('document.querySelector("#toast").textContent.includes("未创建覆盖")');
+  check(await cdp.evaluate('document.querySelector("#promptPlatformHint").textContent.includes("当前未设置平台值")'), '保存默认原文不会创建覆盖');
 
   // 编辑器有未保存改动时，关闭会先弹确认。
   await cdp.evaluate('document.querySelector("#closeDrawerButton").click()');
@@ -233,6 +239,60 @@ try {
   await cdp.evaluate('document.querySelector("#confirmOk").click()');
   await cdp.waitFor('document.querySelector("#drawerOverlay").classList.contains("hidden")');
   check(await cdp.evaluate('!document.querySelector("#grid article .pill.enabled")'), '恢复默认后卡片回到「内置默认」状态');
+
+  // 未配置的槽位：三级编辑框直接展示默认/继承值；保存默认原文不产生覆盖；改回默认自动恢复。
+  await cdp.evaluate('[...document.querySelectorAll("#grid [data-action=edit]")].find(b => b.dataset.id === "chat.base_prompt").click()');
+  await cdp.waitFor('!document.querySelector("#drawerOverlay").classList.contains("hidden")');
+  check(await cdp.evaluate('document.querySelector("#promptPlatformValue").value') === '你是当前服务中的主工作 Agent。', '未配置槽位的平台编辑框直接展示内置默认');
+  check(await cdp.evaluate('document.querySelector("#promptResetButton").disabled === true && document.querySelector("#promptSemanticClearButton").disabled === true'), '无覆盖时恢复/清除按钮禁用');
+
+  await cdp.evaluate('document.querySelector("[data-prompt-level=semantic]").click()');
+  await cdp.waitFor('!document.querySelector("#promptSemanticBlock").classList.contains("hidden")');
+  check(await cdp.evaluate('document.querySelector("#promptSemanticValue").value') === '你是当前服务中的主工作 Agent。', '语义层未覆盖时编辑框展示继承值');
+
+  await cdp.evaluate('document.querySelector("[data-prompt-level=device]").click()');
+  await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "你是当前服务中的主工作 Agent。"');
+  check(await cdp.evaluate('document.querySelector("#promptDeviceClearButton").disabled === true'), '设备层未覆盖时清除按钮禁用');
+
+  await cdp.evaluate('document.querySelector("[data-prompt-level=platform]").click()');
+  await cdp.evaluate('document.querySelector("#saveButton").click()');
+  await cdp.waitFor('document.querySelector("#toast").textContent.includes("未创建覆盖")');
+  await cdp.evaluate(`(() => {
+    const input = document.querySelector("#promptPlatformValue");
+    input.value = "临时平台覆盖";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await cdp.evaluate('document.querySelector("#saveButton").click()');
+  await cdp.waitFor('document.querySelector("#toast").textContent.includes("平台默认已保存")');
+  await cdp.waitFor('document.querySelector("#promptPlatformHint").textContent.includes("revision 1")');
+  await cdp.evaluate(`(() => {
+    const input = document.querySelector("#promptPlatformValue");
+    input.value = "你是当前服务中的主工作 Agent。";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await cdp.evaluate('document.querySelector("#saveButton").click()');
+  await cdp.waitFor('document.querySelector("#toast").textContent.includes("已恢复内置默认")');
+  await cdp.waitFor('document.querySelector("#promptPlatformHint").textContent.includes("当前未设置平台值")');
+  check(await cdp.evaluate('document.querySelector("#promptPlatformValue").value') === '你是当前服务中的主工作 Agent。', '平台改回默认文本保存后自动恢复默认并回填默认文本');
+
+  await cdp.evaluate('document.querySelector("#closeDrawerButton").click()');
+  await cdp.waitFor('!document.querySelector("#confirmOverlay").classList.contains("hidden")');
+  await cdp.evaluate('document.querySelector("#confirmOk").click()');
+  await cdp.waitFor('document.querySelector("#drawerOverlay").classList.contains("hidden")');
+
+  // 设备层清除覆盖：确认后恢复继承（回落到语义 Agent 值）。
+  await cdp.evaluate('[...document.querySelectorAll("#grid [data-action=edit]")].find(b => b.dataset.id === "chat.question_policy").click()');
+  await cdp.waitFor('!document.querySelector("#drawerOverlay").classList.contains("hidden")');
+  await cdp.evaluate('document.querySelector("[data-prompt-level=device]").click()');
+  await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "设备版提问策略"');
+  await cdp.evaluate('document.querySelector("#promptDeviceClearButton").click()');
+  await cdp.waitFor('!document.querySelector("#confirmOverlay").classList.contains("hidden")');
+  await cdp.evaluate('document.querySelector("#confirmOk").click()');
+  await cdp.waitFor('document.querySelector("#toast").textContent.includes("已清除该层覆盖")');
+  await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "语义版提问策略"');
+  check(await cdp.evaluate('document.querySelector("#promptDeviceHint").textContent.includes("语义 Agent")'), '设备层清除覆盖后恢复继承（来源变为语义 Agent）');
+  await cdp.evaluate('document.querySelector("#closeDrawerButton").click()');
+  await cdp.waitFor('document.querySelector("#drawerOverlay").classList.contains("hidden")');
 
   const errors = cdp.errors.filter((message) => message && !message.includes('favicon'));
   check(errors.length === 0, `控制台无运行时异常${errors.length ? `：${errors.join(' | ')}` : ''}`);

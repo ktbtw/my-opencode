@@ -139,19 +139,16 @@ const el = {
   promptPlatformBlock: document.querySelector("#promptPlatformBlock"),
   promptPlatformValue: document.querySelector("#promptPlatformValue"),
   promptPlatformHint: document.querySelector("#promptPlatformHint"),
-  promptViewDefaultButton: document.querySelector("#promptViewDefaultButton"),
   promptResetButton: document.querySelector("#promptResetButton"),
   promptSemanticBlock: document.querySelector("#promptSemanticBlock"),
   promptSemanticAgentSelect: document.querySelector("#promptSemanticAgentSelect"),
   promptSemanticValue: document.querySelector("#promptSemanticValue"),
   promptSemanticHint: document.querySelector("#promptSemanticHint"),
-  promptSemanticLoadButton: document.querySelector("#promptSemanticLoadButton"),
   promptSemanticClearButton: document.querySelector("#promptSemanticClearButton"),
   promptDeviceBlock: document.querySelector("#promptDeviceBlock"),
   promptDeviceAgentSelect: document.querySelector("#promptDeviceAgentSelect"),
   promptDeviceValue: document.querySelector("#promptDeviceValue"),
   promptDeviceHint: document.querySelector("#promptDeviceHint"),
-  promptDeviceLoadButton: document.querySelector("#promptDeviceLoadButton"),
   promptDeviceClearButton: document.querySelector("#promptDeviceClearButton"),
   promptDeviceRefreshButton: document.querySelector("#promptDeviceRefreshButton"),
   modelPromptFieldId: document.querySelector("#modelPromptFieldId"),
@@ -318,42 +315,12 @@ function bootstrap() {
   el.promptSemanticAgentSelect.addEventListener("change", () => selectPromptSemanticAgent(el.promptSemanticAgentSelect.value));
   el.promptDeviceAgentSelect.addEventListener("change", () => selectPromptDeviceAgent(el.promptDeviceAgentSelect.value));
   el.promptDeviceRefreshButton.addEventListener("click", refreshPromptDeviceAgents);
-  el.promptViewDefaultButton.addEventListener("click", () => {
-    const slot = promptSlotByID(state.promptEditor.slotId);
-    if (!slot) return;
-    el.promptPlatformHint.textContent = `内置默认 ${String(slot.default || "").length} 字：${promptTextPreview(slot.default, 300)}`;
-  });
   el.promptResetButton.addEventListener("click", () => {
     const slot = promptSlotByID(state.promptEditor.slotId);
     if (slot) resetPromptSlot(slot, el.promptResetButton);
   });
-  el.promptSemanticLoadButton.addEventListener("click", () => {
-    const slot = promptSlotByID(state.promptEditor.slotId);
-    if (!slot) return;
-    state.promptEditor.semanticDraft = promptInheritedValue(slot) || "";
-    el.promptSemanticValue.value = state.promptEditor.semanticDraft;
-    markEditorDirty();
-  });
-  el.promptSemanticClearButton.addEventListener("click", () => {
-    state.promptEditor.semanticDraft = "";
-    el.promptSemanticValue.value = "";
-    markEditorDirty();
-  });
-  el.promptDeviceLoadButton.addEventListener("click", () => {
-    const effective = (state.promptEditor.effective || []).find((item) => item.slot_id === state.promptEditor.slotId);
-    if (!effective) {
-      showToast("请先选择设备 Agent");
-      return;
-    }
-    state.promptEditor.deviceDraft = effective.effective || "";
-    el.promptDeviceValue.value = state.promptEditor.deviceDraft;
-    markEditorDirty();
-  });
-  el.promptDeviceClearButton.addEventListener("click", () => {
-    state.promptEditor.deviceDraft = "";
-    el.promptDeviceValue.value = "";
-    markEditorDirty();
-  });
+  el.promptSemanticClearButton.addEventListener("click", () => clearPromptSemanticOverride(el.promptSemanticClearButton));
+  el.promptDeviceClearButton.addEventListener("click", () => clearPromptDeviceOverride(el.promptDeviceClearButton));
   el.addRuntimeVersionButton.addEventListener("click", () => addRuntimeNestedItem("version"));
   el.addRuntimeMirrorButton.addEventListener("click", () => addRuntimeNestedItem("mirror"));
   el.addRuntimeArtifactButton.addEventListener("click", () => addRuntimeNestedItem("artifact"));
@@ -718,6 +685,19 @@ function promptInheritedValue(slot) {
   return slot && slot.platform_set ? slot.platform_value : (slot ? slot.default : "");
 }
 
+// 保存时按"与默认/继承值是否一致"判断是否需要落覆盖：一致则视为保持默认，不产生冗余覆盖。
+function promptTextEqual(left, right) {
+  return String(left || "").trim() === String(right || "").trim();
+}
+
+// 设备层在"无设备覆盖"时编辑框应展示的继承值（语义 → 平台 → 内置默认）。
+function promptDeviceInheritedValue(slot, resolution) {
+  if (resolution) {
+    return resolution.semantic_value || resolution.platform_value || (slot ? slot.default : "");
+  }
+  return promptInheritedValue(slot);
+}
+
 // 槽位卡片：展示覆盖层级、风险、覆盖统计与当前生效文本（平台值优先，否则内置默认）。
 function promptSlotCardTemplate(item) {
   const scopes = (item.scope || []).map(promptScopeLabel).join(" / ");
@@ -794,7 +774,7 @@ function renderPromptEditorChrome() {
   el.promptSlotTitle.textContent = slot.id;
   el.promptSlotMeta.textContent = `${promptCategoryLabel(slot.category)} · 风险 ${promptRiskLabel(slot.risk)}`;
   const variables = Array.isArray(slot.variables) ? slot.variables : [];
-  const parts = ["覆盖顺序：设备 Agent → 语义 Agent → 平台默认 → 内置默认，留空即继承上一层。"];
+  const parts = ["覆盖顺序：设备 Agent → 语义 Agent → 平台默认 → 内置默认；未写覆盖时编辑框内为默认/继承值，保存内容与默认一致时不会创建覆盖。"];
   if (variables.length) parts.push(`可用占位符：${variables.map((name) => `{{${name}}}`).join(" ")}（保存时缺失会被拒绝）`);
   el.promptSlotDescription.textContent = parts.join(" ");
 }
@@ -817,7 +797,9 @@ function renderPromptEditor() {
   const builtin = slot.default || "";
   el.promptPlatformValue.value = state.promptEditor.platformDraft;
   const platformSet = Boolean(slot.platform_set);
-  el.promptPlatformHint.textContent = `内置默认 ${builtin.length} 字；${platformSet ? `当前平台值 ${String(slot.platform_value || "").length} 字（revision ${slot.revision || 1}）` : "当前未设置平台值，设备端使用内置默认"}`;
+  el.promptPlatformHint.textContent = platformSet
+    ? `当前平台值 ${String(slot.platform_value || "").length} 字（revision ${slot.revision || 1}）；改回与内置默认一致会恢复内置默认。`
+    : `当前未设置平台值，编辑框内为内置默认（${builtin.length} 字）；编辑后保存即覆盖。`;
   el.promptResetButton.disabled = !platformSet;
 
   renderPromptSemanticFields(slot);
@@ -845,16 +827,20 @@ function renderPromptSemanticFields(slot) {
   el.promptSemanticAgentSelect.disabled = !agents.length;
   if (state.promptEditor.semanticDraftSlot !== `${selected}|${slot.id}`) {
     const agent = agents.find((item) => item.id === selected);
-    state.promptEditor.semanticDraft = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
+    const override = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
+    // 未写覆盖时把继承值（平台默认 → 内置默认）放进编辑框，用户直接在此基础上改。
+    state.promptEditor.semanticDraft = override || promptInheritedValue(slot);
     state.promptEditor.semanticDraftSlot = `${selected}|${slot.id}`;
   }
   el.promptSemanticValue.value = state.promptEditor.semanticDraft;
   syncCustomSelect(el.promptSemanticAgentSelect);
   const agent = agents.find((item) => item.id === selected);
+  const override = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
   const overrideCount = agent && agent.prompt_templates ? Object.keys(agent.prompt_templates).length : 0;
   el.promptSemanticHint.textContent = agent
-    ? `${agent.name || agent.id} 当前覆盖了 ${overrideCount} 个槽位；继承值：${promptTextPreview(promptInheritedValue(slot), 80)}`
+    ? `${agent.name || agent.id} 共覆盖 ${overrideCount} 个槽位；${override ? "本槽位已覆盖，保存可修改。" : "本槽位未覆盖，编辑框内为继承值。"}`
     : "暂无可选的语义 Agent。";
+  el.promptSemanticClearButton.disabled = !override;
 }
 
 function promptDeviceAgentLabel(item) {
@@ -884,9 +870,11 @@ function renderPromptDeviceFields(slot) {
   }
   const current = devices[index];
   const applied = current.applied_revision ? `已下发 revision ${current.applied_revision}` : "尚未下发过提示词槽位";
+  const hasOverride = Boolean(effective && effective.device_value);
   el.promptDeviceHint.textContent = effective
-    ? `当前生效来源：${promptScopeLabel(effective.source)}；${applied}`
+    ? `当前生效来源：${promptScopeLabel(effective.source)}；${hasOverride ? "本槽位已覆盖，保存可修改。" : "本槽位未覆盖，编辑框内为继承值。"}${applied}`
     : applied;
+  el.promptDeviceClearButton.disabled = !hasOverride;
 }
 
 async function loadPromptDeviceDetail() {
@@ -905,7 +893,9 @@ async function loadPromptDeviceDetail() {
     const items = Array.isArray(data.items) ? data.items : [];
     const current = items.find((item) => item.slot_id === state.promptEditor.slotId);
     state.promptEditor.effective = items;
-    state.promptEditor.deviceDraft = current ? current.device_value || "" : "";
+    const slot = promptSlotByID(state.promptEditor.slotId);
+    // 未写覆盖时把继承值放进编辑框；已覆盖则展示覆盖内容本身。
+    state.promptEditor.deviceDraft = (current && current.device_value) || promptDeviceInheritedValue(slot, current);
     state.promptEditor.deviceDraftKey = `${device.machine_id}|${device.agent_id}|${state.promptEditor.slotId}`;
     renderPromptEditor();
   } catch (error) {
@@ -921,7 +911,7 @@ function openPromptEditor(item) {
   state.promptEditor = {
     slotId: item.id,
     level: "platform",
-    platformDraft: item.platform_value || "",
+    platformDraft: item.platform_set ? item.platform_value : (item.default || ""),
     semanticAgentId: "",
     semanticDraft: "",
     semanticDraftSlot: "",
@@ -984,6 +974,15 @@ async function savePromptEditor() {
       showToast("平台默认不能为空；如需回落内置默认，请用「恢复内置默认」");
       return;
     }
+    if (promptTextEqual(content, slot.default)) {
+      // 编辑框内是内置默认原文：保存即视为"保持内置默认"，不产生冗余覆盖。
+      if (slot.platform_set) {
+        await performPromptReset(slot, el.saveButton);
+      } else {
+        showToast("内容与内置默认一致，未创建覆盖");
+      }
+      return;
+    }
     await runAdminAction({
       button: el.saveButton,
       busyText: "保存中",
@@ -1007,18 +1006,28 @@ async function savePromptEditor() {
       return;
     }
     const content = el.promptSemanticValue.value;
+    const agent = (state.semanticAgents || []).find((item) => item.id === agentID);
+    const currentOverride = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
+    if (promptTextEqual(content, promptInheritedValue(slot))) {
+      // 内容与继承值一致：不创建覆盖；已有覆盖则顺手清掉，保持"覆盖只存差异"。
+      if (currentOverride) {
+        await clearPromptSemanticOverride(el.saveButton, { skipConfirm: true });
+      } else {
+        showToast("内容与继承值一致，未创建覆盖");
+      }
+      return;
+    }
     await runAdminAction({
       button: el.saveButton,
       busyText: "保存中",
       pendingText: `正在保存「${slot.id}」语义 Agent 覆盖...`,
-      successText: content.trim() ? "语义 Agent 覆盖已保存并广播到绑定设备" : "语义 Agent 覆盖已清除",
+      successText: "语义 Agent 覆盖已保存并广播到绑定设备",
       failureText: "保存语义 Agent 覆盖失败",
       action: async () => {
         await apiPost("/api/admin/prompt-registry/semantic-overrides", {
           semantic_agent_id: agentID,
           overrides: { [slot.id]: content },
         });
-        state.promptEditor.semanticDraft = content.trim() ? content : "";
         state.promptEditor.semanticDraftSlot = "";
         await loadPromptRegistry();
         renderPromptEditorChrome();
@@ -1033,11 +1042,21 @@ async function savePromptEditor() {
     return;
   }
   const content = el.promptDeviceValue.value;
+  const resolution = (state.promptEditor.effective || []).find((item) => item.slot_id === slot.id);
+  const currentOverride = (resolution && resolution.device_value) || "";
+  if (promptTextEqual(content, promptDeviceInheritedValue(slot, resolution))) {
+    if (currentOverride) {
+      await clearPromptDeviceOverride(el.saveButton, { skipConfirm: true });
+    } else {
+      showToast("内容与继承值一致，未创建覆盖");
+    }
+    return;
+  }
   await runAdminAction({
     button: el.saveButton,
     busyText: "保存中",
     pendingText: `正在保存「${slot.id}」设备 Agent 覆盖...`,
-    successText: content.trim() ? "设备 Agent 覆盖已保存并下发" : "设备 Agent 覆盖已清除",
+    successText: "设备 Agent 覆盖已保存并下发",
     failureText: "保存设备 Agent 覆盖失败",
     action: async () => {
       await apiPost("/api/admin/prompt-registry/device-overrides", {
@@ -1056,6 +1075,10 @@ async function savePromptEditor() {
 async function resetPromptSlot(item, button = null) {
   const confirmed = await confirmAction("恢复内置默认", `确认清除「${item.id}」的平台默认值？清除后该槽位回落到运行时内置文本。`);
   if (!confirmed) return;
+  await performPromptReset(item, button);
+}
+
+async function performPromptReset(item, button = null) {
   await runAdminAction({
     button,
     busyText: "恢复中",
@@ -1065,13 +1088,87 @@ async function resetPromptSlot(item, button = null) {
     action: async () => {
       await apiPost(`/api/admin/prompt-templates/${encodeURIComponent(item.id)}/reset`, {});
       if (state.promptEditor.slotId === item.id) {
-        state.promptEditor.platformDraft = "";
+        state.promptEditor.platformDraft = item.default || "";
       }
       await loadPromptRegistry();
       if (!el.drawerOverlay.classList.contains("hidden")) {
         renderPromptEditorChrome();
         renderPromptEditor();
       }
+    },
+  });
+}
+
+// 清除语义 Agent 覆盖：恢复继承（平台默认 → 内置默认）。
+async function clearPromptSemanticOverride(button = null, options = {}) {
+  const slot = promptSlotByID(state.promptEditor.slotId);
+  const agentID = el.promptSemanticAgentSelect.value;
+  if (!slot || !agentID) {
+    showToast("请先选择语义 Agent");
+    return;
+  }
+  const agent = (state.semanticAgents || []).find((item) => item.id === agentID);
+  const override = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
+  if (!override) {
+    showToast("该语义 Agent 未覆盖此槽位");
+    return;
+  }
+  if (!options.skipConfirm) {
+    const confirmed = await confirmAction("清除语义 Agent 覆盖", `确认清除「${agent.name || agent.id}」对「${slot.id}」的覆盖？清除后回落到平台默认 / 内置默认。`);
+    if (!confirmed) return;
+  }
+  await runAdminAction({
+    button,
+    busyText: "清除中",
+    pendingText: "正在清除语义 Agent 覆盖...",
+    successText: "已清除该层覆盖，恢复继承",
+    failureText: "清除语义 Agent 覆盖失败",
+    action: async () => {
+      await apiPost("/api/admin/prompt-registry/semantic-overrides", {
+        semantic_agent_id: agentID,
+        overrides: { [slot.id]: "" },
+      });
+      state.promptEditor.semanticDraftSlot = "";
+      await loadPromptRegistry();
+      renderPromptEditorChrome();
+      renderPromptEditor();
+    },
+  });
+}
+
+// 清除设备 Agent 覆盖：恢复继承（语义 Agent → 平台默认 → 内置默认）。
+async function clearPromptDeviceOverride(button = null, options = {}) {
+  const slot = promptSlotByID(state.promptEditor.slotId);
+  const device = (state.promptDeviceAgents || [])[Number(state.promptEditor.deviceIndex)];
+  if (!slot || !device) {
+    showToast("请先选择设备 Agent");
+    return;
+  }
+  const resolution = (state.promptEditor.effective || []).find((item) => item.slot_id === slot.id);
+  if (!resolution || !resolution.device_value) {
+    showToast("该设备 Agent 未覆盖此槽位");
+    return;
+  }
+  if (!options.skipConfirm) {
+    const confirmed = await confirmAction("清除设备 Agent 覆盖", `确认清除「${promptDeviceAgentLabel(device)}」对「${slot.id}」的覆盖？清除后回落到语义 Agent / 平台默认 / 内置默认。`);
+    if (!confirmed) return;
+  }
+  await runAdminAction({
+    button,
+    busyText: "清除中",
+    pendingText: "正在清除设备 Agent 覆盖...",
+    successText: "已清除该层覆盖，恢复继承",
+    failureText: "清除设备 Agent 覆盖失败",
+    action: async () => {
+      await apiPost("/api/admin/prompt-registry/device-overrides", {
+        machine_id: device.machine_id,
+        agent_id: device.agent_id,
+        semantic_agent_id: device.semantic_agent_id || "",
+        overrides: { [slot.id]: "" },
+      });
+      await loadPromptRegistry();
+      await loadPromptDeviceDetail();
+      renderPromptEditorChrome();
     },
   });
 }

@@ -23,7 +23,11 @@ const promptSlots=[
  {id:'chat.question_policy',category:'chat',scope:['platform','semantic','device'],risk:'low',default:'需要用户确认时先提问。',platform_value:'平台版提问策略',platform_set:true,revision:2,overrides:[{semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手'}],device_override_count:1},
  {id:'chat.orchestration_prompt',category:'chat',scope:['platform','semantic','device'],risk:'low',default:'你是面向用户的主 Agent。',platform_value:'',platform_set:false,revision:0,overrides:[],device_override_count:0}];
 const promptDeviceAgents=[{operator_id:1,operator_username:'admin',machine_id:'m_fixture',hostname:'fixture-host',launcher_id:'launcher:m_fixture',agent_id:'agent_fixture',agent_name:'造梦西游6',semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手',status:'running',applied_revision:'abc123'},{operator_id:1,operator_username:'admin',machine_id:'m_fixture',hostname:'fixture-host-2',launcher_id:'launcher:m_fixture',agent_id:'agent_fixture_2',agent_name:'造梦西游7',semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手',status:'running',applied_revision:''}];
-const promptDeviceOverrides=()=>promptSlots.map(slot=>({slot_id:slot.id,device_value:slot.id==='chat.question_policy'?'设备版提问策略':'',semantic_value:slot.id==='chat.question_policy'?'语义版提问策略':'',platform_value:slot.platform_value,effective:slot.id==='chat.question_policy'?'设备版提问策略':slot.default,source:slot.id==='chat.question_policy'?'device':'builtin'}));
+// 设备/语义覆盖用可变状态维护，POST 后可反映真实读写结果。
+const promptDeviceValues={'chat.question_policy':'设备版提问策略'};
+const promptSemanticValues={'chat.question_policy':'语义版提问策略'};
+const promptRegistryItems=()=>promptSlots.map(slot=>({...slot,overrides:promptSemanticValues[slot.id]?[{semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手'}]:[],device_override_count:promptDeviceValues[slot.id]?1:0}));
+const promptDeviceOverrides=()=>promptSlots.map(slot=>({slot_id:slot.id,device_value:promptDeviceValues[slot.id]||'',semantic_value:promptSemanticValues[slot.id]||'',platform_value:slot.platform_value,effective:promptDeviceValues[slot.id]||promptSemanticValues[slot.id]||slot.platform_value||slot.default,source:promptDeviceValues[slot.id]?'device':(promptSemanticValues[slot.id]?'semantic':(slot.platform_set?'platform':'builtin'))}));
 const control={fail:'',delay:'',delayMs:0,pending:0};
 const send=(res,status,body)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(body));};
 const body=async req=>{let text='';for await(const chunk of req)text+=chunk;return text?JSON.parse(text):{};};
@@ -40,7 +44,7 @@ const server=http.createServer(async(req,res)=>{
   }
   if(route==='/api/admin/prompt-registry'&&req.method==='GET'){
     if(req.headers.authorization!=='Bearer fixture-session')return send(res,401,{error:'unauthorized'});
-    return send(res,200,{items:promptSlots});
+    return send(res,200,{items:promptRegistryItems()});
   }
   if(route==='/api/admin/prompt-registry/device-agents'&&req.method==='GET'){
     if(req.headers.authorization!=='Bearer fixture-session')return send(res,401,{error:'unauthorized'});
@@ -51,16 +55,16 @@ const server=http.createServer(async(req,res)=>{
     if(req.method==='GET')return send(res,200,{operator_id:1,machine_id:url.searchParams.get('machine_id')||'',agent_id:url.searchParams.get('agent_id')||'',semantic_agent_id:'agent-fixture',items:promptDeviceOverrides()});
     const input=await body(req);
     const slotID=Object.keys(input.overrides||{})[0];
-    const slot=promptSlots.find(item=>item.id===slotID);
-    if(slot)slot.device_override_count=String(input.overrides[slotID]||'').trim()?1:0;
+    const value=String(input.overrides[slotID]||'');
+    if(value.trim())promptDeviceValues[slotID]=value;else delete promptDeviceValues[slotID];
     return send(res,200,{success:true,revision:'fixture-revision',pushed:true});
   }
   if(route==='/api/admin/prompt-registry/semantic-overrides'&&req.method==='POST'){
     if(req.headers.authorization!=='Bearer fixture-session')return send(res,401,{error:'unauthorized'});
     const input=await body(req);
     const slotID=Object.keys(input.overrides||{})[0];
-    const slot=promptSlots.find(item=>item.id===slotID);
-    if(slot)slot.overrides=String(input.overrides[slotID]||'').trim()?[{semantic_agent_id:input.semantic_agent_id,semantic_agent_name:'代码助手'}]:[];
+    const value=String(input.overrides[slotID]||'');
+    if(value.trim())promptSemanticValues[slotID]=value;else delete promptSemanticValues[slotID];
     return send(res,200,{success:true,semantic_agent_id:input.semantic_agent_id,pushed:1});
   }
   if(route.startsWith('/api/admin/prompt-templates/')){
