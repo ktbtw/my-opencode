@@ -104,7 +104,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(SwitchListTile));
+      await tester.tap(find.byType(Switch));
       await tester.pumpAndSettle();
       expect(
         container.read(projectSettingsProvider('project')).showConnectionStatus,
