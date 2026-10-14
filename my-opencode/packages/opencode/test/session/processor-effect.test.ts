@@ -444,6 +444,54 @@ it.live("session.processor effect tests capture reasoning from http mock", () =>
   ),
 )
 
+it.live("session.processor effect tests drop text that only echoes the reasoning", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+
+        // 有些供应商会把思考内容再当正文发一遍：正文气泡于是显示成思考过程。
+        yield* llm.push(reply().reason("think").text("think").stop())
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "echo")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        yield* handle.process({
+          user: {
+            id: parent.id,
+            sessionID: chat.id,
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies MessageV2.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "echo" }],
+          tools: {},
+        })
+
+        const parts = MessageV2.parts(msg.id)
+        const reasoning = parts.find((part): part is MessageV2.ReasoningPart => part.type === "reasoning")
+        const text = parts.find((part): part is MessageV2.TextPart => part.type === "text")
+
+        // 思考保留，回声出来的"正文"被丢弃。
+        expect(reasoning?.text).toBe("think")
+        expect(text).toBeUndefined()
+      }),
+    { config: (url) => providerCfg(url) },
+  ),
+)
+
 it.live("session.processor effect tests reset reasoning state across retries", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>

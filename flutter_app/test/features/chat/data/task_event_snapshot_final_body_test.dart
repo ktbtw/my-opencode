@@ -26,6 +26,34 @@ void main() {
     expect(snapshot.blocks.last.text, '完整总结');
   });
 
+  test('思考被供应商当正文重发时，正文气泡不显示思考过程', () {
+    final thinking = '让我分析一下：\n1. 先看进程\n2. 再看内存';
+    final snapshot = repository.snapshotFromTaskEvents('task', [
+      {'type': 'delta', 'field': 'reasoning', 'content': thinking},
+      // 供应商把同一段思考又当正文发了一遍（deepseek 系经代理出现过）。
+      {'type': 'delta', 'field': 'text', 'content': thinking},
+      {'type': 'completed', 'content': ''},
+    ]);
+
+    expect(snapshot.reasoning, thinking);
+    expect(snapshot.text, isEmpty);
+    expect(snapshot.rounds.single.text, isEmpty);
+    expect(snapshot.rounds.single.reasoning.toString(), thinking);
+    expect(rendered(snapshot.blocks), isEmpty);
+    // 思考本身保留，轮次不会被丢掉。
+    expect(snapshot.rounds.single.hasOutput, isTrue);
+  });
+
+  test('正文与思考不同则照常显示（只剔除逐字相同的回声）', () {
+    final snapshot = repository.snapshotFromTaskEvents('task', [
+      {'type': 'delta', 'field': 'reasoning', 'content': '先看进程，再看内存'},
+      {'type': 'delta', 'field': 'text', 'content': '内存占用约 600MB。'},
+    ]);
+
+    expect(snapshot.text, '内存占用约 600MB。');
+    expect(snapshot.reasoning, '先看进程，再看内存');
+  });
+
   test(
     'terminal payload restores a missing suffix after interleaved tools',
     () {

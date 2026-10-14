@@ -79,6 +79,14 @@ type ToolCall = {
   inputEnded: boolean
 }
 
+/// 正文与思考完全一致 → 供应商把思考内容当成正文重发了一遍。
+/// 只认"逐字节相同（忽略首尾空白）"，避免误伤正常的重复措辞。
+const isReasoningEcho = (text: string, reasoning: string) => {
+  const body = text.trim()
+  const think = reasoning.trim()
+  return body.length > 0 && think.length > 0 && body === think
+}
+
 interface ProcessorContext extends Input {
   toolcalls: Record<string, ToolCall>
   shouldBreak: boolean
@@ -87,6 +95,8 @@ interface ProcessorContext extends Input {
   compaction: { reason: CompactionReason } | undefined
   currentText: MessageV2.TextPart | undefined
   reasoningMap: Record<string, MessageV2.ReasoningPart>
+  /// 本 step 已完成的思考文本：用来识别"供应商把思考内容又当成正文发一遍"。
+  stepReasoning: string
 }
 
 type StreamEvent = LLMEvent
@@ -127,6 +137,7 @@ export const layer = Layer.effect(
         compaction: undefined,
         currentText: undefined,
         reasoningMap: {},
+        stepReasoning: "",
       }
       let aborted = false
       const slog = log.clone().tag("session.id", input.sessionID).tag("messageID", input.assistantMessage.id)
@@ -234,6 +245,7 @@ export const layer = Layer.effect(
         ctx.reasoningMap[reasoningID].text = ctx.reasoningMap[reasoningID].text
         ctx.reasoningMap[reasoningID].time = { ...ctx.reasoningMap[reasoningID].time, end: Date.now() }
         yield* session.updatePart(ctx.reasoningMap[reasoningID])
+        ctx.stepReasoning = ctx.reasoningMap[reasoningID].text
         delete ctx.reasoningMap[reasoningID]
       })
 
@@ -536,6 +548,7 @@ export const layer = Layer.effect(
             throw new Error(value.message)
 
           case "step-start":
+            ctx.stepReasoning = ""
             if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
             if (!ctx.assistantMessage.summary) {
               // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
@@ -695,6 +708,21 @@ export const layer = Layer.effect(
 
           case "text-end":
             if (!ctx.currentText) return
+            // 有些供应商（deepseek 系经代理时出现过）会把思考内容再当正文发一遍：
+            // reasoning 与 text 逐字节相同，正文气泡于是显示成思考过程。
+            // 同一个 step 内两者完全一致时按思考处理，丢掉这段"正文"。
+            if (isReasoningEcho(ctx.currentText.text, ctx.stepReasoning)) {
+              slog.warn("dropping text part identical to reasoning", {
+                textLength: ctx.currentText.text.length,
+              })
+              yield* session.removePart({
+                sessionID: ctx.currentText.sessionID,
+                messageID: ctx.currentText.messageID,
+                partID: ctx.currentText.id,
+              })
+              ctx.currentText = undefined
+              return
+            }
             // oxlint-disable-next-line no-self-assign -- reactivity trigger
             ctx.currentText.text = ctx.currentText.text
             ctx.currentText.text = (yield* plugin.trigger(

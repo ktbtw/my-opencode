@@ -1331,6 +1331,24 @@ class ChatRepository {
       }
       rounds[index].recordUsage(metadata);
     }
+    // 供应商把思考内容又当正文发一遍时（deepseek 系经代理出现过 reasoning
+    // 与 text 逐字节相同），正文气泡会显示成思考过程。按"本轮正文 == 本轮思考"
+    // 剔除这段正文，思考本身保留；实时与历史重建都走这里。
+    var droppedReasoningEcho = false;
+    for (final round in rounds) {
+      final body = round.text.toString().trim();
+      final think = round.reasoning.toString().trim();
+      if (body.isEmpty || think.isEmpty || body != think) continue;
+      round.text.clear();
+      round.blocks.removeWhere((block) => block.isText);
+      droppedReasoningEcho = true;
+    }
+    if (droppedReasoningEcho) {
+      text.clear();
+      text.writeAll(rounds.map((round) => round.text.toString()));
+      blocks.clear();
+      blocks.addAll(rounds.expand((round) => round.blocks));
+    }
     // 任务已终态:把残留 running/pending 的工具回填为 completed,修复
     // "对话已完成但工具显示一直调用中"的历史快照问题。
     if (sawTerminal) {
