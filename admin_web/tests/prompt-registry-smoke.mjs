@@ -176,10 +176,38 @@ try {
   check(await cdp.evaluate('document.querySelector("#promptSemanticValue").value') === '语义版提问策略', '语义 Agent 层显示该 Agent 的覆盖值');
 
   await cdp.evaluate('document.querySelector("[data-prompt-level=device]").click()');
-  await cdp.waitFor('document.querySelector("#promptDeviceAgentSelect").options.length > 0 && !document.querySelector("#promptDeviceBlock").classList.contains("hidden")');
+  await cdp.waitFor('document.querySelector("#promptDeviceAgentSelect").options.length > 1 && !document.querySelector("#promptDeviceBlock").classList.contains("hidden")');
   await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "设备版提问策略"');
   check(await cdp.evaluate('document.querySelector("#promptDeviceHint").textContent.includes("设备 Agent")'), '设备层展示当前生效来源');
   check(await cdp.evaluate('document.querySelector("#promptDeviceAgentSelect").options[0].textContent.includes("fixture-host")'), '设备下拉列出在线设备 Agent');
+
+  // 下拉框必须是控制台自绘 UI：原生 select 隐藏，自定义触发器可用。
+  check(await cdp.evaluate(`
+    getComputedStyle(document.querySelector("#promptDeviceAgentSelect")).display === "none" &&
+    !!document.querySelector("#promptDeviceBlock .custom-select") &&
+    !!document.querySelector("#promptDeviceBlock .custom-select-trigger")
+  `), '设备下拉使用控制台自绘 UI（非原生 select）');
+  check(await cdp.evaluate(`
+    getComputedStyle(document.querySelector("#promptSemanticAgentSelect")).display === "none" &&
+    !!document.querySelector("#promptSemanticBlock .custom-select")
+  `), '语义 Agent 下拉使用控制台自绘 UI（非原生 select）');
+  await cdp.evaluate('document.querySelector("#promptDeviceBlock .custom-select-trigger").click()');
+  await cdp.waitFor('!document.querySelector("#promptDeviceBlock .custom-select-menu").classList.contains("hidden")');
+  check(await cdp.evaluate('document.querySelectorAll("#promptDeviceBlock .custom-select-menu [data-select-value]").length === 2'), '自绘下拉展开后列出全部设备选项');
+  await cdp.evaluate('document.querySelectorAll("#promptDeviceBlock .custom-select-menu [data-select-value]")[1].click()');
+  await cdp.waitFor('document.querySelector("#promptDeviceAgentSelect").value === "1"');
+  await cdp.waitFor('document.querySelector("#promptDeviceBlock .custom-select-value").textContent.includes("fixture-host-2")');
+  check(true, '自绘下拉选择后同步原生值与触发器文案');
+
+  // 没有在线设备时：自绘下拉同步禁用，避免可点却无选项的假下拉。
+  await fetch(`${base}/_fixture/control`, { method: 'POST', body: JSON.stringify({ emptyDevices: true }) });
+  await cdp.evaluate('document.querySelector("#promptDeviceRefreshButton").click()');
+  await cdp.waitFor('document.querySelector("#promptDeviceAgentSelect").options.length === 1');
+  check(await cdp.evaluate(`
+    document.querySelector("#promptDeviceAgentSelect").disabled === true &&
+    document.querySelector("#promptDeviceBlock .custom-select-trigger").disabled === true
+  `), '无在线设备时自绘下拉同步禁用');
+  await fetch(`${base}/_fixture/control`, { method: 'POST', body: JSON.stringify({ emptyDevices: false }) });
 
   await cdp.evaluate('document.querySelector("[data-prompt-level=platform]").click()');
   await cdp.evaluate(`

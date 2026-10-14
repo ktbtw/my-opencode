@@ -849,6 +849,7 @@ function renderPromptSemanticFields(slot) {
     state.promptEditor.semanticDraftSlot = `${selected}|${slot.id}`;
   }
   el.promptSemanticValue.value = state.promptEditor.semanticDraft;
+  syncCustomSelect(el.promptSemanticAgentSelect);
   const agent = agents.find((item) => item.id === selected);
   const overrideCount = agent && agent.prompt_templates ? Object.keys(agent.prompt_templates).length : 0;
   el.promptSemanticHint.textContent = agent
@@ -875,6 +876,7 @@ function renderPromptDeviceFields(slot) {
   el.promptDeviceAgentSelect.value = String(index);
   el.promptDeviceAgentSelect.disabled = !devices.length;
   el.promptDeviceValue.value = state.promptEditor.deviceDraft;
+  syncCustomSelect(el.promptDeviceAgentSelect);
   const effective = (state.promptEditor.effective || []).find((item) => item.slot_id === slot.id);
   if (!devices.length) {
     el.promptDeviceHint.textContent = "当前没有在线设备 Agent；设备级覆盖只对在线设备下发，离线设备上线后会自动补齐。";
@@ -3824,6 +3826,8 @@ function initCustomSelects() {
     el.runtimeFieldInstallStrategy,
     el.toolFieldDefaultAction,
     el.agentFieldPromptMode,
+    el.promptSemanticAgentSelect,
+    el.promptDeviceAgentSelect,
   ].forEach(enhanceSelect);
   document.addEventListener("click", closeCustomSelects);
   document.addEventListener("keydown", (event) => {
@@ -3898,6 +3902,17 @@ function syncCustomSelect(select) {
 
   const selected = select.selectedOptions[0] || options[0];
   custom.value.textContent = selected ? selected.textContent : "请选择";
+
+  // 原生 select 被禁用时，自定义触发器同步禁用，避免出现可点却无选项的假下拉。
+  const disabled = Boolean(select.disabled);
+  custom.root.classList.toggle("disabled", disabled);
+  custom.trigger.disabled = disabled;
+  custom.trigger.setAttribute("aria-disabled", String(disabled));
+  if (disabled) {
+    custom.root.classList.remove("open");
+    custom.menu.classList.add("hidden");
+    custom.trigger.setAttribute("aria-expanded", "false");
+  }
 }
 
 function customSelectOptionTemplate(option, selected) {
@@ -3914,7 +3929,7 @@ function customSelectOptionTemplate(option, selected) {
 
 function toggleCustomSelect(select) {
   const custom = customSelects.get(select);
-  if (!custom) return;
+  if (!custom || select.disabled) return;
   const willOpen = custom.menu.classList.contains("hidden");
   closeCustomSelects(select);
   if (willOpen) openCustomSelect(select);

@@ -22,7 +22,7 @@ const promptSlots=[
  {id:'chat.base_prompt',category:'chat',scope:['platform','semantic','device'],risk:'low',default:'你是当前服务中的主工作 Agent。',platform_value:'',platform_set:false,revision:0,overrides:[],device_override_count:0},
  {id:'chat.question_policy',category:'chat',scope:['platform','semantic','device'],risk:'low',default:'需要用户确认时先提问。',platform_value:'平台版提问策略',platform_set:true,revision:2,overrides:[{semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手'}],device_override_count:1},
  {id:'chat.orchestration_prompt',category:'chat',scope:['platform','semantic','device'],risk:'low',default:'你是面向用户的主 Agent。',platform_value:'',platform_set:false,revision:0,overrides:[],device_override_count:0}];
-const promptDeviceAgents=[{operator_id:1,operator_username:'admin',machine_id:'m_fixture',hostname:'fixture-host',launcher_id:'launcher:m_fixture',agent_id:'agent_fixture',agent_name:'造梦西游6',semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手',status:'running',applied_revision:'abc123'}];
+const promptDeviceAgents=[{operator_id:1,operator_username:'admin',machine_id:'m_fixture',hostname:'fixture-host',launcher_id:'launcher:m_fixture',agent_id:'agent_fixture',agent_name:'造梦西游6',semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手',status:'running',applied_revision:'abc123'},{operator_id:1,operator_username:'admin',machine_id:'m_fixture',hostname:'fixture-host-2',launcher_id:'launcher:m_fixture',agent_id:'agent_fixture_2',agent_name:'造梦西游7',semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手',status:'running',applied_revision:''}];
 const promptDeviceOverrides=()=>promptSlots.map(slot=>({slot_id:slot.id,device_value:slot.id==='chat.question_policy'?'设备版提问策略':'',semantic_value:slot.id==='chat.question_policy'?'语义版提问策略':'',platform_value:slot.platform_value,effective:slot.id==='chat.question_policy'?'设备版提问策略':slot.default,source:slot.id==='chat.question_policy'?'device':'builtin'}));
 const control={fail:'',delay:'',delayMs:0,pending:0};
 const send=(res,status,body)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(body));};
@@ -44,7 +44,7 @@ const server=http.createServer(async(req,res)=>{
   }
   if(route==='/api/admin/prompt-registry/device-agents'&&req.method==='GET'){
     if(req.headers.authorization!=='Bearer fixture-session')return send(res,401,{error:'unauthorized'});
-    return send(res,200,{items:promptDeviceAgents});
+    return send(res,200,{items:control.emptyDevices?[]:promptDeviceAgents});
   }
   if(route==='/api/admin/prompt-registry/device-overrides'){
     if(req.headers.authorization!=='Bearer fixture-session')return send(res,401,{error:'unauthorized'});
