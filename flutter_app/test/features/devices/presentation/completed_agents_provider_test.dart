@@ -96,18 +96,20 @@ void main() {
     expect(notifier.completedFor('machine-a'), {'a-1'});
   });
 
-  test('快照里掉线或又开工都不会留在完成里', () {
+  test('权威记录不被启发式覆盖：掉线保留，重新开工才撤回', () {
     final notifier = CompletedAgentsNotifier();
     notifier.handleEvent(taskEvent(status: 'completed'));
     expect(notifier.completedFor('machine-a'), {'a-1'});
 
+    // 掉线只是"暂时看不见"，不抹掉已登记的完成。
     notifier.handleEvent(
       snapshotEvent([
         {'agent_id': 'a-1', 'status': 'offline'},
       ]),
     );
-    expect(notifier.completedFor('machine-a'), isEmpty);
+    expect(notifier.completedFor('machine-a'), {'a-1'});
 
+    // 又开工是显式信号：撤回完成，重新等这一轮结果。
     notifier.handleEvent(
       snapshotEvent([
         {'agent_id': 'a-1', 'status': 'online', 'current_task_id': 'task-2'},

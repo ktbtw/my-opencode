@@ -11,11 +11,17 @@ import '../../../core/storage/app_storage.dart';
 
 /// 「跑完但还没被查看过」的 Agent：machineId → {agentId}。
 ///
-/// 登记不依赖"哪个页面正开着"：实时事件一到就记下来，所以下面几种情况都不会漏：
-/// - App 在后台：回到前台会重连，重连时后端先推 snapshot，用它对齐一次；
-/// - 停在别的页面：事件是全局的，设备详情页没挂载也能登记；
-/// - App 被系统杀掉后重开：运行态与完成态都落盘，重开时用 snapshot 补判。
-/// 用户进入该 Agent 的对话即清除，回到「空闲」。
+/// 信号有权威顺序，启发式只补空、不覆盖权威记录：
+/// 1. **显式终态**（最权威）：`task.updated` 的 completed/failed/cancelled，
+///    或 `chat-task:` 开头的任务完成通知 → 直接登记；
+/// 2. **显式开工**：`task.updated` 的非终态，或快照里 `current_task_id` 非空
+///    → 撤回完成并记下运行态（用户又发起了一轮）；
+/// 3. **快照补判**（启发式，仅补空）：只用于 SSE 断连期间（后台/被杀）错过终态事件时，
+///    发现"记着在跑、快照里已经没有任务"才登记；
+/// 4. **掉线/停用**：只清运行态。权威登记过的完成不会因为"暂时看不见"被抹掉。
+///
+/// 登记与"哪个页面正开着"无关：事件是全局的，设备详情页没挂载也能登记；
+/// 运行态与完成态都落盘，App 被杀重开后仍能恢复。用户进入该 Agent 的对话即清除。
 class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
   CompletedAgentsNotifier() : super(_readCompleted());
 
@@ -120,9 +126,9 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
             entry['enabled'] != false &&
             !_offlineStatuses.contains(_text(entry['status']).toLowerCase());
         if (!online) {
-          // 掉线或停用：既不算待查看的完成，也不再跟踪运行态。
+          // 掉线/停用只清运行态：显式登记过的完成是权威记录，
+          // 不因为设备一时看不见就被启发式抹掉（列表本来就按在线过滤）。
           _setRunning(machine, agent, null);
-          _removeCompleted(machine, agent);
           continue;
         }
         final task = _text(entry['current_task_id']);
@@ -131,7 +137,8 @@ class CompletedAgentsNotifier extends StateNotifier<Map<String, Set<String>>> {
           _removeCompleted(machine, agent);
           continue;
         }
-        // 快照里已经没有任务，但上一帧记着它在跑 → 在看不见的时候跑完了。
+        // 快照补判（仅补空）：SSE 断连期间错过终态事件时，
+        // "记着在跑 + 现在没任务"才登记；权威记录不会走到这里。
         final wasRunning = _running[machine]?[agent] ?? '';
         if (wasRunning.isEmpty) continue;
         _setRunning(machine, agent, null);
