@@ -933,7 +933,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
         'task',
         stepState: ChatOperationStepState.active,
         detail: '正在重连回复通道',
-        title: '连接恢复中',
+        title: '正在恢复连接',
       );
       final messages = [
         for (final message in state.messages)
@@ -5763,7 +5763,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       }
     } catch (error) {
       if (!isCurrent()) return;
-      replySyncProgress?.finish('连接恢复中，正在重试');
+      replySyncProgress?.finish('正在恢复连接');
       _updateOperation(
         'opencode',
         stepState: ChatOperationStepState.failed,

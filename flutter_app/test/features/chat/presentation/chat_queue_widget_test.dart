@@ -21,20 +21,21 @@ void main() {
         streamRecovery: StreamRecovery.syncing,
       );
       await tester.pumpWidget(buildChatStreamingProgressTestSurface(message));
-      expect(find.text('正在同步最新回复'), findsOneWidget);
+      expect(find.text('正在同步回复'), findsOneWidget);
       expect(find.text('已发送'), findsNothing);
       final updated = message.copyForUpdate()
         ..streamRecovery = StreamRecovery.following;
       await tester.pumpWidget(buildChatStreamingProgressTestSurface(updated));
-      expect(find.text('等待新的回复'), findsOneWidget);
+      expect(find.text('正在等待回复'), findsOneWidget);
+      expect(find.text('已接上正在运行的任务'), findsOneWidget);
       expect(find.text('已连接'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
 
   testWidgets('recovery flow folds into the hint line', (tester) async {
-    // 恢复流程不再单独占进度条，也不在提示里再铺一层阶段条目：
-    // 标题 · 当前阶段 直接写进同一行文案。
+    // 恢复流程不再单独占进度条：主行只放标题，当前阶段（卡在哪一跳）
+    // 放副标题，待处理阶段不逐条铺开。
     await tester.pumpWidget(
       buildChatStreamingProgressTestSurface(
         ChatMessage(
@@ -70,7 +71,9 @@ void main() {
       ),
     );
 
-    expect(find.text('正在恢复回复 · 服务端 已接收'), findsOneWidget);
+    expect(find.text('正在恢复回复'), findsOneWidget);
+    // 当前阶段保留在副标题：排障要看卡在哪一跳。
+    expect(find.text('服务端 已接收'), findsOneWidget);
     // 待处理阶段不再逐条铺开，避免和这一行重复。
     expect(find.textContaining('OpenCode 等待 Agent 状态'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -107,9 +110,11 @@ void main() {
       ),
     );
 
-    final label = find.text('正在停止任务 · 服务端 发送失败，连接已断开');
+    // 主行只放标题，失败原因作为阶段细节进副标题（错误色标在主行）。
+    final label = find.text('正在停止任务');
     expect(label, findsOneWidget);
     expect(tester.widget<Text>(label).style?.color, AppColors.statusError);
+    expect(find.text('服务端 发送失败，连接已断开'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -168,8 +173,8 @@ void main() {
       ),
     );
 
-    expect(find.text('正在恢复回复 · 服务端 已接收'), findsOneWidget);
-    expect(find.text('服务端 已接收'), findsNothing);
+    expect(find.text('正在恢复回复'), findsOneWidget);
+    expect(find.text('服务端 已接收'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -203,7 +208,9 @@ void main() {
       ),
     );
 
-    expect(find.text('正在停止任务 · 手机 发送停止指令'), findsOneWidget);
+    expect(find.text('正在停止任务'), findsOneWidget);
+    // 当前阶段（手机 · 发送停止指令）保留在副标题。
+    expect(find.text('手机 发送停止指令'), findsOneWidget);
     expect(find.text('任务 等待停止'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });

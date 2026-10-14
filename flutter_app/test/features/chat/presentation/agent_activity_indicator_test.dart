@@ -49,8 +49,10 @@ void main() {
       final reply = message(recovery: StreamRecovery.following)
         ..historyDetails = HistoryDetailsState.loading;
       await tester.pumpWidget(surface(reply, reduced: true));
-      expect(find.text('正在恢复已有回复'), findsOneWidget);
-      expect(find.text('等待新的回复'), findsNothing);
+      expect(find.text('正在载入历史'), findsOneWidget);
+      // 主行收敛成一条，细节（在拉什么）放副标题。
+      expect(find.text('恢复已有回复'), findsOneWidget);
+      expect(find.text('正在等待回复'), findsNothing);
       reply.historyDetails = HistoryDetailsState.partial;
       await tester.pumpWidget(
         MaterialApp(
@@ -63,7 +65,8 @@ void main() {
         ),
       );
       await tester.pump(const Duration(milliseconds: 250));
-      expect(find.text('历史回复尚未载入'), findsOneWidget);
+      expect(find.text('历史尚未载入完整'), findsOneWidget);
+      expect(find.text('回复正文尚未载入'), findsOneWidget);
       await tester.tap(find.text('重试'));
       expect(retries, 1);
       await tester.pumpWidget(const SizedBox());
@@ -95,7 +98,8 @@ void main() {
         final glyph = tester.getCenter(
           find.byKey(const ValueKey('agent-activity-glyph')),
         );
-        final label = tester.getCenter(find.text('工具调用历史尚未完整载入'));
+        expect(find.text('工具调用记录尚未完整'), findsOneWidget);
+        final label = tester.getCenter(find.text('历史尚未载入完整'));
         final retry = tester.getCenter(find.text('重试'));
         expect(glyph.dy, closeTo(label.dy, .1));
         expect(retry.dy, closeTo(label.dy, .1));
@@ -119,7 +123,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('正在恢复工具调用历史'), findsNothing);
+    expect(find.text('正在载入历史'), findsNothing);
     expect(find.byKey(const ValueKey('agent-activity-glyph')), findsNothing);
     await tester.pumpAndSettle();
     expect(tester.binding.hasScheduledFrame, isFalse);
@@ -133,7 +137,8 @@ void main() {
       final reply = message(state: MessageState.done, content: '完整正文')
         ..historyDetails = HistoryDetailsState.loading;
       await tester.pumpWidget(surface(reply, reduced: true));
-      expect(find.text('正在恢复工具调用历史'), findsOneWidget);
+      expect(find.text('正在载入历史'), findsOneWidget);
+      expect(find.text('工具调用记录'), findsOneWidget);
       expect(find.text('正在等待回复'), findsNothing);
       var retries = 0;
       await tester.pumpWidget(
@@ -147,7 +152,8 @@ void main() {
           ),
         ),
       );
-      expect(find.text('工具调用历史尚未完整载入'), findsOneWidget);
+      expect(find.text('历史尚未载入完整'), findsOneWidget);
+      expect(find.text('工具调用记录尚未完整'), findsOneWidget);
       await tester.tap(find.text('重试'));
       expect(retries, 1);
       await tester.pumpWidget(
@@ -168,8 +174,8 @@ void main() {
           reduced: true,
         ),
       );
-      expect(find.text('连接恢复中，正在重试'), findsOneWidget);
-      expect(find.text('正在同步最新回复'), findsNothing);
+      expect(find.text('正在恢复连接'), findsOneWidget);
+      expect(find.text('正在同步回复'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -182,7 +188,7 @@ void main() {
         await tester.pumpWidget(surface(reply, reduced: true));
         expect(find.text('正在停止'), findsOneWidget);
         expect(find.text('正在等待回复'), findsNothing);
-        expect(find.text('正在同步最新回复'), findsNothing);
+        expect(find.text('正在同步回复'), findsNothing);
         expect(find.text('稍等片刻，接上刚才的进度'), findsNothing);
       }
       await tester.pumpWidget(const SizedBox.shrink());
@@ -194,13 +200,13 @@ void main() {
   ) async {
     final reply = message(content: '已有的回复', recovery: StreamRecovery.syncing);
     await tester.pumpWidget(surface(reply));
-    expect(find.text('正在同步最新回复'), findsOneWidget);
+    expect(find.text('正在同步回复'), findsOneWidget);
     expect(find.text('稍等片刻，接上刚才的进度'), findsNothing);
     await tester.pumpWidget(
       surface(reply.copyForUpdate()..streamRecovery = StreamRecovery.following),
     );
     await tester.pump(const Duration(milliseconds: 250));
-    expect(find.text('正在同步最新回复'), findsNothing);
+    expect(find.text('正在同步回复'), findsNothing);
     expect(find.text('正在生成回复'), findsOneWidget);
     for (final state in [MessageState.done, MessageState.failed]) {
       await tester.pumpWidget(surface(message(state: state)));

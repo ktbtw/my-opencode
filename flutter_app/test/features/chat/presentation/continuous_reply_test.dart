@@ -109,7 +109,7 @@ void main() {
       tester.getTopLeft(find.text('正在恢复连接')).dy,
       greaterThanOrEqualTo(rect.bottom),
     );
-    expect(find.text('连接恢复中，正在重试'), findsNothing);
+    // 显式 statusHint 覆盖内部文案：这里只应出现一次（来自 hint）。
     expect(find.text('正在恢复连接'), findsOneWidget);
     expect(
       find.descendant(
@@ -127,7 +127,7 @@ void main() {
       tester.getTopLeft(find.text('正在停止')).dy,
       greaterThanOrEqualTo(tester.getRect(body).bottom),
     );
-    expect(find.text('连接恢复中，正在重试'), findsNothing);
+    expect(find.text('正在恢复连接'), findsNothing);
     await tester.pumpWidget(surface([reply('', live: true)]));
     await tester.pump();
     expect(
@@ -152,7 +152,7 @@ void main() {
         find.byKey(const ValueKey('continuous-reply-surface')),
         findsOneWidget,
       );
-      expect(find.text('工具调用历史尚未完整载入'), findsNothing);
+      expect(find.text('历史尚未载入完整'), findsNothing);
       expect(find.text('正在生成回复'), findsOneWidget);
       expect(find.text('结果详情 检查文件'), findsNothing);
       final before = tester

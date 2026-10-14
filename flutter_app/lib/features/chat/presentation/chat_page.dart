@@ -2445,7 +2445,7 @@ class _EarlierHistoryLoader extends StatelessWidget {
       height: 42,
       child: Align(
         alignment: Alignment.centerLeft,
-        child: InlineActivityHint(label: '正在加载更早的对话'),
+        child: InlineActivityHint(label: '正在载入历史', caption: '更早的消息'),
       ),
     );
   }

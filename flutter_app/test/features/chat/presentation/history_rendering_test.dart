@@ -59,7 +59,7 @@ void main() {
         tester.getTopLeft(history).dy,
         greaterThan(tester.getTopLeft(body).dy),
       );
-      expect(find.text('正在恢复工具调用历史'), findsOneWidget);
+      expect(find.text('正在载入历史'), findsOneWidget);
       expect(find.text('正在等待回复'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());

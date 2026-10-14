@@ -51,36 +51,33 @@ class AgentActivityIndicator extends StatelessWidget {
   bool get _flowFailed =>
       operationSteps.any((step) => step.state == ChatOperationStepState.failed);
 
+  /// 当前流程阶段（手机 → 服务端 → OpenCode → 任务/回复）。
+  /// 排障要看的"卡在哪一跳"就在这一句里，所以它进副标题而不是被合并掉。
+  String? get _flowStage {
+    final step = _flowStep;
+    if (step == null) return null;
+    final stage = '${step.label} ${step.detail}'.trim();
+    return stage.isEmpty ? null : stage;
+  }
+
+  /// 主行只描述状态，不再把流程阶段拼进来：标题与阶段里各说一次"停止/恢复"
+  /// 会让同一行出现两个同样的动词。阶段细节统一走 [_caption]。
   String get _label {
-    // 恢复 / 停止的流程状态直接写进这一行：标题 · 当前阶段，
-    // 不再在气泡下另铺一层阶段条目。
     if (operationSteps.isNotEmpty) {
       final title = operationTitle?.trim() ?? '';
-      final step = _flowStep;
-      final stage = step == null ? '' : '${step.label} ${step.detail}'.trim();
-      if (title.isEmpty) return stage.isEmpty ? '正在处理' : stage;
-      return stage.isEmpty ? title : '$title · $stage';
+      if (title.isNotEmpty) return title;
+      return _flowStage ?? '正在处理';
     }
     if (stopping || message.statusHint == '正在停止') return '正在停止';
     if (statusHint.trim().isNotEmpty) return statusHint.trim();
     if (message.state != MessageState.streaming) {
-      if (message.historyDetails == HistoryDetailsState.loading) {
-        return '正在恢复工具调用历史';
-      }
-      if (message.historyDetails == HistoryDetailsState.partial) {
-        return '工具调用历史尚未完整载入';
-      }
+      if (message.historyDetails == HistoryDetailsState.loading) return '正在载入历史';
+      if (message.historyDetails == HistoryDetailsState.partial) return '历史尚未载入完整';
     }
-    if (message.streamRecovery == StreamRecovery.syncing) return '正在同步最新回复';
-    if (message.streamRecovery == StreamRecovery.reconnecting) {
-      return '连接恢复中，正在重试';
-    }
-    if (message.historyDetails == HistoryDetailsState.loading) {
-      return _hasText ? '正在补齐历史回复' : '正在恢复已有回复';
-    }
-    if (message.historyDetails == HistoryDetailsState.partial) {
-      return _hasText ? '历史详情尚未补齐' : '历史回复尚未载入';
-    }
+    if (message.streamRecovery == StreamRecovery.syncing) return '正在同步回复';
+    if (message.streamRecovery == StreamRecovery.reconnecting) return '正在恢复连接';
+    if (message.historyDetails == HistoryDetailsState.loading) return '正在载入历史';
+    if (message.historyDetails == HistoryDetailsState.partial) return '历史尚未载入完整';
     if (message.toolCalls.any((tool) => tool.isRunning)) return '正在使用工具';
     if (_hasText) return '正在生成回复';
     if (message.thinkingContent.trim().isNotEmpty) return '正在思考';
@@ -89,8 +86,34 @@ class AgentActivityIndicator extends StatelessWidget {
       return '正在继续执行计划';
     }
     if ((message.taskId ?? '').isEmpty) return '正在发送消息';
-    if (message.streamRecovery == StreamRecovery.following) return '等待新的回复';
     return '正在等待回复';
+  }
+
+  /// 副标题承载"具体在等什么/缺什么"：同一状态的多种措辞收敛到主行，
+  /// 差异部分放这里，既不重复也不丢排障信息。
+  String? get _caption {
+    if (operationSteps.isNotEmpty) return _flowStage;
+    if (stopping || message.statusHint == '正在停止') return null;
+    if (statusHint.trim().isNotEmpty) return null;
+    if (message.state != MessageState.streaming) {
+      if (message.historyDetails == HistoryDetailsState.loading) return '工具调用记录';
+      if (message.historyDetails == HistoryDetailsState.partial) {
+        return '工具调用记录尚未完整';
+      }
+    }
+    if (message.streamRecovery == StreamRecovery.syncing) {
+      final quiet = !_hasText && message.thinkingContent.isEmpty;
+      return quiet ? '稍等片刻，接上刚才的进度' : null;
+    }
+    if (message.streamRecovery == StreamRecovery.reconnecting) return null;
+    if (message.historyDetails == HistoryDetailsState.loading) {
+      return _hasText ? '补齐历史回复' : '恢复已有回复';
+    }
+    if (message.historyDetails == HistoryDetailsState.partial) {
+      return _hasText ? '缺少部分回复正文' : '回复正文尚未载入';
+    }
+    if (message.streamRecovery == StreamRecovery.following) return '已接上正在运行的任务';
+    return null;
   }
 
   @override
@@ -118,15 +141,6 @@ class AgentActivityIndicator extends StatelessWidget {
       );
     }
 
-    final recovering = message.streamRecovery == StreamRecovery.syncing;
-    final caption =
-        recovering &&
-            message.statusHint != '正在停止' &&
-            !stopping &&
-            !_hasText &&
-            message.thinkingContent.isEmpty
-        ? '稍等片刻，接上刚才的进度'
-        : null;
     final canRetry =
         message.historyDetails == HistoryDetailsState.partial &&
         onRetryHistory != null;
@@ -134,7 +148,7 @@ class AgentActivityIndicator extends StatelessWidget {
     return InlineActivityHint(
       label: _label,
       emphasizeError: _flowFailed,
-      caption: caption,
+      caption: _caption,
       animate:
           (message.state == MessageState.streaming &&
               message.historyDetails != HistoryDetailsState.deferred) ||
