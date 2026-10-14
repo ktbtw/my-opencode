@@ -981,6 +981,7 @@ async function savePromptEditor() {
         await performPromptReset(slot, el.saveButton);
       } else {
         showToast("内容与内置默认一致，未创建覆盖");
+        markEditorSaved();
       }
       return;
     }
@@ -996,6 +997,7 @@ async function savePromptEditor() {
         await loadPromptRegistry();
         renderPromptEditorChrome();
         renderPromptEditor();
+        markEditorSaved();
       },
     });
     return;
@@ -1015,6 +1017,7 @@ async function savePromptEditor() {
         await clearPromptSemanticOverride(el.saveButton, { skipConfirm: true });
       } else {
         showToast("内容与继承值一致，未创建覆盖");
+        markEditorSaved();
       }
       return;
     }
@@ -1033,6 +1036,7 @@ async function savePromptEditor() {
         await loadPromptRegistry();
         renderPromptEditorChrome();
         renderPromptEditor();
+        markEditorSaved();
       },
     });
     return;
@@ -1050,6 +1054,7 @@ async function savePromptEditor() {
       await clearPromptDeviceOverride(el.saveButton, { skipConfirm: true });
     } else {
       showToast("内容与继承值一致，未创建覆盖");
+      markEditorSaved();
     }
     return;
   }
@@ -1069,6 +1074,7 @@ async function savePromptEditor() {
       await loadPromptRegistry();
       await loadPromptDeviceDetail();
       renderPromptEditorChrome();
+      markEditorSaved();
     },
   });
 }
@@ -1096,6 +1102,7 @@ async function performPromptReset(item, button = null) {
         renderPromptEditorChrome();
         renderPromptEditor();
       }
+      markEditorSaved();
     },
   });
 }
@@ -1133,6 +1140,7 @@ async function clearPromptSemanticOverride(button = null, options = {}) {
       await loadPromptRegistry();
       renderPromptEditorChrome();
       renderPromptEditor();
+      markEditorSaved();
     },
   });
 }
@@ -1170,6 +1178,7 @@ async function clearPromptDeviceOverride(button = null, options = {}) {
       await loadPromptRegistry();
       await loadPromptDeviceDetail();
       renderPromptEditorChrome();
+      markEditorSaved();
     },
   });
 }
@@ -4493,8 +4502,8 @@ function initConsoleInteractions() {
   el.menuButton.addEventListener("click", () => setMenuOpen(true));
   el.closeMenuButton.addEventListener("click", () => setMenuOpen(false));
   el.menuBackdrop.addEventListener("click", () => setMenuOpen(false));
-  el.editorForm.addEventListener("input", markEditorDirty);
-  el.editorForm.addEventListener("change", markEditorDirty);
+  el.editorForm.addEventListener("input", markEditorDirtyFromEvent);
+  el.editorForm.addEventListener("change", markEditorDirtyFromEvent);
   el.editorForm.addEventListener("click", (event) => {
     if (event.target.closest("#parseImportButton, #addRuntimeVersionButton, #addRuntimeMirrorButton, #addRuntimeArtifactButton, #resetToolPermissionsButton, #applyToolPermissionsJsonButton, [data-remove-runtime-nested]")) queueMicrotask(markEditorDirty);
   });
@@ -4546,6 +4555,20 @@ function markEditorDirty() {
   state.editorDirty = true;
   el.editorStatus.textContent = "有未保存的修改";
   el.editorStatus.classList.add("unsaved");
+}
+
+// 保存/清除成功后调用：抽屉保持打开（提示词三级编辑不关抽屉），但不能再挂着"未保存"标记。
+function markEditorSaved() {
+  state.editorDirty = false;
+  el.editorStatus.textContent = "已保存";
+  el.editorStatus.classList.remove("unsaved");
+}
+
+// 抽屉里的输入事件统一走这里：切换"看哪个语义 Agent / 设备 Agent"只是换视图，不是编辑。
+function markEditorDirtyFromEvent(event) {
+  const target = event.target;
+  if (target === el.promptSemanticAgentSelect || target === el.promptDeviceAgentSelect) return;
+  markEditorDirty();
 }
 
 async function requestCloseEditor() {

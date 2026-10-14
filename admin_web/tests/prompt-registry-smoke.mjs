@@ -232,13 +232,34 @@ try {
   await cdp.evaluate('document.querySelector("#saveButton").click()');
   await cdp.waitFor('document.querySelector("#toast").textContent.includes("未创建覆盖")');
   check(await cdp.evaluate('document.querySelector("#promptPlatformHint").textContent.includes("当前未设置平台值")'), '保存默认原文不会创建覆盖');
+  check(await cdp.evaluate(`
+    document.querySelector("#editorStatus").textContent === "已保存" &&
+    !document.querySelector("#editorStatus").classList.contains("unsaved")
+  `), '保存成功后不再显示「有未保存的修改」');
 
-  // 编辑器有未保存改动时，关闭会先弹确认。
+  // 保存成功后关闭抽屉不该再追问放弃修改。
+  await cdp.evaluate('document.querySelector("#closeDrawerButton").click()');
+  await cdp.waitFor('document.querySelector("#drawerOverlay").classList.contains("hidden")');
+  check(await cdp.evaluate('document.querySelector("#confirmOverlay").classList.contains("hidden")'), '保存后关闭不再弹「放弃未保存的修改」');
+  check(await cdp.evaluate('!document.querySelector("#grid article .pill.enabled")'), '恢复默认后卡片回到「内置默认」状态');
+
+  // 脏标记本身没被改坏：真实编辑后仍标记未保存，关闭仍先弹确认。
+  await cdp.evaluate('[...document.querySelectorAll("#grid [data-action=edit]")].find(b => b.dataset.id === "chat.base_prompt").click()');
+  await cdp.waitFor('!document.querySelector("#drawerOverlay").classList.contains("hidden")');
+  await cdp.evaluate(`(() => {
+    const input = document.querySelector("#promptPlatformValue");
+    input.value = "尚未保存的改动";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  check(await cdp.evaluate(`
+    document.querySelector("#editorStatus").textContent === "有未保存的修改" &&
+    document.querySelector("#editorStatus").classList.contains("unsaved")
+  `), '真实编辑后仍标记「有未保存的修改」');
   await cdp.evaluate('document.querySelector("#closeDrawerButton").click()');
   await cdp.waitFor('!document.querySelector("#confirmOverlay").classList.contains("hidden")');
   await cdp.evaluate('document.querySelector("#confirmOk").click()');
   await cdp.waitFor('document.querySelector("#drawerOverlay").classList.contains("hidden")');
-  check(await cdp.evaluate('!document.querySelector("#grid article .pill.enabled")'), '恢复默认后卡片回到「内置默认」状态');
+  check(true, '有未保存改动时关闭先弹确认');
 
   // 未配置的槽位：三级编辑框直接展示默认/继承值；保存默认原文不产生覆盖；改回默认自动恢复。
   await cdp.evaluate('[...document.querySelectorAll("#grid [data-action=edit]")].find(b => b.dataset.id === "chat.base_prompt").click()');
@@ -253,6 +274,15 @@ try {
   await cdp.evaluate('document.querySelector("[data-prompt-level=device]").click()');
   await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "你是当前服务中的主工作 Agent。"');
   check(await cdp.evaluate('document.querySelector("#promptDeviceClearButton").disabled === true'), '设备层未覆盖时清除按钮禁用');
+
+  // 切换"看哪台设备"只是换视图，不是编辑动作。
+  await cdp.evaluate('document.querySelector("#promptDeviceAgentSelect").value = "agent-2"');
+  await cdp.evaluate('document.querySelector("#promptDeviceAgentSelect").dispatchEvent(new Event("change", { bubbles: true }))');
+  await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "你是当前服务中的主工作 Agent。"');
+  check(await cdp.evaluate('!document.querySelector("#editorStatus").classList.contains("unsaved")'), '切换设备 Agent 不会被标记为未保存');
+  await cdp.evaluate('document.querySelector("#promptDeviceAgentSelect").value = "agent-1"');
+  await cdp.evaluate('document.querySelector("#promptDeviceAgentSelect").dispatchEvent(new Event("change", { bubbles: true }))');
+  await cdp.waitFor('document.querySelector("#promptDeviceValue").value === "你是当前服务中的主工作 Agent。"');
 
   await cdp.evaluate('document.querySelector("[data-prompt-level=platform]").click()');
   await cdp.evaluate('document.querySelector("#saveButton").click()');
@@ -275,10 +305,10 @@ try {
   await cdp.waitFor('document.querySelector("#promptPlatformHint").textContent.includes("当前未设置平台值")');
   check(await cdp.evaluate('document.querySelector("#promptPlatformValue").value') === '你是当前服务中的主工作 Agent。', '平台改回默认文本保存后自动恢复默认并回填默认文本');
 
+  // 自动恢复默认后同样不再挂未保存标记：关闭不追问。
   await cdp.evaluate('document.querySelector("#closeDrawerButton").click()');
-  await cdp.waitFor('!document.querySelector("#confirmOverlay").classList.contains("hidden")');
-  await cdp.evaluate('document.querySelector("#confirmOk").click()');
   await cdp.waitFor('document.querySelector("#drawerOverlay").classList.contains("hidden")');
+  check(await cdp.evaluate('document.querySelector("#confirmOverlay").classList.contains("hidden")'), '自动恢复默认后关闭不再追问放弃修改');
 
   // 设备层清除覆盖：确认后恢复继承（回落到语义 Agent 值）。
   await cdp.evaluate('[...document.querySelectorAll("#grid [data-action=edit]")].find(b => b.dataset.id === "chat.question_policy").click()');
