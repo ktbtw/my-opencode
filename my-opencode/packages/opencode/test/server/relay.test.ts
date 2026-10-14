@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { mkdir, readFile, realpath, symlink, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { ServerWebSocket } from "bun"
 import { Relay } from "../../src/server/relay"
@@ -4557,3 +4557,81 @@ describe.serial("Relay", () => {
     }
   })
 })
+
+test("sameDirectory 把软链接路径与真实路径视为同一目录", async () => {
+  await using tmp = await tmpdir()
+  const link = `${tmp.path}-same-dir-link`
+  await symlink(tmp.path, link, "dir")
+  try {
+    expect(Relay.sameDirectory(link, tmp.path)).toBe(true)
+    expect(Relay.sameDirectory(tmp.path, link)).toBe(true)
+    expect(Relay.sameDirectory(tmp.path, tmp.path)).toBe(true)
+    expect(Relay.sameDirectory(tmp.path, `${tmp.path}-other`)).toBe(false)
+    expect(Relay.sameDirectory(undefined, tmp.path)).toBe(false)
+    expect(Relay.sameDirectory(tmp.path, undefined)).toBe(false)
+  } finally {
+    await unlink(link).catch(() => undefined)
+  }
+})
+
+// 回归：项目根目录带软链接（macOS 上 /Users/x/Downloads -> /Volumes/disk/Downloads）时，
+// 事件里的 directory 是解析后的真实路径。修复前这里字面比较不相等，整条任务事件流被丢弃：
+// 授权请求既不自动批准也不推给客户端，Agent 永久卡住且 App 不弹授权。
+test("软链接项目根目录下仍能收到任务事件（授权链路不再被丢弃）", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const link = `${tmp.path}-project-link`
+  await symlink(tmp.path, link, "dir")
+  const llm = delayedLLMServer(0)
+  const relay = relayServer()
+  await writeConfig(tmp.path, llm.url)
+  envForRelay(relay.url, link)
+
+  const listener = await Server.listen({ hostname: "127.0.0.1", port: 0 })
+  try {
+    await withTimeout(
+      waitFor(() => relay.messages.find((msg) => msg.type === "device.hello"), "missing relay hello"),
+      5_000,
+      "timed out waiting for relay hello",
+    )
+    const socket = await withTimeout(
+      waitFor(() => Array.from(relay.sockets)[0], "missing relay socket"),
+      5_000,
+      "timed out waiting for relay socket",
+    )
+    socket.send(runEnvelope({ task_id: "symlink-root-task" }))
+    const started = await withTimeout(
+      waitFor(
+        () => relay.messages.find((msg) => msg.type === "task.started" && msg.payload.task_id === "symlink-root-task"),
+        "missing task start",
+      ),
+      25_000,
+      "timed out waiting for task start",
+    )
+    const properties = {
+      parentSessionID: started.payload.session_id,
+      sessionID: "ses_symlink_child",
+      subagentType: "repo-explorer",
+      resolvedAgent: "explore",
+      title: "Inspect repository",
+      background: true,
+      handledByRelay: false,
+    }
+    GlobalBus.emit("event", { directory: tmp.path, payload: { type: "opencode.subagent.started", properties } })
+    await withTimeout(
+      waitFor(
+        () =>
+          relay.messages.find(
+            (msg) => msg.type === "task.subagent_started" && msg.payload.node_id === properties.sessionID,
+          ),
+        "missing subagent started",
+      ),
+      5_000,
+      "timed out waiting for subagent started under symlinked project root",
+    )
+  } finally {
+    await listener.stop(true)
+    relay.stop()
+    llm.stop()
+    await unlink(link).catch(() => undefined)
+  }
+}, 45_000)

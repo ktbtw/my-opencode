@@ -1,7 +1,7 @@
 import { RelayDeltaBatcher } from "./relay-delta-batcher"
 import os from "node:os"
 import path from "node:path"
-import { createReadStream, readFileSync } from "node:fs"
+import { createReadStream, readFileSync, realpathSync } from "node:fs"
 import { mkdir, readdir, stat } from "node:fs/promises"
 import { AppRuntime } from "@/effect/app-runtime"
 import { GlobalBus } from "@/bus/global"
@@ -415,6 +415,7 @@ type RelayEnvKey =
 
 export namespace Relay {
   const log = Log.create({ service: "relay" })
+
   const DEFAULT_RELAY_URL = "wss://www.xyapi.top/codex/ws/device"
   const ARTIFACT_DIR_NAME = ".chatcodex-artifacts"
   const ARTIFACT_CHUNK_SIZE = 256 * 1024
@@ -426,6 +427,20 @@ export namespace Relay {
   ] as const
   const DEFAULT_GOAL_MAX_ITERATIONS = 30
   const GOAL_HEARTBEAT_INTERVAL_MS = 60_000
+
+  // 事件里的 directory 是实例目录（已解析软链接），而 project root 来自启动器透传的路径，
+  // 可能带软链接（例如 macOS 上 /Users/x/Downloads -> /Volumes/disk/Downloads）。
+  // 直接字符串比较会把整条任务事件流全部丢掉：授权请求既不自动批准也不推给客户端，
+  // 表现为 Agent 永久卡在"运行中"且 App 不弹授权。这里统一按真实路径比较。
+  export function sameDirectory(left?: string, right?: string) {
+    if (!left || !right) return left === right
+    if (left === right) return true
+    try {
+      return realpathSync(left) === realpathSync(right)
+    } catch {
+      return false
+    }
+  }
   const TASK_RESUME_CAPABILITY = "task_resume_v1"
   const PROJECT_MEMORY_CAPABILITY = "project_memory_v1"
   const PROJECT_MEMORY_HEARTBEAT_MS = 30_000
@@ -2709,7 +2724,7 @@ Rules:
     let reasoningLength = 0
     const partTypes: Record<string, DeltaField> = {}
     const on = (msg: { directory?: string; payload: any }) => {
-      if (msg.directory !== root) return
+      if (!sameDirectory(msg.directory, root)) return
       const evt = msg.payload
       if (evt.type === "message.part.updated") {
         if (evt.properties.sessionID !== sessionID) return
@@ -3400,7 +3415,7 @@ Rules:
         sendLLMUsageProgress(state, task, msg.payload)
         return
       }
-      if (msg.directory !== root) return
+      if (!sameDirectory(msg.directory, root)) return
       const evt = msg.payload
       if (evt.type === "opencode.orchestration.plan") {
         const properties = evt.properties as
@@ -5376,7 +5391,10 @@ Rules:
         const project = projects.find((item: unknown) => {
           if (!item || typeof item !== "object") return false
           const value = item as Record<string, unknown>
-          return value.project_id === cfg.project.id || value.root === cfg.project.root
+          return (
+            value.project_id === cfg.project.id ||
+            (typeof value.root === "string" && sameDirectory(value.root, cfg.project.root))
+          )
         }) as Record<string, unknown> | undefined
         if (project) {
           const scopeID = typeof project.project_scope_id === "string" ? project.project_scope_id.trim() : ""
