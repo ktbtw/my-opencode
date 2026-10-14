@@ -33,6 +33,7 @@ const state = {
   environmentPresets: [],
   modelPromptPresets: [],
   promptRegistry: [],
+  promptSemanticAgents: [],
   promptDeviceAgents: [],
   promptEditor: {
     slotId: "",
@@ -736,14 +737,14 @@ async function loadPromptRegistry() {
   const loadSequence = state.loadSequence;
   setBusy(el.refreshButton, true, "刷新中");
   try {
-    const [registryData, agentsData] = await Promise.all([
-      apiGet("/api/admin/prompt-registry"),
-      apiGet("/api/admin/semantic-agents"),
-    ]);
+    // 只取注册表接口：它已带上语义 Agent 的提示词覆盖。
+    // 不再拉 /api/admin/semantic-agents——那份响应会展开技能内容，线上约 1.6 MB，
+    // 弱网下会把"保存后刷新"拖到客户端 30s 超时。
+    const registryData = await apiGet("/api/admin/prompt-registry");
     if (!isLiveLoad(requestedView, loadSequence)) return;
     state.loadError = "";
     state.promptRegistry = Array.isArray(registryData.items) ? registryData.items : [];
-    state.semanticAgents = Array.isArray(agentsData.items) ? agentsData.items : [];
+    state.promptSemanticAgents = Array.isArray(registryData.semantic_agents) ? registryData.semantic_agents : [];
     render();
   } catch (error) {
     if (!isLiveLoad(requestedView, loadSequence)) return;
@@ -812,7 +813,7 @@ function promptSemanticAgentLabel(agent) {
 }
 
 function renderPromptSemanticFields(slot) {
-  const agents = state.semanticAgents || [];
+  const agents = state.promptSemanticAgents || [];
   const previous = state.promptEditor.semanticAgentId;
   const options = agents
     .map((agent) => `<option value="${escapeAttr(agent.id)}">${escapeHtml(promptSemanticAgentLabel(agent))}</option>`)
@@ -1006,7 +1007,7 @@ async function savePromptEditor() {
       return;
     }
     const content = el.promptSemanticValue.value;
-    const agent = (state.semanticAgents || []).find((item) => item.id === agentID);
+    const agent = (state.promptSemanticAgents || []).find((item) => item.id === agentID);
     const currentOverride = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
     if (promptTextEqual(content, promptInheritedValue(slot))) {
       // 内容与继承值一致：不创建覆盖；已有覆盖则顺手清掉，保持"覆盖只存差异"。
@@ -1107,7 +1108,7 @@ async function clearPromptSemanticOverride(button = null, options = {}) {
     showToast("请先选择语义 Agent");
     return;
   }
-  const agent = (state.semanticAgents || []).find((item) => item.id === agentID);
+  const agent = (state.promptSemanticAgents || []).find((item) => item.id === agentID);
   const override = (agent && agent.prompt_templates && agent.prompt_templates[slot.id]) || "";
   if (!override) {
     showToast("该语义 Agent 未覆盖此槽位");

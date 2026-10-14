@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -50,6 +51,15 @@ type promptSlotView struct {
 	UpdatedAt           string                   `json:"updated_at,omitempty"`
 	Overrides           []promptSlotOverrideView `json:"overrides,omitempty"`
 	DeviceOverrideCount int                      `json:"device_override_count"`
+}
+
+// promptSemanticAgentView 是控制台需要的语义 Agent 轻量视图：
+// 只带提示词覆盖，不展开技能/工具等重字段（整份 profile 序列化后可达 1.6 MB）。
+type promptSemanticAgentView struct {
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Enabled         bool              `json:"enabled"`
+	PromptTemplates map[string]string `json:"prompt_templates,omitempty"`
 }
 
 type promptTemplatesPayload struct {
@@ -104,6 +114,15 @@ func (a *API) ListPromptRegistry(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[prompt] 读取设备覆盖统计失败 err=%v", err)
 		deviceCounts = map[string]int{}
 	}
+	semanticViews := make([]promptSemanticAgentView, 0, len(agents))
+	for _, agent := range agents {
+		semanticViews = append(semanticViews, promptSemanticAgentView{
+			ID:              agent.ID,
+			Name:            agent.Name,
+			Enabled:         agent.Enabled,
+			PromptTemplates: agent.PromptTemplates,
+		})
+	}
 	items := make([]promptSlotView, 0, len(promptregistry.All()))
 	for _, slot := range promptregistry.All() {
 		view := promptSlotView{Slot: slot, DeviceOverrideCount: deviceCounts[slot.ID]}
@@ -125,7 +144,7 @@ func (a *API) ListPromptRegistry(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, view)
 	}
-	write(w, http.StatusOK, map[string]any{"items": items})
+	write(w, http.StatusOK, map[string]any{"items": items, "semantic_agents": semanticViews})
 }
 
 // SavePromptTemplate 保存平台默认值。
@@ -280,6 +299,27 @@ func (a *API) devicePromptOverrides(operatorID int64, agentID string) map[string
 	return out
 }
 
+// semanticPromptOverrides 只读取语义 Agent 的提示词覆盖。
+// 不用 semanticAgentByID：那条路径会展开技能与工具引用（单次可达数秒、上兆字节），
+// 而解析槽位只需要 prompt_templates_json 一个字段。
+func (a *API) semanticPromptOverrides(semanticAgentID string) map[string]string {
+	semanticAgentID = strings.TrimSpace(semanticAgentID)
+	if semanticAgentID == "" {
+		return nil
+	}
+	items, err := a.store.ListSemanticAgents(true)
+	if err != nil {
+		log.Printf("[prompt] 读取语义 Agent 覆盖失败 id=%s err=%v", semanticAgentID, err)
+		return nil
+	}
+	for _, item := range items {
+		if item.ID == semanticAgentID {
+			return item.PromptTemplates
+		}
+	}
+	return nil
+}
+
 // resolvePromptTemplates 解析某设备 Agent 的最终提示词：
 // 设备 Agent 覆盖 → 语义 Agent 覆盖 → 平台默认 → 内置默认。
 func (a *API) resolvePromptTemplates(operatorID int64, agentID, semanticAgentID string) (map[string]string, map[string]string) {
@@ -289,12 +329,7 @@ func (a *API) resolvePromptTemplates(operatorID int64, agentID, semanticAgentID 
 		stored = map[string]store.PromptTemplate{}
 	}
 	deviceOverrides := a.devicePromptOverrides(operatorID, agentID)
-	semanticOverrides := map[string]string{}
-	if strings.TrimSpace(semanticAgentID) != "" {
-		if profile, err := a.semanticAgentByID(semanticAgentID, true); err == nil {
-			semanticOverrides = profile.PromptTemplates
-		}
-	}
+	semanticOverrides := a.semanticPromptOverrides(semanticAgentID)
 	out := map[string]string{}
 	sources := map[string]string{}
 	for _, slot := range promptregistry.All() {
@@ -325,12 +360,7 @@ func (a *API) resolvePromptTemplateDetail(operatorID int64, agentID, semanticAge
 		stored = map[string]store.PromptTemplate{}
 	}
 	deviceOverrides := a.devicePromptOverrides(operatorID, agentID)
-	semanticOverrides := map[string]string{}
-	if strings.TrimSpace(semanticAgentID) != "" {
-		if profile, err := a.semanticAgentByID(semanticAgentID, true); err == nil {
-			semanticOverrides = profile.PromptTemplates
-		}
-	}
+	semanticOverrides := a.semanticPromptOverrides(semanticAgentID)
 	items := make([]promptSlotResolution, 0, len(promptregistry.All()))
 	for _, slot := range promptregistry.All() {
 		item := promptSlotResolution{
@@ -593,15 +623,30 @@ func (a *API) syncDeviceAgentPromptTemplatesWithSemantic(ctx context.Context, op
 	return revision, true
 }
 
-// pushPromptTemplatesToOnlineDevices 平台默认变更后推送给所有在线设备 Agent。
-// 逐台比对 revision：未变化的设备只做一次内存/DB 判断，不发 RPC。
-func (a *API) pushPromptTemplatesToOnlineDevices(ctx context.Context) int {
+// promptPushTarget 是一台待下发设备 Agent 的定位信息。
+type promptPushTarget struct {
+	operatorID      int64
+	launcherID      string
+	agentID         string
+	semanticAgentID string
+}
+
+const (
+	// promptPushWorkers 控制并发下发数：设备多时也能在客户端超时前返回。
+	promptPushWorkers = 6
+	// promptPushDeviceTimeout 是单台设备的推送上限：某台设备卡住不拖垮整次保存。
+	promptPushDeviceTimeout = 8 * time.Second
+)
+
+// collectPromptPushTargets 收集在线设备 Agent；semanticAgentID 非空时只收绑定该语义 Agent 的。
+func (a *API) collectPromptPushTargets(semanticAgentID string) []promptPushTarget {
+	semanticAgentID = strings.TrimSpace(semanticAgentID)
 	operators, err := a.store.ListOperators()
 	if err != nil {
-		log.Printf("[prompt] 平台默认推送跳过：读取账号失败 err=%v", err)
-		return 0
+		log.Printf("[prompt] 读取账号失败 err=%v", err)
+		return nil
 	}
-	pushed := 0
+	targets := make([]promptPushTarget, 0)
 	for _, operator := range operators {
 		for _, machine := range a.broker.ListMachines(operator.ID) {
 			if !machine.LauncherOnline {
@@ -615,13 +660,55 @@ func (a *API) pushPromptTemplatesToOnlineDevices(ctx context.Context) int {
 				if !agent.Enabled || strings.TrimSpace(agent.ID) == "" {
 					continue
 				}
-				if _, ok := a.syncDeviceAgentPromptTemplatesWithSemantic(ctx, operator.ID, launcherID, agent.ID, agent.SemanticAgentID, false); ok {
-					pushed++
+				if semanticAgentID != "" && strings.TrimSpace(agent.SemanticAgentID) != semanticAgentID {
+					continue
 				}
+				targets = append(targets, promptPushTarget{
+					operatorID:      operator.ID,
+					launcherID:      launcherID,
+					agentID:         agent.ID,
+					semanticAgentID: agent.SemanticAgentID,
+				})
 			}
 		}
 	}
+	return targets
+}
+
+// pushPromptTemplates 并发下发到多台设备：每台设备独立超时，客户端断开也把已开始的下发做完。
+func (a *API) pushPromptTemplates(ctx context.Context, targets []promptPushTarget) int {
+	if len(targets) == 0 {
+		return 0
+	}
+	base := context.WithoutCancel(ctx)
+	sem := make(chan struct{}, promptPushWorkers)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	pushed := 0
+	for _, item := range targets {
+		target := item
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			callCtx, cancel := context.WithTimeout(base, promptPushDeviceTimeout)
+			defer cancel()
+			if _, ok := a.syncDeviceAgentPromptTemplatesWithSemantic(callCtx, target.operatorID, target.launcherID, target.agentID, target.semanticAgentID, false); ok {
+				mu.Lock()
+				pushed++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
 	return pushed
+}
+
+// pushPromptTemplatesToOnlineDevices 平台默认变更后推送给所有在线设备 Agent。
+// 逐台比对 revision：未变化的设备只做一次内存/DB 判断，不发 RPC。
+func (a *API) pushPromptTemplatesToOnlineDevices(ctx context.Context) int {
+	return a.pushPromptTemplates(ctx, a.collectPromptPushTargets(""))
 }
 
 // pushPromptTemplatesToSemanticAgentDevices 语义 Agent 覆盖变更后，推送给所有绑定它的在线设备 Agent。
@@ -630,62 +717,12 @@ func (a *API) pushPromptTemplatesToSemanticAgentDevices(ctx context.Context, sem
 	if semanticAgentID == "" {
 		return 0
 	}
-	operators, err := a.store.ListOperators()
-	if err != nil {
-		return 0
-	}
-	pushed := 0
-	for _, operator := range operators {
-		for _, machine := range a.broker.ListMachines(operator.ID) {
-			if !machine.LauncherOnline {
-				continue
-			}
-			launcherID, err := a.deviceLauncherAgent(operator.ID, machine.MachineID)
-			if err != nil {
-				continue
-			}
-			for _, agent := range machine.Agents {
-				if !agent.Enabled || strings.TrimSpace(agent.ID) == "" {
-					continue
-				}
-				if strings.TrimSpace(agent.SemanticAgentID) != semanticAgentID {
-					continue
-				}
-				if _, ok := a.syncDeviceAgentPromptTemplatesWithSemantic(ctx, operator.ID, launcherID, agent.ID, semanticAgentID, false); ok {
-					pushed++
-				}
-			}
-		}
-	}
-	return pushed
+	return a.pushPromptTemplates(ctx, a.collectPromptPushTargets(semanticAgentID))
 }
 
 // catchUpPromptTemplates 周期性补齐：离线期间错过的提示词变更，在设备上线后自动补推。
 func (a *API) catchUpPromptTemplates(ctx context.Context) {
-	operators, err := a.store.ListOperators()
-	if err != nil {
-		return
-	}
-	for _, operator := range operators {
-		for _, machine := range a.broker.ListMachines(operator.ID) {
-			if !machine.LauncherOnline {
-				continue
-			}
-			launcherID, err := a.deviceLauncherAgent(operator.ID, machine.MachineID)
-			if err != nil {
-				continue
-			}
-			for _, agent := range machine.Agents {
-				if !agent.Enabled || strings.TrimSpace(agent.ID) == "" {
-					continue
-				}
-				if ctx.Err() != nil {
-					return
-				}
-				a.syncDeviceAgentPromptTemplatesWithSemantic(ctx, operator.ID, launcherID, agent.ID, agent.SemanticAgentID, false)
-			}
-		}
-	}
+	a.pushPromptTemplates(ctx, a.collectPromptPushTargets(""))
 }
 
 // StartPromptTemplateSyncLoop 启动提示词补齐循环：设备重新上线后自动收到最新槽位。

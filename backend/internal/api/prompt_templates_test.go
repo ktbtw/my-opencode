@@ -101,10 +101,73 @@ func (r *promptTestRig) do(t *testing.T, method, path, body string) *httptest.Re
 		r.api.SavePromptDeviceOverrides(rec, req)
 	case method == http.MethodGet && strings.Contains(path, "device-agents"):
 		r.api.ListPromptDeviceAgents(rec, req)
+	case method == http.MethodGet && strings.HasSuffix(path, "prompt-registry"):
+		r.api.ListPromptRegistry(rec, req)
 	default:
 		t.Fatalf("unsupported test route %s %s", method, path)
 	}
 	return rec
+}
+
+// TestListPromptRegistryShipsCompactSemanticAgents 校验注册表接口自带轻量语义 Agent 列表：
+// 控制台只靠这一个接口就能渲染三级编辑，不必再拉展开技能后的整份 profile（线上约 1.6 MB）。
+func TestListPromptRegistryShipsCompactSemanticAgents(t *testing.T) {
+	rig := newPromptTestRig(t, "reverse-android")
+	if _, err := rig.store.UpsertSemanticAgent(model.SemanticAgentProfile{
+		ID:              "reverse-android",
+		Name:            "逆向专家-安卓",
+		Enabled:         true,
+		Prompt:          strings.Repeat("角色提示词内容。", 500),
+		PromptTemplates: map[string]string{"chat.base_prompt": "语义层基础提示词"},
+	}); err != nil {
+		t.Fatalf("seed semantic agent: %v", err)
+	}
+	rec := rig.do(t, http.MethodGet, "/api/admin/prompt-registry", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Items          []promptSlotView          `json:"items"`
+		SemanticAgents []promptSemanticAgentView `json:"semantic_agents"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.SemanticAgents) != 1 {
+		t.Fatalf("应返回 1 个语义 Agent，实际 %d", len(payload.SemanticAgents))
+	}
+	agent := payload.SemanticAgents[0]
+	if agent.ID != "reverse-android" || agent.Name != "逆向专家-安卓" {
+		t.Fatalf("语义 Agent 轻量视图字段不完整: %+v", agent)
+	}
+	if agent.PromptTemplates["chat.base_prompt"] != "语义层基础提示词" {
+		t.Fatalf("轻量视图应带提示词覆盖: %+v", agent.PromptTemplates)
+	}
+	// 轻量视图不得携带角色提示词/技能正文，否则又变成大响应。
+	if strings.Contains(rec.Body.String(), "角色提示词内容") {
+		t.Fatal("注册表响应不应包含语义 Agent 的角色提示词正文")
+	}
+}
+
+// TestPromptSemanticOverridesReadsTemplatesDirectly 校验解析槽位时只读 prompt_templates，
+// 不走会展开技能的重路径。
+func TestPromptSemanticOverridesReadsTemplatesDirectly(t *testing.T) {
+	rig := newPromptTestRig(t, "reverse-android")
+	if _, err := rig.store.UpsertSemanticAgent(model.SemanticAgentProfile{
+		ID:              "reverse-android",
+		Name:            "逆向专家-安卓",
+		Enabled:         true,
+		PromptTemplates: map[string]string{"chat.question_policy": "只取覆盖"},
+	}); err != nil {
+		t.Fatalf("seed semantic agent: %v", err)
+	}
+	overrides := rig.api.semanticPromptOverrides("reverse-android")
+	if overrides["chat.question_policy"] != "只取覆盖" {
+		t.Fatalf("未读到语义覆盖: %+v", overrides)
+	}
+	if got := rig.api.semanticPromptOverrides("missing-agent"); got != nil {
+		t.Fatalf("未知语义 Agent 应返回空: %+v", got)
+	}
 }
 
 // TestSavePromptDeviceOverridesWritesScopedSettingsAndPushes 覆盖设备级写入的三个要点：

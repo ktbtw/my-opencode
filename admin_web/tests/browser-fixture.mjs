@@ -26,6 +26,7 @@ const promptDeviceAgents=[{operator_id:1,operator_username:'admin',machine_id:'m
 // 设备/语义覆盖用可变状态维护，POST 后可反映真实读写结果。
 const promptDeviceValues={'chat.question_policy':'设备版提问策略'};
 const promptSemanticValues={'chat.question_policy':'语义版提问策略'};
+const promptSemanticAgentViews=()=>[{id:'agent-fixture',name:'代码助手',enabled:true,prompt_templates:{...promptSemanticValues}}];
 const promptRegistryItems=()=>promptSlots.map(slot=>({...slot,overrides:promptSemanticValues[slot.id]?[{semantic_agent_id:'agent-fixture',semantic_agent_name:'代码助手'}]:[],device_override_count:promptDeviceValues[slot.id]?1:0}));
 const promptDeviceOverrides=()=>promptSlots.map(slot=>({slot_id:slot.id,device_value:promptDeviceValues[slot.id]||'',semantic_value:promptSemanticValues[slot.id]||'',platform_value:slot.platform_value,effective:promptDeviceValues[slot.id]||promptSemanticValues[slot.id]||slot.platform_value||slot.default,source:promptDeviceValues[slot.id]?'device':(promptSemanticValues[slot.id]?'semantic':(slot.platform_set?'platform':'builtin'))}));
 const control={fail:'',delay:'',delayMs:0,pending:0};
@@ -44,7 +45,7 @@ const server=http.createServer(async(req,res)=>{
   }
   if(route==='/api/admin/prompt-registry'&&req.method==='GET'){
     if(req.headers.authorization!=='Bearer fixture-session')return send(res,401,{error:'unauthorized'});
-    return send(res,200,{items:promptRegistryItems()});
+    return send(res,200,{items:promptRegistryItems(),semantic_agents:promptSemanticAgentViews()});
   }
   if(route==='/api/admin/prompt-registry/device-agents'&&req.method==='GET'){
     if(req.headers.authorization!=='Bearer fixture-session')return send(res,401,{error:'unauthorized'});
