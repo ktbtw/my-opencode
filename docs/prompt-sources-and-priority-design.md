@@ -376,3 +376,25 @@
 
 - 端到端验证是第二批的进入门槛（用户要求每批验证后再进入下一批）。
 - 设备升级两种方式：**(a)** 用户在 App 内点「更新」；**(b)** 命令行替换 `~/.my-opencode-launcher/bin/` 与 `versions/` 并重启 Agent（会打断当前会话，需用户确认）。
+
+### 设备端升级步骤（方案 b 备查，未经执行）
+
+```bash
+L=~/.my-opencode-launcher
+# 1) 备份
+cp -a "$L/bin" "$L/bin.bak-$(date +%s)"; cp "$L/current-version" /tmp/current-version.bak
+# 2) 下载并安装 launcher（0.1.193）
+curl -sS -o /tmp/launcher.zip "https://www.xyapi.top/codex/api/launcher/download?artifact=chat-codex-launcher-darwin-arm64.zip"
+rm -rf /tmp/launcher-x && mkdir /tmp/launcher-x && unzip -q /tmp/launcher.zip -d /tmp/launcher-x
+# 安装前确认压缩包内可执行文件名，再覆盖 $L/bin/chat-codex-launcher
+# 3) 下载并安装 opencode（1.15.123）
+curl -sS -o /tmp/opencode.zip "https://www.xyapi.top/codex/api/app/download?artifact=opencode-darwin-arm64.zip"
+mkdir -p "$L/versions/1.15.123" && unzip -q -o /tmp/opencode.zip -d "$L/versions/1.15.123"
+printf '{"version":"1.15.123","channel":"latest","executable":"opencode"}' > "$L/versions/1.15.123/manifest.json"
+echo 1.15.123 > "$L/current-version"
+# 4) 重启 launcher 与 Agent（launcher 由 autostart 托管时 kill 后会自动拉起）
+# 5) 验证：agents.json 里 agent 的 pid 变化、进程路径指向 versions/1.15.123、
+#    $L/prompts/<agent_id>/manifest.json 出现（后端重启前补推）
+```
+
+回滚：还原 `$L/bin` 与 `$L/current-version` 后重启 launcher。
