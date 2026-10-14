@@ -57,8 +57,8 @@ try{
   if(view==='prompts'){
    check('document.querySelector("#promptPlatformValue")!==null && document.querySelectorAll("#promptLevelTabs [data-prompt-level]").length===3 && [...document.querySelectorAll(".form-section")].filter(s=>!s.classList.contains("hidden")).length===1','prompt registry editor shows three override levels in one section');
    run('click','[data-prompt-level=device]');
-   run('wait','--fn','document.querySelector("#promptDeviceAgentSelect").options.length>0');
-   check('document.querySelector("#promptDeviceValue").value.length>0','device level loads per-slot override detail');
+   run('wait','--fn','document.querySelector("#promptDeviceAgentSelect").options.length>0 && document.querySelector("#promptDeviceHint").textContent.includes("生效来源")');
+   check('document.querySelector("#promptDeviceHint").textContent.length>0','device level loads per-slot override detail');
   }
   run('press','Escape');
  }
