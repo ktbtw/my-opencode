@@ -369,7 +369,7 @@
 | launcher 落盘 + 配置声明 | ✅ 已发布 0.1.193 | 单测 5 项通过（落盘/清空/manifest/空 agent_id/无 manifest） |
 | 控制台：平台默认编辑页 | ✅ 已上线 | `/codex-admin/prompts.html` 200；服务器文件核实 |
 | 控制台：语义 Agent 覆盖编辑 | ✅ 已上线 | `prompts.js` 打包通过；服务器文件命中 `overrideList/loadAgents/prompt_templates` |
-| 控制台：设备 Agent 覆盖编辑 | ⏳ 未做 | 后端已支持 `device_settings.prompt_template.<slot>` |
+| 控制台：设备 Agent 覆盖编辑 | ⏳ 未做（纯前端） | 复用现有 `POST /api/agents/{agentID}/settings`（body 为扁平 map，key 用 `prompt_template.<slot>`），无需新增后端接口；设备/Agent 列表走 `/api/devices` |
 | **设备端升级 + 端到端验证** | ⏳ 待办 | 设备仍为 launcher 0.1.192 / opencode 1.15.122；升级需在 App 点「更新」或手动替换并重启 Agent |
 
 ### 待办与依赖
