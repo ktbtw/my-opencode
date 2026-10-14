@@ -272,3 +272,86 @@
 | 第一批 | B1/B2/B3（平台默认 + 语义 Agent + 设备 Agent 覆盖） | 解决当前"控制台最高级/身份冲突"痛点 |
 | 第二批 | 模式提示词（plan / max-steps）+ B4/B5 模板化 | 模式行为可控 |
 | 第三批 | 内部任务提示词（标题/摘要/压缩/记忆/目标）+ 消息片段模板 | 真正"全部可改"，需配合受限编辑与校验 |
+
+---
+
+## 九、全量提示词注册表（最终实施规格）
+
+### 9.1 槽位清单（slot catalog）
+
+命名规则 `<area>.<name>`；`scope` 表示允许覆盖的层级（P=平台默认，S=语义 Agent，D=设备 Agent）。
+
+| slot_id | 分类 | 默认来源 | 变量 | scope | 风险 |
+|---------|------|----------|------|-------|------|
+| `chat.base_prompt` | 主对话 | `session/prompt/unified.txt` | — | P/S/D | 低 |
+| `chat.question_policy` | 主对话 | `session/system.ts` QUESTION_POLICY | — | P/S/D | 低 |
+| `chat.orchestration_prompt` | 主对话 | launcher `orchestrationPresentationPrompt` | — | P/S/D | 低 |
+| `chat.environment` | 主对话 | `SystemPrompt.environment` 模板 | `{{model}}` `{{model_id}}` `{{provider_id}}` `{{cwd}}` `{{worktree}}` `{{is_git}}` `{{platform}}` `{{date}}` | P | 低 |
+| `chat.skills_header` | 主对话 | `SystemPrompt.skills` 头部文案 | `{{skills}}` | P | 低 |
+| `chat.agent_prompt`（A2） | 主对话 | 语义 Agent 提示词 | — | S | 低（沿用现有编辑页） |
+| `chat.model_preset`（A1） | 主对话 | 模型提示词预设 | — | P/S | 低（沿用现有编辑页） |
+| `chat.global_prompt` / `chat.project_prompt`（A3/A4） | 主对话 | 设备设置 | — | D | 低（沿用现有编辑页） |
+| `mode.plan` | 模式 | `session/prompt/plan.txt` | — | P/S/D | 中 |
+| `mode.plan_mode` | 模式 | `plan-mode.txt` | — | P/S/D | 中 |
+| `mode.plan_reminder` | 模式 | `plan-reminder-anthropic.txt` | — | P/S/D | 中 |
+| `mode.build_switch` | 模式 | `build-switch.txt` | — | P/S/D | 中 |
+| `mode.max_steps` | 模式 | `max-steps.txt` | — | P/S/D | 中 |
+| `job.title` | 内部任务 | `agent/prompt/title.txt` | — | P | 低 |
+| `job.summary` | 内部任务 | `agent/prompt/summary.txt` | — | P | 低 |
+| `job.compaction` | 内部任务 | `agent/prompt/compaction.txt` | — | P | 中 |
+| `job.explore` / `job.scout` | 内部任务 | `agent/prompt/explore.txt` / `scout.txt` | — | P/S | 中 |
+| `job.memory_curator` | 内部任务 | relay `PROJECT_MEMORY_SYSTEM_PROMPT` | `{{schema}}` | P | **高**（JSON 解析耦合） |
+| `job.goal_optimize` | 内部任务 | relay `GOAL_OPTIMIZE_SYSTEM_PROMPT` | `{{schema}}` | P | **高** |
+| `job.goal_completion_review` | 内部任务 | relay `GOAL_COMPLETION_REVIEW_SYSTEM_PROMPT` | `{{schema}}` | P | **高** |
+| `job.structured_output` | 内部任务 | `STRUCTURED_OUTPUT_SYSTEM_PROMPT` | — | P | 中 |
+| `job.continue_output_length` / `job.continue_provider_error` | 内部任务 | 续写提示词 | — | P | 中 |
+| `job.completion_guard` | 内部任务 | 完成守卫文案 | — | P | **高** |
+| `job.verify_intent` | 内部任务 | Android 逆向 Agent 的 verify/frida 意图提示 | — | P/S | 中 |
+| `job.synthetic_attachment` | 内部任务 | `SYNTHETIC_ATTACHMENT_PROMPT` | — | P | 低 |
+| `message.artifact_scope` | 消息片段 | 后端任务交付范围文案 | `{{task_id}}` `{{dir}}` | P | 低 |
+| `message.system_reminder` | 消息片段 | 系统提醒模板 | `{{text}}` | P | 低 |
+| `message.compaction_reminder` | 消息片段 | 压缩提醒模板 | `{{...}}` | P | 低 |
+
+> provider 专属 `anthropic/codex/gpt/kimi/trinity/beast/default/copilot-gpt-5.txt` 当前未被引用，不纳入注册表。
+
+### 9.2 存储与解析
+
+| 层级 | 存储 |
+|------|------|
+| 平台默认 | `prompt_templates(slot_id PK, content MEDIUMTEXT, revision INT, updated_at)` |
+| 语义 Agent | `semantic_agents.prompt_templates_json`（`{slot_id: content}`） |
+| 设备 Agent | `device_settings`，key = `prompt_template.<slot_id>` |
+
+解析：`resolvePromptTemplates(operatorID, deviceAgentID)` = 设备 Agent → 语义 Agent → 平台默认 → 内置默认，
+返回 `{slot_id: {text, source}}` + 汇总 revision。
+
+### 9.3 下发与加载
+
+- launcher 启动 / Agent 重启 / 后端推送时拉取解析结果 → 原子写入
+  `~/.my-opencode-launcher/prompts/<agent_id>/<slot_id>.txt`；
+- opencode 配置新增 `prompt_slots: { "<slot_id>": "<file path>" }`；
+- 运行时/relay/后端按 slot 取值：**有文件用文件（按会话读取，带 mtime 缓存），无文件用内置默认**；
+- 变量在取用时渲染（`{{...}}` 占位符）。
+
+### 9.4 控制台
+
+- 新页「提示词管理」：按分类分页签（主对话 / 模式 / 内部任务 / 消息片段）；
+  每个 slot 一行：内置默认（只读）、平台值（可编辑）、覆盖统计（哪些语义 Agent / 设备 Agent 覆盖了）、变量说明、风险标记、恢复默认。
+- 「编辑语义 Agent」抽屉新增「提示词覆盖」区块：仅列出 `scope` 含 S 的 slot，留空=继承平台。
+- 设备 Agent 设置页同样列出 `scope` 含 D 的 slot，留空=继承语义 Agent。
+- A1/A2/A3/A4 沿用现有编辑入口，在提示词管理页以只读方式汇总展示，避免两处编辑冲突。
+
+### 9.5 风控
+
+- `risk=高` 的 slot（记忆整理、目标优化/评审、完成守卫）：**输出格式约束段不可编辑**（以 `{{schema}}` 等占位符注入），
+  保存时校验必需占位符是否保留，缺失则拒绝并提示；提供一键恢复默认。
+- 变量校验：保存时若删除了必需占位符 → 拒绝并说明。
+- 所有 slot 保存写审计日志（操作者、slot、revision、时间）。
+
+### 9.6 分批实施
+
+| 批次 | 内容 | 验证 |
+|------|------|------|
+| 第一批 | 注册表基础设施 + `chat.base_prompt` / `chat.question_policy` / `chat.orchestration_prompt` 端到端 | 控制台改 → 设备拉取 → 问「你是谁」只答人设 |
+| 第二批 | `mode.*` + `chat.environment` / `chat.skills_header` | plan 模式与技能块文案可控 |
+| 第三批 | `job.*` + `message.*`（含风控校验） | 标题/摘要/记忆等行为可控且解析不破 |
