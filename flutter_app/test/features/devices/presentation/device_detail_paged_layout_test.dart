@@ -1,5 +1,7 @@
 import 'package:chat_codex_app/core/storage/app_storage.dart';
 import 'package:chat_codex_app/features/devices/data/device_model.dart';
+import 'package:chat_codex_app/core/config/sse_parser.dart';
+import 'package:chat_codex_app/features/devices/presentation/completed_agents_provider.dart';
 import 'package:chat_codex_app/features/devices/presentation/device_detail_page.dart';
 import 'package:chat_codex_app/features/devices/presentation/device_provider.dart';
 import 'package:chat_codex_app/features/devices/presentation/device_metrics_provider.dart';
@@ -278,15 +280,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('p-run'), findsOneWidget);
 
-    // 回复完成（任务结束）→ 进「完成」，卡片状态显示已完成
+    // 任务结束事件到达 + 设备快照刷新 → 进「完成」，卡片状态显示已完成
     current = singleAgent(running: false);
     container.invalidate(deviceDetailProvider('machine-a'));
+    container
+        .read(completedAgentsProvider.notifier)
+        .handleEvent(
+          const SseEvent(
+            type: 'task.updated',
+            data:
+                '{"machine_id":"machine-a","agent_id":"a-run",'
+                '"task_id":"task-1","status":"completed"}',
+          ),
+        );
     await tester.pumpAndSettle();
     await tester.tap(find.text('完成'));
     await tester.pumpAndSettle();
     expect(find.text('p-run'), findsOneWidget);
     expect(find.text('已完成'), findsOneWidget);
-    expect(AppStorage.getString('device_detail_completed_machine-a'), 'a-run');
+    expect(
+      AppStorage.getString('completed_agents_v1'),
+      '{"machine-a":["a-run"]}',
+    );
 
     // 查看对话后回到「空闲」
     await tester.tap(find.text('进入对话'));
@@ -298,7 +313,7 @@ void main() {
     await tester.tap(find.text('空闲'));
     await tester.pumpAndSettle();
     expect(find.text('p-run'), findsOneWidget);
-    expect(AppStorage.getString('device_detail_completed_machine-a'), '');
+    expect(AppStorage.getString('completed_agents_v1'), '{}');
 
     // 「完成」页已清空
     await tester.tap(find.text('完成'));

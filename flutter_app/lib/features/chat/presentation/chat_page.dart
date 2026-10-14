@@ -1,3 +1,5 @@
+import '../../devices/presentation/completed_agents_provider.dart';
+import '../../../shared/widgets/app_status_icon.dart';
 import '../../project_settings/project_settings_provider.dart';
 import '../../project_settings/presentation/project_settings_page.dart';
 import 'dart:async';
@@ -543,6 +545,10 @@ class _ChatPageState extends ConsumerState<ChatPage>
       if (!mounted) return;
       _visibleNotifier = ref.read(chatProvider(_chatKey).notifier);
       _visibleNotifier!.setPageVisible(_routeVisible);
+      // 打开对话即视为查看过：设备详情页的「完成」分类据此回到「空闲」。
+      ref
+          .read(completedAgentsProvider.notifier)
+          .markViewed(widget.machineId, widget.agentId);
       ref
           .read(appNotificationControllerProvider.notifier)
           .setForegroundChat(
@@ -898,6 +904,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
       if (!mounted) return;
       _visibleNotifier = ref.read(chatProvider(_chatKey).notifier);
       _visibleNotifier!.setPageVisible(_routeVisible);
+      ref
+          .read(completedAgentsProvider.notifier)
+          .markViewed(widget.machineId, widget.agentId);
       unawaited(_positionLatestMessage());
       unawaited(_loadCompactionConfig());
       final notifications = ref.read(
@@ -2038,14 +2047,13 @@ class _ChatPageState extends ConsumerState<ChatPage>
         child: Row(
           children: [
             IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new, size: 15),
+              icon: const AppStatusIcon(Icons.arrow_back_ios_new,),
               onPressed: _leaveChat,
               tooltip: '返回设备详情',
             ),
             IconButton(
-              icon: Icon(
-                Icons.history,
-                size: 18,
+              icon: AppStatusIcon(
+                Icons.history_outlined,
                 color: _sessionPanelOpen
                     ? AppColors.primary
                     : AppColors.textSecondary,
@@ -2098,9 +2106,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
             IconButton(
               tooltip: '全局助手',
               onPressed: _toggleGlobalOverlay,
-              icon: const Icon(
+              icon: const AppStatusIcon(
                 Icons.bubble_chart_outlined,
-                size: 20,
                 color: AppColors.primary,
               ),
             ),
@@ -2110,17 +2117,15 @@ class _ChatPageState extends ConsumerState<ChatPage>
               onPressed: () {
                 ref.read(chatProvider(_chatKey).notifier).newSession();
               },
-              icon: const Icon(
+              icon: const AppStatusIcon(
                 Icons.add_comment_outlined,
-                size: 20,
                 color: AppColors.textSecondary,
               ),
             ),
             PopupMenuButton<_ChatMoreAction>(
               tooltip: '更多',
-              icon: const Icon(
-                Icons.more_horiz_rounded,
-                size: 21,
+              icon: const AppStatusIcon(
+                Icons.more_horiz_outlined,
                 color: AppColors.textSecondary,
               ),
               onSelected: (action) {
@@ -2154,7 +2159,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   value: _ChatMoreAction.projectSettings,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(Icons.settings_outlined, size: 19),
+                    leading: AppStatusIcon(Icons.settings_outlined,),
                     title: Text('项目设置'),
                   ),
                 ),
@@ -2162,7 +2167,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   value: _ChatMoreAction.switchAgent,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(Icons.swap_horiz_rounded, size: 19),
+                    leading: AppStatusIcon(Icons.swap_horiz_rounded,),
                     title: Text('切换 Agent'),
                   ),
                 ),
@@ -2171,7 +2176,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   enabled: taskId != null,
                   child: ListTile(
                     dense: true,
-                    leading: const Icon(Icons.account_tree_outlined, size: 19),
+                    leading: const AppStatusIcon(Icons.account_tree_outlined,),
                     title: Text(
                       taskId == null
                           ? '子代理任务（暂无）'
@@ -2185,7 +2190,7 @@ class _ChatPageState extends ConsumerState<ChatPage>
                   value: _ChatMoreAction.files,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(Icons.folder_open_rounded, size: 19),
+                    leading: AppStatusIcon(Icons.folder_open_rounded,),
                     title: Text('工作目录文件'),
                   ),
                 ),
@@ -2224,7 +2229,7 @@ class _ContextChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
+          AppStatusIcon(
             icon,
             size: 12,
             color: highlight ? AppColors.primary : AppColors.textMuted,

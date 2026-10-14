@@ -10,6 +10,7 @@ import '../core/storage/app_storage.dart';
 import '../core/theme/app_theme.dart';
 import '../features/devices/application/device_operation_notification_coordinator.dart';
 import 'router.dart';
+import '../features/devices/presentation/completed_agents_provider.dart';
 import '../features/devices/presentation/device_live_updates.dart';
 
 Future<void> main() async {
@@ -96,6 +97,8 @@ class _ChatCodexAppState extends ConsumerState<ChatCodexApp> {
   Widget build(BuildContext context) {
     ref.watch(deviceOperationNotificationCoordinatorProvider);
     ref.watch(deviceLiveUpdatesProvider);
+    // 常驻：设备详情页没打开时也要把"跑完了"登记到「完成」分类。
+    ref.watch(completedAgentsProvider);
     return MaterialApp.router(
       title: 'Chat Codex',
       theme: AppTheme.light,

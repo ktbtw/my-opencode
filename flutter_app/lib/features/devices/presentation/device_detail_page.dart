@@ -1,3 +1,4 @@
+import '../../../shared/widgets/app_status_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -31,6 +32,7 @@ import '../data/device_semantic_agent_model.dart';
 import '../data/device_skill_model.dart';
 import '../data/device_skill_import_parser.dart';
 import 'device_directory_page.dart';
+import 'completed_agents_provider.dart';
 import 'device_metrics_provider.dart';
 import 'device_provider.dart';
 import 'device_skill_detail_dialog.dart';
@@ -690,7 +692,7 @@ class _DeviceDetailPageState extends ConsumerState<DeviceDetailPage>
       child: Row(
         children: [
           IconButton(
-            icon: const Icon(Icons.arrow_back_ios_new, size: 16),
+              icon: const AppStatusIcon(Icons.arrow_back_ios_new,),
             onPressed: () => context.go('/devices'),
           ),
           const SizedBox(width: 4),
@@ -698,9 +700,8 @@ class _DeviceDetailPageState extends ConsumerState<DeviceDetailPage>
           const Spacer(),
           IconButton(
             tooltip: _pagedLayout ? '切换为整页布局' : '切换为分页布局',
-            icon: Icon(
+            icon: AppStatusIcon(
               _pagedLayout ? Icons.view_agenda_outlined : Icons.tab_outlined,
-              size: 18,
             ),
             onPressed: _toggleLayoutMode,
           ),
@@ -6727,49 +6728,37 @@ class _AgentSkillSelectionDialogState
 
 /// 分页布局：设备 / 处理 / 完成 / 空闲 / 离线。
 ///
-/// 分页归属：处理 = [AgentModel.isBusy]；完成 = 刚跑完且用户还没查看过对话的
-/// Agent（查看后回到空闲）；空闲 = 在线且无任务且不在完成里；
-/// 离线 = 非在线（含已停止/异常/已停用）。
-class _PagedDeviceDetail extends StatefulWidget {
+/// 分页归属：处理 = [AgentModel.isBusy]；完成 = 跑完且用户还没查看过对话的
+/// Agent（登记见 [completedAgentsProvider]，与页面是否打开无关，查看后回到空闲）；
+/// 空闲 = 在线且无任务且不在完成里；离线 = 非在线（含已停止/异常/已停用）。
+class _PagedDeviceDetail extends ConsumerStatefulWidget {
   final DeviceModel device;
 
   const _PagedDeviceDetail({required this.device});
 
   @override
-  State<_PagedDeviceDetail> createState() => _PagedDeviceDetailState();
+  ConsumerState<_PagedDeviceDetail> createState() => _PagedDeviceDetailState();
 }
 
-class _PagedDeviceDetailState extends State<_PagedDeviceDetail> {
+class _PagedDeviceDetailState extends ConsumerState<_PagedDeviceDetail> {
   int _tab = 0;
-
-  /// 跑完但用户还没查看过对话的 Agent：进「完成」，查看后回「空闲」。
-  Set<String> _completed = <String>{};
 
   // v2：新增「完成」页签后索引整体后移，旧键不迁移，避免把"空闲"读成"完成"。
   String get _tabKey =>
       'device_detail_paged_tab_v2_${widget.device.machineId.trim()}';
 
-  String get _completedKey =>
-      'device_detail_completed_${widget.device.machineId.trim()}';
-
   @override
   void initState() {
     super.initState();
     _tab = _readSavedTab();
-    _completed = _readCompleted();
   }
 
   @override
   void didUpdateWidget(covariant _PagedDeviceDetail oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.device.machineId != widget.device.machineId) {
-      setState(() {
-        _tab = _readSavedTab();
-        _completed = _readCompleted();
-      });
-      return;
+      setState(() => _tab = _readSavedTab());
     }
-    _trackCompletions(oldWidget.device.agents);
   }
 
   int _readSavedTab() {
@@ -6777,49 +6766,11 @@ class _PagedDeviceDetailState extends State<_PagedDeviceDetail> {
     return savedTab != null && savedTab >= 0 && savedTab <= 4 ? savedTab : 0;
   }
 
-  Set<String> _readCompleted() {
-    final raw = AppStorage.getString(_completedKey) ?? '';
-    return raw
-        .split(',')
-        .map((item) => item.trim())
-        .where((item) => item.isNotEmpty)
-        .toSet();
-  }
-
-  Future<void> _saveCompleted(Set<String> value) =>
-      AppStorage.setString(_completedKey, value.join(','));
-
-  /// 跑完的判定：上一帧还在跑（处理中/有任务）且这一帧在线空闲 → 待查看的完成。
-  /// 又开工或掉线则撤销，避免"完成"里堆着已经重新忙碌的 Agent。
-  void _trackCompletions(List<AgentModel> previous) {
-    final before = {for (final agent in previous) agent.agentId: agent};
-    final next = <String>{..._completed};
-    var changed = false;
-    for (final agent in widget.device.agents) {
-      final was = before[agent.agentId];
-      final running = agent.isBusy;
-      if (was != null &&
-          was.isBusy &&
-          !running &&
-          agent.isOnline &&
-          next.add(agent.agentId)) {
-        changed = true;
-      }
-      if ((running || !agent.isOnline) && next.remove(agent.agentId)) {
-        changed = true;
-      }
-    }
-    if (!changed) return;
-    setState(() => _completed = next);
-    unawaited(_saveCompleted(next));
-  }
-
   /// 用户查看了这个 Agent 的对话：从「完成」回到「空闲」。
   void _markViewed(String agentId) {
-    if (!_completed.contains(agentId)) return;
-    final next = <String>{..._completed}..remove(agentId);
-    setState(() => _completed = next);
-    unawaited(_saveCompleted(next));
+    ref
+        .read(completedAgentsProvider.notifier)
+        .markViewed(widget.device.machineId, agentId);
   }
 
   void _selectTab(int index) {
@@ -6831,11 +6782,18 @@ class _PagedDeviceDetailState extends State<_PagedDeviceDetail> {
   @override
   Widget build(BuildContext context) {
     final device = widget.device;
+    final completedAgents = ref.watch(
+      completedAgentsProvider.select(
+        (value) => value[device.machineId.trim()] ?? const <String>{},
+      ),
+    );
     final busy = device.agents.where((item) => item.isBusy).toList();
     final completed = device.agents
         .where(
           (item) =>
-              item.isOnline && !item.isBusy && _completed.contains(item.agentId),
+              item.isOnline &&
+              !item.isBusy &&
+              completedAgents.contains(item.agentId),
         )
         .toList();
     final idle = device.agents
@@ -6843,7 +6801,7 @@ class _PagedDeviceDetailState extends State<_PagedDeviceDetail> {
           (item) =>
               item.isOnline &&
               !item.isBusy &&
-              !_completed.contains(item.agentId),
+              !completedAgents.contains(item.agentId),
         )
         .toList();
     final offline = device.agents.where((item) => !item.isOnline).toList();
