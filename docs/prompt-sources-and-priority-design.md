@@ -360,41 +360,69 @@
 
 ## 十、实施进度（滚动更新）
 
-### 第一批：B1/B2/B3 端到端
+### 第一批：B1/B2/B3 端到端 —— ✅ 已完成（2026-10-14）
 
 | 项 | 状态 | 证据 |
 |----|------|------|
 | 运行时槽位覆盖（`prompt_slots`） | ✅ 已发布 1.15.123 | 单测 6/6、typecheck 通过；线上 `opencode-darwin-arm64.zip` 拆包命中 `prompt_slots` 与三个槽位 ID |
-| 后端注册表/存储/解析/接口/推送 | ✅ 已发布 | 单测通过；线上 `prompt_templates` 表、`semantic_agents.prompt_templates_json` 列、两条 admin 路由（401）均核实 |
-| launcher 落盘 + 配置声明 | ✅ 已发布 0.1.193 | 单测 5 项通过（落盘/清空/manifest/空 agent_id/无 manifest） |
-| 控制台：平台默认编辑页 | ✅ 已上线 | `/codex-admin/prompts.html` 200；服务器文件核实 |
-| 控制台：语义 Agent 覆盖编辑 | ✅ 已上线 | `prompts.js` 打包通过；服务器文件命中 `overrideList/loadAgents/prompt_templates` |
-| 控制台：设备 Agent 覆盖编辑 | ⏳ 未做（纯前端） | 复用现有 `POST /api/agents/{agentID}/settings`（body 为扁平 map，key 用 `prompt_template.<slot>`），无需新增后端接口；设备/Agent 列表走 `/api/devices` |
-| **设备端升级 + 端到端验证** | ⏳ 待办 | 设备仍为 launcher 0.1.192 / opencode 1.15.122；升级需在 App 点「更新」或手动替换并重启 Agent |
+| 后端注册表/存储/解析/接口/推送 | ✅ 已发布 | 单测通过；线上 `prompt_templates`、`device_prompt_revisions` 表与 `semantic_agents.prompt_templates_json` 列已建；`/api/admin/prompt-registry` 等 5 条路由实测 401（在线且需鉴权） |
+| launcher 落盘 + 配置声明 | ✅ 已发布 0.1.193 | 单测 5 项通过（落盘/清空/manifest/空 agent_id/无 manifest）；设备实测见下方端到端链路 |
+| 控制台：提示词管理（SPA 内视图） | ✅ 已上线 | `/codex-admin/` 侧栏 `#prompt-registry` + 卡片网格 + 右侧抽屉三级编辑；无头浏览器回归 16 项通过（`admin_web/tests/prompt-registry-smoke.mjs`），九大视图回归 9/9 |
+| 控制台：设备 Agent 覆盖（管理端接口） | ✅ 已上线 | 新增 `GET/POST /api/admin/prompt-registry/device-overrides`、`GET /api/admin/prompt-registry/device-agents`、`POST /api/admin/prompt-registry/semantic-overrides`；归属按在线 launcher 解析（operator+machine+agent），不再借用 App 侧 `/api/agents/{id}/settings` |
+| 设备端升级 | ✅ | Mac：launcher 0.1.193 / opencode 1.15.123（pid 53576 重启后仍指向该版本）；Windows 设备同步升级 |
+| **设备端到端验证** | ✅ 已完成 | 见下 |
 
-### 待办与依赖
+### 端到端验证证据链（2026-10-14 15:03–15:33）
 
-- 端到端验证是第二批的进入门槛（用户要求每批验证后再进入下一批）。
-- 设备升级两种方式：**(a)** 用户在 App 内点「更新」；**(b)** 命令行替换 `~/.my-opencode-launcher/bin/` 与 `versions/` 并重启 Agent（会打断当前会话，需用户确认）。
+1. **下发**：后端补齐循环（`StartPromptTemplateSyncLoop`，设备上线后自动比对 revision）推送 `revision=0cdca83e61f2a17b`，
+   设备落盘 `~/.my-opencode-launcher/prompts/agent_a067164f/chat.base_prompt.txt`（8907 B）+ `manifest.json`
+   （`slots=[chat.base_prompt, chat.orchestration_prompt, chat.question_policy]`）。
+2. **声明**：经 launcher 本地控制接口 `POST http://127.0.0.1:4071/agents/agent_a067164f/restart` 重启 Agent（pid 43203 → 53576），
+   重启后 `GET http://127.0.0.1:4096/config` 返回 `prompt_slots` 三条槽位路径（重启前为空）。
+3. **生效**：新建会话问「暗号是什么？只回答暗号本身」→ 模型回答 **PINEAPPLE-7**
+   （该标记只存在于控制台下发的槽位内容里，内置默认文本中没有）。
+4. **清理**：删除验证用设备级覆盖行与验证会话；下一轮补齐循环按新 revision 推送空内容，launcher 删除槽位文件，
+   运行时会话级回落到内置默认（无需再重启）。
 
-### 设备端升级步骤（方案 b 备查，未经执行）
+### 本轮同时修掉的缺陷
+
+| # | 问题 | 处理 |
+|---|------|------|
+| 1 | 控制台提示词管理是独立页（跳页、样式不一致、自己实现登录态导致"未登录"） | 撤下独立页，改为控制台 SPA 内视图，复用 `state.token/state.baseUrl/apiGet/apiPost/toast` 与既有卡片/抽屉样式 |
+| 2 | 设备级覆盖只写不读，且借用 App 侧接口会写错账号 | 新增管理端接口，读返回三层取值明细；写按 launcher 归属解析 operator，杜绝写错账号 |
+| 3 | 平台默认保存后遍历所有账号设备逐个推送，无节流 | 推送改为按 revision 增量 + 抖动窗口抑制；未变化的设备不发 RPC |
+| 4 | 离线设备不会在下次上线自动补齐 | 新增 `device_prompt_revisions` 记录已下发 revision + 后端 3 分钟补齐循环；重启前补推改为强制下发 |
+| 5 | 槽位清单依赖 manifest，首次必须重启才声明 | 补齐循环会在设备上线后立即下发一次（含空槽位的完整清单），重启前强制补推保证 `prompt_slots` 在进程启动前就位 |
+| 6 | 语义 Agent 覆盖保存后不推送 | `UpdateSemanticAgent` / `semantic-overrides` 保存后按绑定关系广播到在线设备 |
+| 7 | `internal/app` 测试包自 41faf237f 起编译失败（测试档案缺方法），`semantic_prompt_sync_test` 3 项失败 | 补齐测试档案方法、更新重启补推断言；`go test ./...` 全绿 |
+| 8 | 控制台零测试 | 新增无头浏览器回归（`prompt-registry-smoke.mjs`）+ 夹具端点；扩展 `browser-regression.mjs` 覆盖提示词视图 |
+
+### 已知边界（后续批次处理）
+
+- 设备级覆盖只列在线设备；离线设备的覆盖只能等它上线后由补齐循环下发（不提供离线编辑入口）。
+- 槽位"增删"（清单变化）需 Agent 重启才会写入配置；内容变化按会话读取，即时生效。
+- `risk=高` 槽位的"输出格式约束段不可编辑"与占位符强校验在第三批落地。
+
+### 设备端升级与回滚（备查）
 
 ```bash
 L=~/.my-opencode-launcher
-# 1) 备份
+# 升级：App 内点「更新」，或命令行替换（见下），完成后重启 Agent
 cp -a "$L/bin" "$L/bin.bak-$(date +%s)"; cp "$L/current-version" /tmp/current-version.bak
-# 2) 下载并安装 launcher（0.1.193）
 curl -sS -o /tmp/launcher.zip "https://www.xyapi.top/codex/api/launcher/download?artifact=chat-codex-launcher-darwin-arm64.zip"
 rm -rf /tmp/launcher-x && mkdir /tmp/launcher-x && unzip -q /tmp/launcher.zip -d /tmp/launcher-x
 # 安装前确认压缩包内可执行文件名，再覆盖 $L/bin/chat-codex-launcher
-# 3) 下载并安装 opencode（1.15.123）
 curl -sS -o /tmp/opencode.zip "https://www.xyapi.top/codex/api/app/download?artifact=opencode-darwin-arm64.zip"
 mkdir -p "$L/versions/1.15.123" && unzip -q -o /tmp/opencode.zip -d "$L/versions/1.15.123"
 printf '{"version":"1.15.123","channel":"latest","executable":"opencode"}' > "$L/versions/1.15.123/manifest.json"
 echo 1.15.123 > "$L/current-version"
-# 4) 重启 launcher 与 Agent（launcher 由 autostart 托管时 kill 后会自动拉起）
-# 5) 验证：agents.json 里 agent 的 pid 变化、进程路径指向 versions/1.15.123、
-#    $L/prompts/<agent_id>/manifest.json 出现（后端重启前补推）
+# 重启 Agent（推荐用 launcher 本地控制接口，失败会自动回滚状态）
+curl -sS -X POST http://127.0.0.1:4071/agents/<agent_id>/restart
+# 验证：GET http://127.0.0.1:4096/config 里出现 prompt_slots；
+#      $L/prompts/<agent_id>/manifest.json 的 slots 覆盖三个槽位
 ```
 
 回滚：还原 `$L/bin` 与 `$L/current-version` 后重启 launcher。
+
+> launcher 本地控制接口默认监听 `127.0.0.1:4071`（`LAUNCHER_LISTEN_ADDR` 可改），
+> 提供 `/health`、`/agents`、`/agents/<id>/restart`、`/upgrade` 等，无需经过后端即可在本机重启 Agent。
