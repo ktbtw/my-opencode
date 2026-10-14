@@ -223,6 +223,8 @@ func (a *API) UpdateSemanticAgent(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// 语义 Agent 的系统提示词覆盖会继承到所有绑定它的设备 Agent，保存后按绑定关系广播。
+	a.pushPromptTemplatesToSemanticAgentDevices(r.Context(), stored.ID)
 	write(w, http.StatusOK, stored)
 }
 

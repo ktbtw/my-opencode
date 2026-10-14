@@ -2142,6 +2142,15 @@ var schemaStatements = []string{
   revision BIGINT NOT NULL DEFAULT 1,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
+	// device_prompt_revisions 记录每个设备 Agent 最近一次成功下发的提示词 revision：
+	// revision 未变就不重复下发；离线设备重新上线时据此判断是否需要补齐。
+	`CREATE TABLE IF NOT EXISTS device_prompt_revisions (
+  operator_id BIGINT NOT NULL,
+  agent_id VARCHAR(191) NOT NULL,
+  revision VARCHAR(64) NOT NULL DEFAULT '',
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (operator_id, agent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	`CREATE TABLE IF NOT EXISTS semantic_agent_model_prompts (
   id VARCHAR(128) PRIMARY KEY,
   name VARCHAR(128) NOT NULL DEFAULT '',

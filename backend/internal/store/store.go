@@ -80,6 +80,8 @@ type Memory struct {
 	chatQueueVersions         map[string]int64
 	chatQueueDispatching      map[string]bool
 	deviceSettings            map[int64]map[string]map[string]string
+	promptTemplates           map[string]PromptTemplate
+	promptRevisions           map[int64]map[string]string
 	devicePreferences         map[int64]map[string]model.DevicePreference
 	agentPreferences          map[int64]map[string]model.AgentPreference
 	pushDevices               map[int64]map[int64]*model.PushDevice
@@ -166,6 +168,7 @@ func NewMemory(archive TaskArchive) *Memory {
 		chatQueueVersions:       map[string]int64{},
 		chatQueueDispatching:    map[string]bool{},
 		deviceSettings:          map[int64]map[string]map[string]string{},
+		promptTemplates:         map[string]PromptTemplate{},
 		devicePreferences:       map[int64]map[string]model.DevicePreference{},
 		agentPreferences:        map[int64]map[string]model.AgentPreference{},
 		pushDevices:             map[int64]map[int64]*model.PushDevice{},
@@ -1727,6 +1730,17 @@ func (m *Memory) DeleteDeviceSettings(operatorID int64, agentID string) error {
 	return m.archive.DeleteDeviceSettings(operatorID, agentID)
 }
 
+func (m *Memory) DeleteDeviceSetting(operatorID int64, agentID, key string) error {
+	m.mu.Lock()
+	if byAgent, ok := m.deviceSettings[operatorID]; ok {
+		if settings, ok := byAgent[agentID]; ok {
+			delete(settings, key)
+		}
+	}
+	m.mu.Unlock()
+	return m.archive.DeleteDeviceSetting(operatorID, agentID, key)
+}
+
 func (m *Memory) ListDeviceSettingAgentIDs(operatorID int64, key string) ([]string, error) {
 	if ids, err := m.archive.ListDeviceSettingAgentIDs(operatorID, key); err == nil && len(ids) > 0 {
 		return ids, nil
@@ -2361,22 +2375,87 @@ func (m *Memory) DeleteToolCatalogItem(id string) error {
 }
 
 func (m *Memory) ListPromptTemplates() (map[string]PromptTemplate, error) {
-	items, err := m.archive.ListPromptTemplates()
-	if err != nil {
+	if items, err := m.archive.ListPromptTemplates(); err == nil && len(items) > 0 {
+		m.mu.Lock()
+		m.promptTemplates = map[string]PromptTemplate{}
+		for id, item := range items {
+			m.promptTemplates[id] = item
+		}
+		m.mu.Unlock()
+		return items, nil
+	} else if err != nil {
 		return nil, err
 	}
-	if items == nil {
-		return map[string]PromptTemplate{}, nil
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]PromptTemplate, len(m.promptTemplates))
+	for id, item := range m.promptTemplates {
+		out[id] = item
 	}
-	return items, nil
+	return out, nil
 }
 
 func (m *Memory) UpsertPromptTemplate(slotID, content string) (PromptTemplate, error) {
-	return m.archive.UpsertPromptTemplate(slotID, content)
+	if stored, err := m.archive.UpsertPromptTemplate(slotID, content); err == nil && stored.SlotID != "" {
+		m.mu.Lock()
+		m.promptTemplates[stored.SlotID] = stored
+		m.mu.Unlock()
+		return stored, nil
+	} else if err != nil {
+		return PromptTemplate{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	item := m.promptTemplates[slotID]
+	item.SlotID = slotID
+	item.Content = content
+	item.Revision++
+	item.UpdatedAt = time.Now().UTC()
+	m.promptTemplates[slotID] = item
+	return item, nil
 }
 
 func (m *Memory) DeletePromptTemplate(slotID string) error {
-	return m.archive.DeletePromptTemplate(slotID)
+	if err := m.archive.DeletePromptTemplate(slotID); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	delete(m.promptTemplates, slotID)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Memory) PromptTemplateAppliedRevision(operatorID int64, agentID string) (string, error) {
+	if revision, err := m.archive.PromptTemplateAppliedRevision(operatorID, agentID); err == nil && revision != "" {
+		return revision, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.promptRevisions[operatorID][agentID], nil
+}
+
+func (m *Memory) SetPromptTemplateAppliedRevision(operatorID int64, agentID, revision string) error {
+	m.mu.Lock()
+	if m.promptRevisions == nil {
+		m.promptRevisions = map[int64]map[string]string{}
+	}
+	if _, ok := m.promptRevisions[operatorID]; !ok {
+		m.promptRevisions[operatorID] = map[string]string{}
+	}
+	m.promptRevisions[operatorID][agentID] = revision
+	m.mu.Unlock()
+	return m.archive.SetPromptTemplateAppliedRevision(operatorID, agentID, revision)
+}
+
+func (m *Memory) PromptTemplateDeviceOverrideCounts() (map[string]int, error) {
+	counts, err := m.archive.PromptTemplateDeviceOverrideCounts()
+	if err != nil {
+		return nil, err
+	}
+	if counts == nil {
+		return map[string]int{}, nil
+	}
+	return counts, nil
 }
 
 func (m *Memory) ListSemanticAgents(includeDisabled bool) ([]model.SemanticAgentProfile, error) {

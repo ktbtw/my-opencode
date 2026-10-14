@@ -94,6 +94,9 @@ type API struct {
 	sessionHistoryRequest func(context.Context, int64, string, string, model.SessionHistoryRequestPayload) (model.SessionHistoryResultPayload, error)
 	projectMemoryEnabled  bool
 	overlayHub            *overlay.Hub
+	// promptPushMu/promptPushLog 记录最近一次提示词下发，用于抖动抑制（按 API 实例隔离）。
+	promptPushMu  sync.Mutex
+	promptPushLog map[string]promptPushRecord
 }
 
 func (a *API) SetOverlayHub(hub *overlay.Hub) {
@@ -4654,7 +4657,8 @@ func (a *API) RestartDeviceAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	requestID := fmt.Sprintf("req_launcher_agent_restart_%d", time.Now().UnixNano())
 	a.syncDeviceAgentSemanticProfile(r.Context(), operator.ID, launcherID, req.AgentID)
-	a.syncDeviceAgentPromptTemplates(r.Context(), operator.ID, launcherID, req.AgentID)
+	// 重启前强制补推：保证设备端 prompt_slots 清单与槽位文件在进程启动前就位。
+	a.syncDeviceAgentPromptTemplates(r.Context(), operator.ID, launcherID, req.AgentID, true)
 	result, err := a.requestDeviceLauncher(r.Context(), operator.ID, launcherID, requestID, "device.launcher.restart_agent", req)
 	if err != nil {
 		write(w, http.StatusConflict, map[string]string{"error": err.Error()})

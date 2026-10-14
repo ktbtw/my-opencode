@@ -29,6 +29,7 @@ type TaskArchive interface {
 	SetDeviceSetting(operatorID int64, agentID, key, value string) error
 	GetDeviceSettings(operatorID int64, agentID string) (map[string]string, error)
 	DeleteDeviceSettings(operatorID int64, agentID string) error
+	DeleteDeviceSetting(operatorID int64, agentID, key string) error
 	ListDeviceSettingAgentIDs(operatorID int64, key string) ([]string, error)
 	UpsertPushDevice(device model.PushDevice) (*model.PushDevice, error)
 	ListPushDevices(operatorID int64) ([]*model.PushDevice, error)
@@ -59,6 +60,9 @@ type TaskArchive interface {
 	ListPromptTemplates() (map[string]PromptTemplate, error)
 	UpsertPromptTemplate(slotID, content string) (PromptTemplate, error)
 	DeletePromptTemplate(slotID string) error
+	PromptTemplateAppliedRevision(operatorID int64, agentID string) (string, error)
+	SetPromptTemplateAppliedRevision(operatorID int64, agentID, revision string) error
+	PromptTemplateDeviceOverrideCounts() (map[string]int, error)
 	ListSemanticAgents(includeDisabled bool) ([]model.SemanticAgentProfile, error)
 	UpsertSemanticAgent(item model.SemanticAgentProfile) (*model.SemanticAgentProfile, error)
 	DeleteSemanticAgent(id string) error
@@ -176,6 +180,7 @@ func (noopArchive) DeleteOperator(int64) error                                  
 func (noopArchive) SetDeviceSetting(int64, string, string, string) error         { return nil }
 func (noopArchive) GetDeviceSettings(int64, string) (map[string]string, error)   { return nil, nil }
 func (noopArchive) DeleteDeviceSettings(int64, string) error                     { return nil }
+func (noopArchive) DeleteDeviceSetting(int64, string, string) error              { return nil }
 func (noopArchive) ListDeviceSettingAgentIDs(int64, string) ([]string, error)    { return nil, nil }
 func (noopArchive) UpsertPushDevice(model.PushDevice) (*model.PushDevice, error) { return nil, nil }
 func (noopArchive) ListPushDevices(int64) ([]*model.PushDevice, error)           { return nil, nil }
@@ -242,6 +247,11 @@ func (noopArchive) UpsertPromptTemplate(string, string) (PromptTemplate, error) 
 	return PromptTemplate{}, nil
 }
 func (noopArchive) DeletePromptTemplate(string) error { return nil }
+func (noopArchive) PromptTemplateAppliedRevision(int64, string) (string, error) {
+	return "", nil
+}
+func (noopArchive) SetPromptTemplateAppliedRevision(int64, string, string) error { return nil }
+func (noopArchive) PromptTemplateDeviceOverrideCounts() (map[string]int, error) { return nil, nil }
 func (noopArchive) ListSemanticAgents(bool) ([]model.SemanticAgentProfile, error) {
 	return nil, nil
 }

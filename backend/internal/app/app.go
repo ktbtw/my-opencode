@@ -1347,6 +1347,8 @@ func directoryRequestTimeout(envType string) time.Duration {
 func (a *App) Router() http.Handler {
 	r := chi.NewRouter()
 	h := a.apiHandler()
+	// 提示词补齐循环：设备离线期间错过的槽位变更，在重新上线后自动补推（revision 未变不发 RPC）。
+	h.StartPromptTemplateSyncLoop(context.Background())
 	r.Use(requestID)
 	r.Use(recoverer)
 	r.Use(cors)
@@ -1438,6 +1440,10 @@ func (a *App) Router() http.Handler {
 	r.Get("/api/admin/prompt-registry", h.ListPromptRegistry)
 	r.Post("/api/admin/prompt-templates/{slotID}", h.SavePromptTemplate)
 	r.Post("/api/admin/prompt-templates/{slotID}/reset", h.ResetPromptTemplate)
+	r.Get("/api/admin/prompt-registry/device-agents", h.ListPromptDeviceAgents)
+	r.Get("/api/admin/prompt-registry/device-overrides", h.GetPromptDeviceOverrides)
+	r.Post("/api/admin/prompt-registry/device-overrides", h.SavePromptDeviceOverrides)
+	r.Post("/api/admin/prompt-registry/semantic-overrides", h.SavePromptSemanticOverrides)
 	r.Get("/api/admin/operators", h.ListAdminOperators)
 	r.Post("/api/admin/operators/{id}/membership", h.SetOperatorMembership)
 	r.Get("/api/skills", h.ListPublicSkills)
