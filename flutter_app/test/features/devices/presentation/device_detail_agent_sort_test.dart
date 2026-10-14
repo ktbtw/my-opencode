@@ -13,7 +13,10 @@ void main() {
   testWidgets('Agent sort mode exits immediately when completed', (
     tester,
   ) async {
-    SharedPreferences.setMockInitialValues({});
+    // 排序只存在于整页布局：默认分片后这里显式选择整页。
+    SharedPreferences.setMockInitialValues({
+      'device_detail_layout_mode_machine-a': 'full',
+    });
     await AppStorage.init();
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
