@@ -24,6 +24,7 @@ import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
+import { PromptRegistry } from "./prompt-registry"
 import { extractModelPrompt } from "./model-prompt"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
@@ -244,9 +245,26 @@ const live: Layer.Layer<
           : undefined
       const modelProtocol = extracted.modelPrompt ?? legacyProtocol
       const userSystem = legacyProtocol ? undefined : extracted.rest
-      const basePrompt = input.agent.prompt
-        ? [input.agent.prompt, ...SystemPrompt.provider(input.model)]
-        : SystemPrompt.provider(input.model)
+      // 提示词注册表：控制台（后端）解析后的槽位由 launcher 落成文件，配置里用 prompt_slots 声明。
+      // 文件缺失/为空时回落到内置默认，行为与改造前一致。
+      const providerPrompts = SystemPrompt.provider(input.model)
+      const basePromptText = yield* PromptRegistry.resolvePromptSlot(
+        cfg.prompt_slots,
+        "chat.base_prompt",
+        providerPrompts[0] ?? "",
+      )
+      const orchestrationPrompt = yield* PromptRegistry.resolvePromptSlot(cfg.prompt_slots, "chat.orchestration_prompt", "")
+      const questionPolicy = yield* PromptRegistry.resolvePromptSlot(
+        cfg.prompt_slots,
+        "chat.question_policy",
+        SystemPrompt.QUESTION_POLICY,
+      )
+      const basePrompt = [
+        ...(input.agent.prompt ? [input.agent.prompt] : []),
+        basePromptText,
+        ...(orchestrationPrompt ? [orchestrationPrompt] : []),
+        ...providerPrompts.slice(1),
+      ]
 
       const system: string[] = []
       system.push(
@@ -259,7 +277,7 @@ const live: Layer.Layer<
           ...input.system,
           // any custom prompt from last user message（模型提示词已置顶时不再重复）
           ...(userSystem ? [userSystem] : []),
-          SystemPrompt.QUESTION_POLICY,
+          questionPolicy,
         ]
           .filter((x) => x)
           .join("\n"),

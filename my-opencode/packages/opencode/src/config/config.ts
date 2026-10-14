@@ -226,6 +226,10 @@ export const Info = Schema.Struct({
   instructions: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
     description: "Additional instruction files or patterns to include",
   }),
+  prompt_slots: Schema.optional(Schema.Record(Schema.String, Schema.String)).annotate({
+    description:
+      "Console-managed prompt slot overrides: slot id (e.g. chat.base_prompt) -> text file path. A missing or empty file falls back to the built-in prompt.",
+  }),
   layout: Schema.optional(ConfigLayout.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
   permission: Schema.optional(ConfigPermission.Info),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
