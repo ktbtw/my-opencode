@@ -927,7 +927,8 @@ payload = {
     "channel": "latest",
     # 用 chr(10) 拼换行，避免在多层引号里写转义序列出错。
     "changelog": chr(10).join([
-        "- 内置技能描述改版：verify-framework、verify-shadowhook、image-to-code、ida-reverse 不再把宿主 Agent 称作 Codex，避免模型看到技能列表后自称 Codex",
+        "- 支持控制台下发的提示词槽位：写入 prompts/<agent_id>/<slot_id>.txt 并在 opencode 配置里声明 prompt_slots",
+        "- 新增 device.launcher.prompt_templates_save 命令：原子写入 + manifest，运行时按会话读取，控制台改完下一条消息即生效",
     ]),
     "downloads": [
         {
