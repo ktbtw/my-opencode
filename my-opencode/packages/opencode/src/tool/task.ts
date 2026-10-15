@@ -179,6 +179,15 @@ export const TaskTool = Tool.define(
       const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(Effect.orDie)
       if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
 
+      // 破甲协议是随父会话那条 user 消息的 system 字段下发的；子会话默认不带 system，
+      // 甲会在这里被丢掉——被委派出去的活就按未破甲行为跑（拒绝、加免责、丢固定输出槽）。
+      // 把父会话这条用户消息的 system 原样透传给子会话。
+      const parentUser = msg.info.parentID
+        ? yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: msg.info.parentID }).pipe(Effect.option)
+        : Option.none()
+      const parentSystem =
+        Option.isSome(parentUser) && parentUser.value.info.role === "user" ? parentUser.value.info.system : undefined
+
       const model = next.model ?? {
         modelID: msg.info.modelID,
         providerID: msg.info.providerID,
@@ -232,6 +241,8 @@ export const TaskTool = Tool.define(
             providerID: model.providerID,
           },
           agent: next.name,
+          // 甲随父会话 system 透传；缺失时保持原行为（独立 CLI 不受影响）
+          ...(parentSystem ? { system: parentSystem } : {}),
           tools: {
             ...(roleAlias ? { edit: false, apply_patch: false, write: false } : {}),
             ...(next.permission.some((rule) => rule.permission === "todowrite") ? {} : { todowrite: false }),

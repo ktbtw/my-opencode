@@ -20,13 +20,14 @@ import { readTaskDisplayPage, readSessionDisplayLog, recordTaskDisplayEvent } fr
 import { SessionPrompt } from "@/session/prompt"
 import { SessionCompaction } from "@/session/compaction"
 import { SessionStatus } from "@/session/status"
+import { DeliveryIntent } from "@/session/delivery-intent"
 import { SessionID } from "@/session/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Agent } from "@/agent/agent"
 import { deriveSubagentSessionPermission } from "@/agent/subagent-permissions"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import * as Log from "@opencode-ai/core/util/log"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import {
   isSubagentRoleAllowed,
   shouldWakeMainAgent,
@@ -1164,29 +1165,11 @@ Rules:
   }
 
   function deliveryRequired(run: Run) {
-    const explicit = run.metadata?.delivery_required?.trim().toLowerCase()
-    if (explicit === "true" || explicit === "1" || explicit === "yes") return true
-    if (explicit === "false" || explicit === "0" || explicit === "no") return false
+    return DeliveryIntent.deliveryRequired(run)
+  }
 
-    const text = (run.parts ?? [])
-      .filter((part) => part.type === "text")
-      .map((part) => part.text ?? "")
-      .join("\n")
-      .trim()
-    if (!text) return false
-
-    const explicitDelivery =
-      /(交付|可下载|下载(?:链接|文件)?|作为附件|附件|deliver(?:able|y)?|download(?:able)?|attachment)/i
-    const sendMeFile =
-      /(发我|提供给我|给我一份|给我一个|send me|provide me|save as)/i
-    const fileObject =
-      /(文件|报告|文档|表格|电子表格|演示文稿|幻灯片|pdf|excel|csv|压缩包|安装包|图片|图像|视频|音频|源码包|file|report|document|spreadsheet|presentation|archive|package|image|video|audio)/i
-    const creationVerb =
-      /(生成|创建|制作|整理|编写|输出|保存|导出|打包|generate|create|make|write|produce|save|export|build|package)/i
-
-    if (explicitDelivery.test(text)) return true
-    if (sendMeFile.test(text) && fileObject.test(text)) return true
-    return creationVerb.test(text) && fileObject.test(text)
+  function mayProduceFiles(run: Run) {
+    return DeliveryIntent.mayProduceFiles(run)
   }
 
   async function collectFiles(dir: string): Promise<string[]> {
@@ -1523,7 +1506,8 @@ Rules:
         text: artifactInstruction(artifactRelativeDir, true),
         synthetic: true,
       })
-    } else {
+    } else if (mayProduceFiles(run)) {
+      // 纯闲聊不附交付范围说明：没有文件要产出时，它只会把回复套进交付流程的框架。
       out.push({
         type: "text",
         text: artifactScopeInstruction(artifactRelativeDir),
@@ -3259,6 +3243,15 @@ Rules:
         const sessions = yield* Session.Service
         const agents = yield* Agent.Service
         const parent = yield* sessions.get(SessionID.make(task.session!))
+        // 破甲协议随父会话 user.system 下发；orchestrate 计划里的子代理默认不带 system，
+        // 会把甲丢掉（被委派出去的活按未破甲行为跑）。这里按父会话最新用户消息透传。
+        const parentUser = yield* sessions
+          .findMessage(SessionID.make(task.session!), (item) => item.info.role === "user")
+          .pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        const parentSystem =
+          parentUser && Option.isSome(parentUser) && parentUser.value.info.role === "user"
+            ? parentUser.value.info.system
+            : undefined
         const semanticAgentID =
           process.env.OPENCODE_SEMANTIC_AGENT_ID?.trim() || parent.agent || task.agent || "coding-assistant"
         const readonly = isSubagentRoleAllowed(semanticAgentID, node.role)
@@ -3284,6 +3277,7 @@ Rules:
             model: node.model
               ? { providerID: ProviderID.make(node.model.providerID), modelID: ModelID.make(node.model.modelID) }
               : (childAgent?.model ?? task.model),
+            system: parentSystem,
           }
         }
         const childAgent = yield* agents.get(resolvedAgent)
@@ -3309,6 +3303,7 @@ Rules:
           model: node.model
             ? { providerID: ProviderID.make(node.model.providerID), modelID: ModelID.make(node.model.modelID) }
             : (childAgent.model ?? task.model),
+          system: parentSystem,
         }
       }),
     )
@@ -3344,6 +3339,8 @@ Rules:
           ],
           model: launched.model,
           agent: launched.agent,
+          // 甲随父会话 system 透传；缺失时保持原行为
+          ...(launched.system ? { system: launched.system } : {}),
           tools: { edit: false, apply_patch: false, write: false },
         }),
       ),

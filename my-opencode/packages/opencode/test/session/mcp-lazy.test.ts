@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { asSchema, dynamicTool, jsonSchema, type Tool, type ToolExecutionOptions } from "ai"
-import { createLazyMcpTools, MCP_CALL_TOOL, MCP_SEARCH_TOOL } from "../../src/session/mcp-lazy"
+import { createLazyMcpTools, mcpToolCatalog, MCP_CALL_TOOL, MCP_SEARCH_TOOL } from "../../src/session/mcp-lazy"
+import { isArmorActive } from "../../src/session/armor"
 
 const options = {
   toolCallId: "call_test",
@@ -109,6 +110,36 @@ describe("lazy MCP tools", () => {
 
     expect(Object.keys(tools)).toEqual([MCP_SEARCH_TOOL, MCP_CALL_TOOL])
     expect(Buffer.byteLength(JSON.stringify(advertised))).toBeLessThan(2_000)
+  })
+})
+
+describe("armor mode MCP catalog", () => {
+  const catalog = {
+    verify_list_apps: fakeTool("List Verify applications", { type: "object", properties: {} }),
+    ida_decompile: fakeTool("Decompile a function", { type: "object", properties: {} }),
+  }
+
+  test("eager mode keeps every MCP tool resident", () => {
+    const tools = mcpToolCatalog(catalog, "eager")
+
+    expect(Object.keys(tools).sort()).toEqual(["ida_decompile", "verify_list_apps"])
+    expect(tools[MCP_SEARCH_TOOL]).toBeUndefined()
+    expect(tools[MCP_CALL_TOOL]).toBeUndefined()
+  })
+
+  test("lazy mode still folds the catalog into the two proxies", () => {
+    const tools = mcpToolCatalog(catalog, "lazy")
+
+    expect(Object.keys(tools)).toEqual([MCP_SEARCH_TOOL, MCP_CALL_TOOL])
+  })
+
+  test("armor detection follows the protocol marker, wrapped or not", () => {
+    expect(isArmorActive(undefined)).toBe(false)
+    expect(isArmorActive("【全局提示词】\nkeep me")).toBe(false)
+    expect(isArmorActive("# 操作者工作区运行约定\n\n[MODE: …]")).toBe(true)
+    expect(
+      isArmorActive("<!-- codex:model-prompt -->\n# 操作者工作区运行约定\n…\n<!-- /codex:model-prompt -->"),
+    ).toBe(true)
   })
 })
 

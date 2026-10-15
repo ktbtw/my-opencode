@@ -4,6 +4,18 @@ import { asSchema, dynamicTool, jsonSchema, type Tool, type ToolExecutionOptions
 export const MCP_SEARCH_TOOL = "mcp_search"
 export const MCP_CALL_TOOL = "mcp_call"
 
+/**
+ * MCP 工具的两种上线方式：
+ * - `lazy`（默认）：折叠成 mcp_search / mcp_call 两个元工具，schema 不进上下文，省 token；
+ * - `eager`（破甲模式）：全部 MCP 工具常驻，schema 进上下文，作为"真实运行环境"的证据。
+ *
+ * 破甲协议的效果与请求里的工具 schema 体量正相关（实测：同一段协议，带足量工具 schema
+ * 时模型按环境配置接受，不带时被判为注入并拒绝），因此破甲开启时改用 eager。
+ */
+export function mcpToolCatalog(source: Record<string, Tool>, mode: "lazy" | "eager") {
+  return mode === "eager" ? source : createLazyMcpTools(source)
+}
+
 const DEFAULT_SEARCH_LIMIT = 5
 const MAX_SEARCH_LIMIT = 8
 const DESCRIPTION_LIMIT = 320

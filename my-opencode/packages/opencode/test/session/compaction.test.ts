@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
+import path from "node:path"
 import { APICallError } from "ai"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect"
 import * as Stream from "effect/Stream"
@@ -26,6 +27,7 @@ import { Snapshot } from "../../src/snapshot"
 import { ProviderTest } from "../fake/provider"
 import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { TestConfig } from "../fixture/config"
 import { SyncEvent } from "@/sync"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -234,6 +236,7 @@ const deps = Layer.mergeAll(
   SyncEvent.defaultLayer,
   RuntimeFlags.layer({ experimentalEventSystem: true }),
   EventV2Bridge.defaultLayer,
+  AppFileSystem.defaultLayer,
 )
 
 const env = Layer.mergeAll(
@@ -284,6 +287,7 @@ function compactionProcessLayer(options?: CompactionProcessOptions) {
     Layer.provide(SyncEvent.defaultLayer),
     Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
     Layer.provide(EventV2Bridge.defaultLayer),
+    Layer.provide(AppFileSystem.defaultLayer),
   )
 }
 
@@ -1438,7 +1442,7 @@ describe("session.compaction.process", () => {
         )
         expect(summary?.parts.some((part) => part.type === "reasoning")).toBe(false)
         // Sanity: the text part still got through.
-        expect(summary?.parts.some((part) => part.type === "text" && part.text === "summary")).toBe(true)
+        expect(summary?.parts.some((part) => part.type === "text" && part.text.includes("summary"))).toBe(true)
       }).pipe(withCompaction({ llm: stub.layer }))
     },
     { git: true },
@@ -1597,6 +1601,39 @@ describe("session.compaction.process", () => {
         expect(captured).toContain("append-only fact ledger")
         expect(captured).toContain("Never replace a concrete error")
         expect(captured).toContain("mark the old fact as stale")
+      }).pipe(withCompaction({ llm: stub.layer }))
+    },
+    { git: true },
+  )
+
+  itCompaction.instance(
+    "writes a compaction handoff document and points the summary at it",
+    () => {
+      const stub = llm()
+      stub.push(reply("## Goal\n- 把破甲协议移植到 app\n\n## Ruled Out\n- 规则框架写法：实测 0/3，不再尝试"))
+
+      return Effect.gen(function* () {
+        const ssn = yield* SessionNs.Service
+        const test = yield* TestInstance
+        const session = yield* ssn.create({})
+        yield* createUserMessage(session.id, "先做 A")
+        yield* createUserMessage(session.id, "再做 B")
+        yield* createCompactionMarker(session.id)
+        const msgs = yield* ssn.messages({ sessionID: session.id })
+        const parent = msgs.at(-1)?.info.id
+        expect(parent).toBeTruthy()
+        yield* SessionCompaction.use.process({ parentID: parent!, messages: msgs, sessionID: session.id, auto: false })
+
+        const handoff = Bun.file(path.join(test.directory, ".chatcodex-artifacts", "handoffs", `${session.id}.md`))
+        expect(yield* Effect.promise(() => handoff.exists())).toBe(true)
+        const text = yield* Effect.promise(() => handoff.text())
+        expect(text).toContain("## Ruled Out")
+        expect(text).toContain("规则框架写法")
+        expect(text).toContain(session.id)
+
+        const stored = yield* ssn.messages({ sessionID: session.id })
+        const part = stored.at(-1)?.parts.find((item) => item.type === "text")
+        expect(part?.type === "text" ? part.text : "").toContain(".chatcodex-artifacts/handoffs/")
       }).pipe(withCompaction({ llm: stub.layer }))
     },
     { git: true },

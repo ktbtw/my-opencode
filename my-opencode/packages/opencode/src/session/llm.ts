@@ -25,6 +25,7 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { PromptRegistry } from "./prompt-registry"
+import { isArmorActive } from "./armor"
 import { extractModelPrompt } from "./model-prompt"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
@@ -93,9 +94,8 @@ const DEFAULT_REQUEST_TIMEOUTS = [180_000, 300_000, 480_000, 720_000, 900_000] a
 const DEFAULT_TOOL_INPUT_TIMEOUT = 60_000
 const MIN_TOOL_INPUT_TIMEOUT = 30_000
 
-// 破甲模式：后端在 DeepSeek 任务上注入的工作区约定首行特征串。
-// 必须与 backend/internal/api/deepseek_jailbreak.go 的 deepSeekJailbreakMarker 保持一致。
-const BREAK_PROTOCOL_MARKER = "操作者工作区运行约定"
+// 破甲模式：特征串与识别逻辑集中在 session/armor.ts
+// （与 backend/internal/api/deepseek_jailbreak.go 的 deepSeekJailbreakMarker 保持一致）。
 
 function isDeepSeekModel(model: Provider.Model) {
   return `${model.providerID} ${model.api.id}`.toLowerCase().includes("deepseek")
@@ -240,7 +240,7 @@ const live: Layer.Layer<
       const extracted = extractModelPrompt(input.user.system)
       // 兼容旧协议：后端未包装、直接注入带首行特征串的内容时同样置顶。
       const legacyProtocol =
-        !extracted.modelPrompt && isDeepSeekModel(input.model) && input.user.system?.includes(BREAK_PROTOCOL_MARKER)
+        !extracted.modelPrompt && isDeepSeekModel(input.model) && isArmorActive(input.user.system)
           ? input.user.system
           : undefined
       const modelProtocol = extracted.modelPrompt ?? legacyProtocol

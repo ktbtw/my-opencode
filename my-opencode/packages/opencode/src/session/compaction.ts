@@ -1,4 +1,6 @@
 import { BusEvent } from "@/bus/bus-event"
+import path from "node:path"
+import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { Bus } from "@/bus"
 import * as Session from "./session"
 import { SessionID, MessageID, PartID } from "./schema"
@@ -12,7 +14,7 @@ import { Plugin } from "@/plugin"
 import { Config } from "@/config/config"
 import { NotFoundError } from "@/storage/storage"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { Effect, Layer, Context, Schema } from "effect"
+import { Cause, Effect, Layer, Context, Schema } from "effect"
 import * as DateTime from "effect/DateTime"
 import { InstanceState } from "@/effect/instance-state"
 import { isOverflow as overflow, usable } from "./overflow"
@@ -65,6 +67,9 @@ const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <te
 
 ## Key Decisions
 - [decision and why, or "(none)"]
+
+## Ruled Out
+- [approaches already tried and rejected, with the reason; do not retry them, or "(none)"]
 
 ## Next Steps
 - [ordered next actions or "(none)"]
@@ -283,6 +288,30 @@ ${context ? `- Retained context excerpt:\n\n\`\`\`text\n${context}\n\`\`\`` : "-
 - Refer to paths in the retained context excerpt.`
 }
 
+/**
+ * 压缩把过程记忆折成一条摘要，摘要之后还会被再次压缩；把同一份状态同时落盘成工作区文件，
+ * 让"目标 / 决策 / 已排除的方案"跨多次压缩存活，并在摘要消息里留一行指向它。
+ */
+const HANDOFF_DIR = ".chatcodex-artifacts/handoffs"
+
+function handoffDocument(input: { sessionID: string; created: number; summary: string }) {
+  return [
+    "# 压缩前工作状态（handoff）",
+    "",
+    `- 会话: ${input.sessionID}`,
+    `- 生成时间: ${new Date(input.created).toISOString()}`,
+    "- 本文件由压缩流程自动生成，保存压缩前的完整工作状态。继续工作前先读它；",
+    "  尤其是「Ruled Out」一节，避免重试已经被否决的做法。",
+    "",
+    input.summary.trim(),
+    "",
+  ].join("\n")
+}
+
+function handoffReference(relativePath: string) {
+  return `> 完整工作状态已落盘到工作区相对路径 \`${relativePath}\`；继续工作前先读取。`
+}
+
 function withPrompt(messages: ModelMessage[], prompt: string): ModelMessage[] {
   return [
     ...messages,
@@ -419,6 +448,22 @@ export const layer = Layer.effect(
     const provider = yield* Provider.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const fsys = yield* AppFileSystem.Service
+
+    const writeHandoff = Effect.fn("SessionCompaction.writeHandoff")(function* (input: {
+      sessionID: SessionID
+      root: string
+      summary: string | undefined
+    }) {
+      const summary = input.summary?.trim()
+      if (!summary) return undefined
+      const relative = path.posix.join(HANDOFF_DIR, `${input.sessionID}.md`)
+      yield* fsys.writeWithDirs(
+        path.join(input.root, relative),
+        handoffDocument({ sessionID: input.sessionID, created: Date.now(), summary }),
+      )
+      return relative
+    })
 
     const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
       tokens: MessageV2.Assistant["tokens"]
@@ -806,14 +851,26 @@ export const layer = Layer.effect(
 
       if (processorMessage.error) return "stop"
       if (result === "continue") {
-        const summary = summaryText(
-          (yield* session.messages({ sessionID: input.sessionID }).pipe(Effect.orDie)).find(
-            (item) => item.info.id === msg.id,
-          ) ?? {
-            info: msg,
-            parts: [],
-          },
+        const stored = yield* session.messages({ sessionID: input.sessionID }).pipe(Effect.orDie)
+        const summary = summaryText(stored.find((item) => item.info.id === msg.id) ?? { info: msg, parts: [] })
+        const handoff = yield* writeHandoff({ sessionID: input.sessionID, root: ctx.worktree, summary }).pipe(
+          Effect.catchCause((cause) => {
+            log.warn("failed to write compaction handoff", {
+              sessionID: input.sessionID,
+              cause: Cause.pretty(cause),
+            })
+            return Effect.succeed(undefined)
+          }),
         )
+        if (handoff) {
+          const first = stored.find((item) => item.info.id === msg.id)?.parts.find((part) => part.type === "text")
+          if (first && first.type === "text") {
+            yield* session.updatePart({
+              ...first,
+              text: `${handoffReference(handoff)}\n\n${first.text}`,
+            })
+          }
+        }
         if (flags.experimentalEventSystem) {
           yield* events.publish(SessionEvent.Compaction.Ended, {
             sessionID: input.sessionID,
@@ -879,6 +936,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Config.defaultLayer),
     Layer.provide(RuntimeFlags.defaultLayer),
     Layer.provide(EventV2Bridge.defaultLayer),
+    Layer.provide(AppFileSystem.defaultLayer),
   ),
 )
 

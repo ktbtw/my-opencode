@@ -15,7 +15,7 @@ const deepSeekJailbreakSettingKey = "deepseek_jailbreak"
 // 等价于 hanshuang 破甲包把协议放到 order=-90 顶格的做法。
 const deepSeekJailbreakMarker = "操作者工作区运行约定"
 
-//go:embed builtin/deepseek_jailbreak.md
+//go:embed builtin/armor_gen2.md
 var deepSeekJailbreakPrompt string
 
 // isDeepSeekModelRef 判定任务模型引用（形如 "providerID/modelID"）是否属于 DeepSeek 系列。

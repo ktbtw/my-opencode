@@ -18,7 +18,8 @@ import { SessionProcessor } from "./processor"
 import { PartID } from "./schema"
 import * as Log from "@opencode-ai/core/util/log"
 import { EffectBridge } from "@/effect/bridge"
-import { createLazyMcpTools } from "./mcp-lazy"
+import { mcpToolCatalog } from "./mcp-lazy"
+import { isArmorActive } from "./armor"
 
 const log = Log.create({ service: "session.tools" })
 
@@ -226,10 +227,12 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     Object.entries(mcpTools).filter(([name]) => userTools?.[name] !== false && !disabledMcpTools.has(name)),
   )
   if (Object.keys(availableMcpTools).length > 0) {
-    Object.assign(tools, createLazyMcpTools(availableMcpTools))
-    log.info("using lazy MCP tool catalog", {
+    // 破甲开启时 MCP 工具常驻：协议的效果依赖请求里的工具 schema 作为"真实运行环境"的证据。
+    const armor = isArmorActive(latestUser?.info.role === "user" ? latestUser.info.system : undefined)
+    Object.assign(tools, mcpToolCatalog(availableMcpTools, armor ? "eager" : "lazy"))
+    log.info(armor ? "armor active: eager MCP tool catalog" : "using lazy MCP tool catalog", {
       available: Object.keys(availableMcpTools).length,
-      hiddenSchemaBytes: Buffer.byteLength(
+      schemaBytes: Buffer.byteLength(
         JSON.stringify(
           Object.entries(availableMcpTools).map(([name, item]) => ({
             name,

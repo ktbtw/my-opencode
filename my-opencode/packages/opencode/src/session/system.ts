@@ -35,7 +35,10 @@ export const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         return [
           [
-            `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
+            // 网关模型标签：只作为运行环境事实给出，不做身份断言。
+            // 旧文案 "You are powered by the model named …" 会被模型读成身份声明，
+            // 与工作区约定/角色提示词的人设抢身份（实测会出现「我是 X 模型」式混答）。
+            `Runtime model label: ${model.api.id} (provider ${model.providerID}; gateway alias, not an identity).`,
             `Here is some useful information about the environment you are running in:`,
             `<env>`,
             `  Working directory: ${ctx.directory}`,
