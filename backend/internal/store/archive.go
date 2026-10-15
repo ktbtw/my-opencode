@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"time"
 
 	"relay-server/internal/model"
@@ -21,6 +22,10 @@ type TaskArchive interface {
 	GetOperatorEmail(operatorID int64) (string, error)
 	GetOperatorMembershipTier(operatorID int64) (string, error)
 	SetOperatorMembershipTier(operatorID int64, tier string) error
+	// 会员网关钥匙（期望状态 + 虚拟钥匙），见 docs/反代会员分级联动方案.md
+	UpsertOperatorGatewayKey(ctx context.Context, record model.OperatorGatewayKey) error
+	GetOperatorGatewayKey(ctx context.Context, operatorID int64) (*model.OperatorGatewayKey, error)
+	ListOperatorGatewayKeys(ctx context.Context, limit int) ([]model.OperatorGatewayKey, error)
 	UsernameExists(username string) (bool, error)
 	EmailExists(email string) (bool, error)
 	CreateOperator(username, password, email, name string) (*model.Operator, error)
@@ -170,8 +175,17 @@ func (noopArchive) GetOperatorMembershipTier(int64) (string, error) {
 	return model.MembershipTierFree, nil
 }
 func (noopArchive) SetOperatorMembershipTier(int64, string) error { return nil }
-func (noopArchive) UsernameExists(string) (bool, error)              { return false, nil }
-func (noopArchive) EmailExists(string) (bool, error)                 { return false, nil }
+func (noopArchive) UpsertOperatorGatewayKey(context.Context, model.OperatorGatewayKey) error {
+	return nil
+}
+func (noopArchive) GetOperatorGatewayKey(context.Context, int64) (*model.OperatorGatewayKey, error) {
+	return nil, nil
+}
+func (noopArchive) ListOperatorGatewayKeys(context.Context, int) ([]model.OperatorGatewayKey, error) {
+	return nil, nil
+}
+func (noopArchive) UsernameExists(string) (bool, error) { return false, nil }
+func (noopArchive) EmailExists(string) (bool, error)    { return false, nil }
 func (noopArchive) CreateOperator(string, string, string, string) (*model.Operator, error) {
 	return nil, nil
 }
@@ -251,7 +265,7 @@ func (noopArchive) PromptTemplateAppliedRevision(int64, string) (string, error) 
 	return "", nil
 }
 func (noopArchive) SetPromptTemplateAppliedRevision(int64, string, string) error { return nil }
-func (noopArchive) PromptTemplateDeviceOverrideCounts() (map[string]int, error) { return nil, nil }
+func (noopArchive) PromptTemplateDeviceOverrideCounts() (map[string]int, error)  { return nil, nil }
 func (noopArchive) ListSemanticAgents(bool) ([]model.SemanticAgentProfile, error) {
 	return nil, nil
 }

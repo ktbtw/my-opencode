@@ -102,10 +102,24 @@ func (a *API) SetOperatorMembership(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// 等级变化 → 自动收敛网关钥匙与设备配置（异步，不阻塞管理操作）。
+	// 零人工：改等级/兑换之后钥匙与设备配置全部自己跟上。
+	a.ConvergeOperatorMembershipAsync(operatorID)
 	policy := model.UploadPolicyForTier(tier)
 	write(w, http.StatusOK, map[string]any{
 		"operator_id":     operatorID,
 		"membership_tier": policy.Tier,
 		"upload_policy":   policy,
 	})
+}
+
+// parseOperatorIDParam 解析路径里的用户 ID（{id}），失败时已写出响应。
+func parseOperatorIDParam(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	raw := strings.TrimSpace(chi.URLParam(r, "id"))
+	operatorID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || operatorID <= 0 {
+		write(w, http.StatusBadRequest, map[string]string{"error": "用户 ID 不合法"})
+		return 0, false
+	}
+	return operatorID, true
 }

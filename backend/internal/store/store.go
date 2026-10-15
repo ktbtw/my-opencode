@@ -1412,6 +1412,18 @@ func (m *Memory) SetOperatorMembershipTier(operatorID int64, tier string) error 
 	return m.archive.SetOperatorMembershipTier(operatorID, model.NormalizeMembershipTier(tier))
 }
 
+func (m *Memory) UpsertOperatorGatewayKey(ctx context.Context, record model.OperatorGatewayKey) error {
+	return m.archive.UpsertOperatorGatewayKey(ctx, record)
+}
+
+func (m *Memory) GetOperatorGatewayKey(ctx context.Context, operatorID int64) (*model.OperatorGatewayKey, error) {
+	return m.archive.GetOperatorGatewayKey(ctx, operatorID)
+}
+
+func (m *Memory) ListOperatorGatewayKeys(ctx context.Context, limit int) ([]model.OperatorGatewayKey, error) {
+	return m.archive.ListOperatorGatewayKeys(ctx, limit)
+}
+
 func (m *Memory) UsernameExists(username string) (bool, error) {
 	return m.archive.UsernameExists(username)
 }

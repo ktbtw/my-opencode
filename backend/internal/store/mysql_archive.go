@@ -1232,6 +1232,14 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
+	for _, stmt := range gatewayKeySchemaStatements {
+		if strings.TrimSpace(stmt) == "" {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
 	if err := ensureColumn(ctx, db, "project_memory_sources", "sha256", "ALTER TABLE project_memory_sources ADD COLUMN sha256 CHAR(64) NOT NULL DEFAULT '' AFTER relative_path"); err != nil {
 		return err
 	}

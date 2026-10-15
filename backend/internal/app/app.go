@@ -1446,6 +1446,9 @@ func (a *App) Router() http.Handler {
 	r.Post("/api/admin/prompt-registry/semantic-overrides", h.SavePromptSemanticOverrides)
 	r.Get("/api/admin/operators", h.ListAdminOperators)
 	r.Post("/api/admin/operators/{id}/membership", h.SetOperatorMembership)
+	// 会员网关钥匙：查看状态 / 立即收敛（自动化之外的应急入口）
+	r.Get("/api/admin/operators/{id}/gateway-key", h.GetOperatorGatewayKey)
+	r.Post("/api/admin/operators/{id}/gateway-key/ensure", h.EnsureOperatorGatewayKey)
 	r.Get("/api/skills", h.ListPublicSkills)
 	r.Get("/api/devices/{machineID}/launcher", h.GetDeviceLauncherState)
 	r.Get("/api/devices/{machineID}/launcher/diagnostics", h.GetDeviceLauncherDiagnostics)

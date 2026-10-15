@@ -60,8 +60,17 @@ func (a relayTestArchive) GetOperatorMembershipTier(int64) (string, error) {
 }
 
 func (a relayTestArchive) SetOperatorMembershipTier(int64, string) error { return nil }
-func (a relayTestArchive) UsernameExists(string) (bool, error)           { return false, nil }
-func (a relayTestArchive) EmailExists(string) (bool, error)              { return false, nil }
+func (a relayTestArchive) UpsertOperatorGatewayKey(context.Context, model.OperatorGatewayKey) error {
+	return nil
+}
+func (a relayTestArchive) GetOperatorGatewayKey(context.Context, int64) (*model.OperatorGatewayKey, error) {
+	return nil, nil
+}
+func (a relayTestArchive) ListOperatorGatewayKeys(context.Context, int) ([]model.OperatorGatewayKey, error) {
+	return nil, nil
+}
+func (a relayTestArchive) UsernameExists(string) (bool, error) { return false, nil }
+func (a relayTestArchive) EmailExists(string) (bool, error)    { return false, nil }
 func (a relayTestArchive) CreateOperator(string, string, string, string) (*model.Operator, error) {
 	return nil, nil
 }
