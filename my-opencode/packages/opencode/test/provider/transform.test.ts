@@ -4033,3 +4033,30 @@ describe("ProviderTransform.providerOptions - ai-gateway-provider", () => {
     expect(result).toEqual({ openaiCompatible: { reasoningEffort: "high" } })
   })
 })
+
+describe("ProviderTransform.maxOutputTokens", () => {
+  const model = (output: number) =>
+    ({
+      id: "test/model",
+      providerID: "test",
+      api: { id: "model", url: "https://example.com", npm: "@ai-sdk/openai" },
+      limit: { context: 1_000_000, output },
+    }) as any
+
+  test("uses the model's declared limit but never above the deployment ceiling", () => {
+    expect(ProviderTransform.maxOutputTokens(model(384_000))).toBe(ProviderTransform.OUTPUT_TOKEN_MAX)
+  })
+
+  test("keeps a smaller declared limit", () => {
+    expect(ProviderTransform.maxOutputTokens(model(8_192))).toBe(8_192)
+  })
+
+  test("an explicit override is authoritative", () => {
+    expect(ProviderTransform.maxOutputTokens(model(384_000), 128_000)).toBe(128_000)
+    expect(ProviderTransform.maxOutputTokens(model(384_000), 4_096)).toBe(4_096)
+  })
+
+  test("falls back to the ceiling when the model declares nothing", () => {
+    expect(ProviderTransform.maxOutputTokens(model(0))).toBe(ProviderTransform.OUTPUT_TOKEN_MAX)
+  })
+})

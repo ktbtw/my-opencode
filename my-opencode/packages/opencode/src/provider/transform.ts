@@ -15,7 +15,20 @@ function mimeToModality(mime: string): Modality | undefined {
   return undefined
 }
 
-export const OUTPUT_TOKEN_MAX = 32_000
+/**
+ * 单次请求的输出上限（token）。
+ *
+ * 取值依据（实测）：
+ * - deepseek-v4.1-flash 的声明上限是 **384k**（opencode 官方档及绝大多数 provider；免费档 32k），
+ *   上游实测接受 max_tokens 到 384k；
+ * - 但合法长思考实测到 82k token（Windows 一步 327k 字符），所以 32k/64k 都会截断它，
+ *   截断后部分供应商会把整段思考当正文重发（正文气泡里出现思考，已实测 20 次）；
+ * - 输出上限会从上下文里预留（`usable` = context − output），取 384k 会让 1M 上下文的可用输入
+ *   掉到 616k、压缩提前约 35%（压缩本身丢信息），所以默认取 128k：覆盖实测 + 50% 余量，
+ *   可用输入仍有 872k。
+ * 需要按部署调整时用 OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX 覆盖（例如设 384000）。
+ */
+export const OUTPUT_TOKEN_MAX = 128_000
 export const OPENAI_COMPATIBLE_RESPONSES_NPM = "@opencode-ai/openai-responses"
 
 export function isOpenAIResponsesNpm(npm: string) {
@@ -1306,8 +1319,11 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
   return { [key]: providerOptions }
 }
 
-export function maxOutputTokens(model: Provider.Model, outputTokenMax = OUTPUT_TOKEN_MAX): number {
-  return Math.min(model.limit.output, outputTokenMax) || outputTokenMax
+/** 单次请求的输出上限：模型声明多少就给多少，但不超过本部署的上限（见 OUTPUT_TOKEN_MAX）。 */
+export function maxOutputTokens(model: Provider.Model, outputTokenMax?: number): number {
+  const ceiling = outputTokenMax && outputTokenMax > 0 ? outputTokenMax : OUTPUT_TOKEN_MAX
+  const declared = model.limit.output > 0 ? model.limit.output : ceiling
+  return Math.min(declared, ceiling)
 }
 
 export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 {

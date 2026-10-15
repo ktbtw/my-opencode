@@ -28,6 +28,8 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { isEcho as isReasoningEcho, ReasoningGuard } from "./reasoning-guard"
+import { ProviderTransform } from "@/provider/transform"
 import { Usage, type LLMEvent } from "@opencode-ai/llm"
 import { normalizeStreamDeltaText } from "@/util/stream-delta"
 import { GlobalBus } from "@/bus/global"
@@ -79,13 +81,6 @@ type ToolCall = {
   inputEnded: boolean
 }
 
-/// 正文与思考完全一致 → 供应商把思考内容当成正文重发了一遍。
-/// 只认"逐字节相同（忽略首尾空白）"，避免误伤正常的重复措辞。
-const isReasoningEcho = (text: string, reasoning: string) => {
-  const body = text.trim()
-  const think = reasoning.trim()
-  return body.length > 0 && think.length > 0 && body === think
-}
 
 interface ProcessorContext extends Input {
   toolcalls: Record<string, ToolCall>
@@ -97,6 +92,12 @@ interface ProcessorContext extends Input {
   reasoningMap: Record<string, MessageV2.ReasoningPart>
   /// 本 step 已完成的思考文本：用来识别"供应商把思考内容又当成正文发一遍"。
   stepReasoning: string
+  /// 本 step 的正文已判定为思考回声：不落盘、不推流。
+  echoText: boolean
+  /// 本 step 的思考预算告警是否已经报过。
+  reasoningWarned: boolean
+  /// 本步的思考预算（token）：跟随该模型的单次输出上限，默认取 75%。
+  reasoningBudget: number
 }
 
 type StreamEvent = LLMEvent
@@ -132,6 +133,11 @@ export const layer = Layer.effect(
         model: input.model,
         toolcalls: {},
         shouldBreak: false,
+        echoText: false,
+        reasoningWarned: false,
+        reasoningBudget:
+          flags.reasoningTokenBudget ??
+          ReasoningGuard.defaultBudget(ProviderTransform.maxOutputTokens(input.model, flags.outputTokenMax)),
         snapshot: initialSnapshot,
         blocked: false,
         compaction: undefined,
@@ -352,6 +358,32 @@ export const layer = Layer.effect(
             const reasoningDelta = normalizeStreamDeltaText(value.text)
             if (!reasoningDelta) return
             ctx.reasoningMap[value.id].text += reasoningDelta
+            const guard = ReasoningGuard.inspect({
+              reasoning: ctx.reasoningMap[value.id].text,
+              budgetTokens: ctx.reasoningBudget,
+            })
+            if (guard.abandon) {
+              slog.warn("abandoning reasoning step", {
+                reason: guard.reason,
+                reasoningLength: ctx.reasoningMap[value.id].text.length,
+                budgetTokens: ctx.reasoningBudget,
+              })
+              throw new Error(ReasoningGuard.abandonMessage(guard.reason, ctx.reasoningBudget))
+            }
+            if (
+              !ctx.reasoningWarned &&
+              ReasoningGuard.stalled({
+                reasoning: ctx.reasoningMap[value.id].text,
+                budgetTokens: ctx.reasoningBudget,
+                hasContent: (ctx.currentText?.text.length ?? 0) > 0,
+              })
+            ) {
+              ctx.reasoningWarned = true
+              slog.warn("reasoning stalled without output", {
+                reasoningLength: ctx.reasoningMap[value.id].text.length,
+                budgetTokens: ctx.reasoningBudget,
+              })
+            }
             yield* session.updatePartDelta({
               sessionID: ctx.reasoningMap[value.id].sessionID,
               messageID: ctx.reasoningMap[value.id].messageID,
@@ -549,6 +581,8 @@ export const layer = Layer.effect(
 
           case "step-start":
             ctx.stepReasoning = ""
+            ctx.echoText = false
+            ctx.reasoningWarned = false
             if (!ctx.snapshot) ctx.snapshot = yield* snapshot.track()
             if (!ctx.assistantMessage.summary) {
               // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
@@ -696,6 +730,15 @@ export const layer = Layer.effect(
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             const textDelta = normalizeStreamDeltaText(value.text)
             if (!textDelta) return
+            // 供应商会把思考当正文重发：既见过"整段相同"，也见过"正文是思考里的一大段"
+            // （Windows gg同行：5 次里 4 次是后者）。在建/推进正文之前判定，存储与推流同时干净。
+            // 对比对象要同时包括"已结束的思考"和"正在累积的那段"。
+            const nextText = ctx.currentText.text + textDelta
+            const reasoningParts = [ctx.stepReasoning, ...Object.values(ctx.reasoningMap).map((part) => part.text)]
+            if (reasoningParts.some((reasoning) => reasoning && isReasoningEcho(nextText, reasoning))) {
+              ctx.echoText = true
+              return
+            }
             ctx.currentText.text += textDelta
             yield* session.updatePartDelta({
               sessionID: ctx.currentText.sessionID,
@@ -711,7 +754,9 @@ export const layer = Layer.effect(
             // 有些供应商（deepseek 系经代理时出现过）会把思考内容再当正文发一遍：
             // reasoning 与 text 逐字节相同，正文气泡于是显示成思考过程。
             // 同一个 step 内两者完全一致时按思考处理，丢掉这段"正文"。
-            if (isReasoningEcho(ctx.currentText.text, ctx.stepReasoning)) {
+            const finishedText = ctx.currentText.text
+            const finishedReasoning = [ctx.stepReasoning, ...Object.values(ctx.reasoningMap).map((part) => part.text)]
+            if (ctx.echoText || finishedReasoning.some((reasoning) => reasoning && isReasoningEcho(finishedText, reasoning))) {
               slog.warn("dropping text part identical to reasoning", {
                 textLength: ctx.currentText.text.length,
               })
@@ -721,6 +766,7 @@ export const layer = Layer.effect(
                 partID: ctx.currentText.id,
               })
               ctx.currentText = undefined
+              ctx.echoText = false
               return
             }
             // oxlint-disable-next-line no-self-assign -- reactivity trigger

@@ -7389,6 +7389,14 @@ class _InputArea extends ConsumerStatefulWidget {
 }
 
 class _InputAreaState extends ConsumerState<_InputArea> {
+  /// 重新拉取当前设备的模型列表（设备侧新增模型后聊天页不会自己刷新）。
+  Future<List<ModelInfo>> _refreshModels() async {
+    final key = widget.machineId.trim();
+    ModelLog.step('刷新', '手动刷新模型列表：machine=$key');
+    ref.invalidate(availableModelsProvider(key));
+    return ref.read(availableModelsProvider(key).future);
+  }
+
   bool _syncing = false;
   _SlashCommandTrigger? _slashTrigger;
   int _highlightedCommandIndex = 0;
@@ -7923,6 +7931,7 @@ class _InputAreaState extends ConsumerState<_InputArea> {
                     selectedModel: widget.selectedModel,
                     availableModels: widget.availableModels,
                     onSelect: widget.onSelectModel,
+                    onRefreshModels: _refreshModels,
                   ),
                   // 生图模式下工具栏只保留附件 + 模型 + 参数条，
                   // 其余控件与生图无关，切上去直接隐藏。
@@ -10163,11 +10172,15 @@ class _ModelSelector extends StatelessWidget {
   final ModelInfo? selectedModel;
   final List<ModelInfo> availableModels;
   final void Function(ModelInfo? model) onSelect;
+  /// 刷新该设备的模型列表：设备上新增模型后，Riverpod 的 future provider
+  /// 会一直复用旧缓存，页面自己不做失效就永远看不到新模型。
+  final Future<List<ModelInfo>> Function()? onRefreshModels;
 
   const _ModelSelector({
     required this.selectedModel,
     required this.availableModels,
     required this.onSelect,
+    this.onRefreshModels,
   });
 
   @override
@@ -10236,6 +10249,7 @@ class _ModelSelector extends StatelessWidget {
       builder: (_) => _ModelPickerSheet(
         availableModels: availableModels,
         selectedModel: selectedModel,
+        onRefresh: onRefreshModels,
         onSelect: (m) {
           Navigator.of(context).pop();
           onSelect(m);
@@ -10959,11 +10973,14 @@ class _ModelPickerSheet extends StatefulWidget {
   final List<ModelInfo> availableModels;
   final ModelInfo? selectedModel;
   final void Function(ModelInfo? model) onSelect;
+  /// 可选的刷新入口：拉一次设备最新的模型列表。
+  final Future<List<ModelInfo>> Function()? onRefresh;
 
   const _ModelPickerSheet({
     required this.availableModels,
     required this.selectedModel,
     required this.onSelect,
+    this.onRefresh,
   });
 
   @override
@@ -10974,10 +10991,35 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
   String _search = '';
   // 面板可能因搜索/滚动频繁重建，只在统计变化时输出一次，避免刷屏。
   String? _lastLoggedSignature;
+  // 刷新后面板要立刻显示新列表，所以自己持有一份。
+  late List<ModelInfo> _models = widget.availableModels;
+  bool _refreshing = false;
+
+  Future<void> _refresh() async {
+    final refresh = widget.onRefresh;
+    if (refresh == null || _refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final models = await refresh();
+      if (!mounted) return;
+      setState(() => _models = models);
+      ModelLog.step('刷新', '刷新完成：可用模型 ${models.length} 个');
+      showAppFeedback(
+        context,
+        message: models.isEmpty ? '刷新后没有可用模型' : '已刷新，共 ${models.length} 个模型',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ModelLog.step('刷新', '刷新失败：$error');
+      showAppFeedback(context, message: '刷新失败：$error');
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final filtered = widget.availableModels.where((m) {
+    final filtered = _models.where((m) {
       if (_search.isEmpty) return true;
       final q = _search.toLowerCase();
       return m.modelID.toLowerCase().contains(q) ||
@@ -10991,12 +11033,12 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
       grouped.putIfAbsent(m.providerID, () => []).add(m);
     }
     final signature =
-        '$_search|${widget.availableModels.length}|${filtered.length}|${grouped.length}';
+        '$_search|${_models.length}|${filtered.length}|${grouped.length}';
     if (signature != _lastLoggedSignature) {
       _lastLoggedSignature = signature;
       ModelLog.pickerShown(
         _search,
-        widget.availableModels.length,
+        _models.length,
         filtered.length,
         grouped.length,
       );
@@ -11025,6 +11067,19 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                       ),
                     ),
                     const Spacer(),
+                    if (widget.onRefresh != null)
+                      IconButton(
+                        onPressed: _refreshing ? null : _refresh,
+                        tooltip: '刷新模型列表',
+                        visualDensity: VisualDensity.compact,
+                        icon: _refreshing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh, size: 18),
+                      ),
                     if (widget.selectedModel != null)
                       TextButton(
                         onPressed: () => widget.onSelect(null),
