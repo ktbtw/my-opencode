@@ -327,6 +327,14 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
+// 会员 provider 由启动器写入私有覆盖文件：用户可见的 opencode.json 里不出现它，
+// 但运行时照常合并生效（模型选择、调用都走合并后的配置）。
+export function membershipConfigFile() {
+  const explicit = process.env.CHAT_CODEX_MEMBERSHIP_CONFIG
+  if (explicit && explicit.trim()) return explicit.trim()
+  return path.join(os.homedir(), ".my-opencode-launcher", "membership.json")
+}
+
 function globalConfigFile() {
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
     path.join(Global.Path.config, file),
@@ -425,6 +433,8 @@ export const layer = Layer.effect(
       result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "config.json")))
       result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.json")))
       result = mergeConfig(result, yield* loadFile(path.join(Global.Path.config, "opencode.jsonc")))
+      // 启动器下发的会员 provider：来自私有覆盖文件，用户配置里看不到，但运行时生效。
+      result = mergeConfig(result, yield* loadFile(membershipConfigFile()))
 
       const legacy = path.join(Global.Path.config, "config")
       if (existsSync(legacy)) {

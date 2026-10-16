@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -596,10 +598,119 @@ func parseModels(items map[string]any, provider string) []model.DeviceAIModelInf
 	return out
 }
 
+// 会员覆盖文件：opencode 运行时会把它合并进全局配置。
+// 放在启动器运行目录里（不进 ~/.config/opencode），所以用户可见的 opencode.json 里没有会员 provider。
+func membershipOverlayPath() string {
+	if value := strings.TrimSpace(os.Getenv("CHAT_CODEX_MEMBERSHIP_CONFIG")); value != "" {
+		return value
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".my-opencode-launcher", "membership.json")
+}
+
+// writeManagedProvider 把托管 provider 写进覆盖文件，并确保用户可见的配置里没有它。
+func writeManagedProvider(block map[string]any, providerID string) error {
+	path := membershipOverlayPath()
+	if path == "" {
+		return errors.New("无法定位会员配置目录")
+	}
+	var overlay map[string]any
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+		_ = decodeConfig(data, &overlay)
+	}
+	if overlay == nil {
+		overlay = map[string]any{}
+	}
+	providers := ensureMapField(overlay, "provider")
+	providers[providerID] = block
+	raw, err := marshalConfig(overlay)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
+}
+
+// removeManagedProvider 从覆盖文件里摘掉托管 provider（会员到期/降级时）。
+func removeManagedProvider(providerID string) error {
+	path := membershipOverlayPath()
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var overlay map[string]any
+	if decodeConfig(data, &overlay) != nil || overlay == nil {
+		return nil
+	}
+	providers := asMap(overlay["provider"])
+	delete(providers, providerID)
+	if len(providers) == 0 {
+		delete(overlay, "provider")
+	} else {
+		overlay["provider"] = providers
+	}
+	raw, err := marshalConfig(overlay)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o600)
+}
+
+// dropManagedBlocksFromUserConfig 把用户配置里遗留的托管 provider 摘掉（迁移用）。
+func dropManagedBlocksFromUserConfig(parsed map[string]any) (map[string]any, bool) {
+	managed := managedProviderIDs(parsed)
+	if len(managed) == 0 {
+		return parsed, false
+	}
+	providers := asMap(parsed["provider"])
+	for id := range managed {
+		delete(providers, id)
+	}
+	if len(providers) == 0 {
+		delete(parsed, "provider")
+	} else {
+		parsed["provider"] = providers
+	}
+	return parsed, true
+}
+
 func Save(input model.DeviceAIConfigInfo) (*model.DeviceAIConfigInfo, error) {
 	configPath, _, parsed, err := readRaw()
 	if err != nil {
 		return nil, err
+	}
+	if input.Managed {
+		// 会员 provider 只写进 opencode 运行时合并的私有文件，用户配置里保持干净。
+		block := asMap(applyConfigInput(map[string]any{}, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Models, input.Force, false, true)["provider"])[input.Provider]
+		if block == nil {
+			return nil, errors.New("会员 provider 构造失败")
+		}
+		if err := writeManagedProvider(asMap(block), input.Provider); err != nil {
+			return nil, err
+		}
+		cleaned, changed := dropManagedBlocksFromUserConfig(parsed)
+		if changed {
+			cleanedRaw, err := marshalConfig(cleaned)
+			if err != nil {
+				return nil, err
+			}
+			if err := writeRaw(configPath, cleanedRaw); err != nil {
+				return nil, err
+			}
+		}
+		_, currentRaw, _, err := readRaw()
+		if err != nil {
+			return nil, err
+		}
+		return parseInfo(configPath, currentRaw)
 	}
 	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Models, input.Force, false, input.Managed)
 	raw, err := marshalConfig(updated)
@@ -632,6 +743,10 @@ func SaveText(text string) (*model.DeviceAIConfigInfo, error) {
 }
 
 func ClearProvider(id string) (*model.DeviceAIConfigInfo, error) {
+	// 会员 provider 存在私有覆盖文件里，先清那边
+	if strings.TrimSpace(id) != "" {
+		_ = removeManagedProvider(strings.TrimSpace(id))
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, errors.New("请先选择要删除的供应商")
