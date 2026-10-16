@@ -15,8 +15,10 @@ import 'package:volume_controller/volume_controller.dart';
 import '../../../../core/notifications/app_notification_feedback.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/widgets/app_status_icon.dart';
 import '../../data/artifact_download_service.dart';
 import '../../data/chat_model.dart';
+import '../media_viewer_widgets.dart';
 import 'player_gesture_layer.dart';
 import 'player_icons.dart';
 import 'player_progress_store.dart';
@@ -51,6 +53,11 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   VideoPlayerController? _controller;
   String _error = '';
   bool _initializing = true;
+  int _openGeneration = 0;
+  bool _saving = false;
+  bool _sharing = false;
+  bool _capturing = false;
+  final Map<String, List<Duration>> _markers = {};
 
   late int _index;
 
@@ -106,13 +113,14 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   bool get _hasNext => _playlist.length > 1 && _index < _playlist.length - 1;
 
   Future<void> _open() async {
+    final generation = ++_openGeneration;
     final controller = VideoPlayerController.networkUrl(
       Uri.parse(ArtifactDownloadService.downloadUrl(widget.taskId, _current)),
       httpHeaders: ArtifactDownloadService.authHeaders(),
     );
     try {
       await controller.initialize();
-      if (!mounted) {
+      if (!mounted || generation != _openGeneration) {
         await controller.dispose();
         return;
       }
@@ -125,11 +133,18 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
         _error = '';
       });
       await _restorePosition(controller);
+      if (!mounted ||
+          generation != _openGeneration ||
+          controller != _controller) {
+        return;
+      }
       await controller.play();
       _scheduleHide();
     } catch (error) {
+      debugPrint('TRACE catch before dispose: $error');
       await controller.dispose();
-      if (!mounted) return;
+      debugPrint('TRACE catch after dispose');
+      if (!mounted || generation != _openGeneration) return;
       setState(() {
         _initializing = false;
         _error = _friendlyError(error);
@@ -188,6 +203,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
 
   @override
   void dispose() {
+    _openGeneration++;
     _hideTimer?.cancel();
     _verticalHudTimer?.cancel();
     final position = _controller?.value.position;
@@ -213,6 +229,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
 
   void _scheduleHide() {
     _hideTimer?.cancel();
+    if (!_fullscreen) return;
     if (_isDesktop) return; // 桌面端控制栏常显
     if (_controller?.value.isPlaying != true) return;
     _hideTimer = Timer(const Duration(seconds: 3), () {
@@ -307,12 +324,15 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   };
 
   Future<void> _save() async {
+    if (_saving) return;
+    final artifact = _current;
+    setState(() => _saving = true);
     _controller?.pause();
     showAppFeedback(context, message: '正在保存视频…');
     try {
       final path = await ArtifactDownloadService.download(
         taskId: widget.taskId,
-        artifact: _current,
+        artifact: artifact,
       );
       if (!mounted) return;
       showAppFeedback(
@@ -326,23 +346,35 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
         message: '保存失败：${_friendlyError(error)}',
         error: true,
       );
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
   /// 分享：先把视频落到临时文件，再交给系统分享面板。
   Future<void> _share() async {
+    if (_sharing) return;
+    final artifact = _current;
+    final box = context.findRenderObject() as RenderBox?;
+    final origin = box == null
+        ? null
+        : box.localToGlobal(Offset.zero) & box.size;
+    setState(() => _sharing = true);
     _controller?.pause();
     showAppFeedback(context, message: '正在准备分享…');
     try {
       final bytes = await ArtifactDownloadService.fetchBytes(
         taskId: widget.taskId,
-        artifact: _current,
+        artifact: artifact,
       );
       final dir = await getTemporaryDirectory();
-      final file = File(p.join(dir.path, _current.filename));
+      final file = File(p.join(dir.path, p.basename(artifact.filename)));
       await file.writeAsBytes(bytes, flush: true);
       await SharePlus.instance.share(
-        ShareParams(files: [XFile(file.path, mimeType: _current.mimeType)]),
+        ShareParams(
+          files: [XFile(file.path, mimeType: artifact.mimeType)],
+          sharePositionOrigin: origin,
+        ),
       );
     } catch (error) {
       if (!mounted) return;
@@ -351,6 +383,8 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
         message: '分享失败：${_friendlyError(error)}',
         error: true,
       );
+    } finally {
+      if (mounted) setState(() => _sharing = false);
     }
   }
 
@@ -358,18 +392,28 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   ///
   /// 从画面所在的 RepaintBoundary 抓取，得到的是用户此刻看到的那一帧。
   Future<void> _captureFrame() async {
+    if (_capturing) return;
     final boundary =
         _stageKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
     if (boundary == null) {
       showAppFeedback(context, message: '画面还没准备好，请稍后再试', error: true);
       return;
     }
+    final artifact = _current;
+    setState(() => _capturing = true);
     showAppFeedback(context, message: '正在截取当前帧…');
     try {
       final image = await boundary.toImage(pixelRatio: 2);
-      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final ByteData? data;
+      try {
+        data = await image.toByteData(format: ui.ImageByteFormat.png);
+      } finally {
+        image.dispose();
+      }
       if (data == null) throw StateError('截帧失败');
-      final name = _current.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
+      final name = p
+          .basename(artifact.filename)
+          .replaceAll(RegExp(r'\.[^.]+$'), '');
       final path = await _saveBytes(
         data.buffer.asUint8List(),
         '$name-${DateTime.now().millisecondsSinceEpoch}.png',
@@ -383,6 +427,8 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
         message: '截取当前帧失败：${_friendlyError(error)}',
         error: true,
       );
+    } finally {
+      if (mounted) setState(() => _capturing = false);
     }
   }
 
@@ -402,6 +448,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
     try {
       final supported =
           await _pipChannel.invokeMethod<bool>('isSupported') ?? false;
+      if (!mounted) return;
       if (!supported) {
         showAppFeedback(context, message: '当前设备暂不支持画中画');
         return;
@@ -535,25 +582,87 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Focus(
-        autofocus: true,
-        onKeyEvent: _onKey,
-        child: _initializing
-            ? const Center(
-                child: SizedBox(
-                  width: 30,
-                  height: 30,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    color: Colors.white,
-                  ),
+    return PopScope(
+      canPop: !_fullscreen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _fullscreen) _toggleFullscreen();
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: _fullscreen
+            ? null
+            : AppBar(
+                leading: const AppStatusBackButton(),
+                titleSpacing: 0,
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '视频预览',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      _current.filename,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
                 ),
-              )
-            : (_error.isNotEmpty
-                  ? _ErrorView(message: _error, onRetry: _retry)
-                  : _buildPlayer(controller!)),
+                actions: [
+                  IconButton(
+                    tooltip: _sharing ? '正在分享' : '分享视频',
+                    onPressed: controller != null && !_sharing ? _share : null,
+                    icon: const AppStatusIcon(Icons.ios_share_outlined),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 12, left: 4),
+                    child: FilledButton.icon(
+                      onPressed: !_saving ? _save : null,
+                      icon: const AppStatusIcon(
+                        Icons.download_rounded,
+                        size: 17,
+                      ),
+                      label: Text(
+                        _saving ? '保存中' : '保存视频',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+        body: Focus(
+          autofocus: true,
+          onKeyEvent: _onKey,
+          child: _initializing
+              ? const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(strokeWidth: 2),
+                      SizedBox(height: 18),
+                      Text(
+                        '正在准备视频…',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : _error.isNotEmpty
+              ? _ErrorView(message: _error, onRetry: _retry)
+              : _fullscreen
+              ? _buildPlayer(controller!)
+              : _buildWorkspace(controller!),
+        ),
       ),
     );
   }
@@ -564,6 +673,372 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
       _error = '';
     });
     await _open();
+  }
+
+  Widget _buildWorkspace(VideoPlayerController controller) => SafeArea(
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 1000;
+        final player = ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: ColoredBox(
+            color: Colors.black,
+            child: _buildDesktopPlayer(controller),
+          ),
+        );
+        final details = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _playbackPanel(controller),
+            const SizedBox(height: 12),
+            MediaPanel(
+              title: '视频信息',
+              trailing: MediaBadge(
+                _current.mimeType.replaceFirst('video/', '').toUpperCase(),
+              ),
+              child: MediaInfoList(
+                entries: [
+                  ('文件名', _current.filename),
+                  (
+                    '时长',
+                    VideoPlayerControls.formatDuration(
+                      controller.value.duration,
+                    ),
+                  ),
+                  (
+                    '分辨率',
+                    '${controller.value.size.width.round()} × ${controller.value.size.height.round()}',
+                  ),
+                  ('大小', mediaFileSize(_current.sizeBytes)),
+                ],
+              ),
+            ),
+            if (_playlist.length > 1) ...[
+              const SizedBox(height: 12),
+              _playlistPanel(),
+            ],
+          ],
+        );
+        if (wide) {
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    children: [
+                      Expanded(child: player),
+                      const SizedBox(height: 12),
+                      _tools(controller),
+                      const Padding(
+                        padding: EdgeInsets.only(top: 14),
+                        child: Text(
+                          '空格 播放 / 暂停 · ← → 快退 / 快进 · M 静音 · F 全屏',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                SizedBox(
+                  width: 290,
+                  child: SingleChildScrollView(child: details),
+                ),
+              ],
+            ),
+          );
+        }
+        final playerHeight = (constraints.maxHeight * .48).clamp(130.0, 440.0);
+        return Column(
+          children: [
+            SizedBox(
+              height: playerHeight,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                child: player,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: _tools(controller),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                child: details,
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+
+  Widget _tools(VideoPlayerController controller) => Container(
+    decoration: BoxDecoration(
+      color: AppColors.surface,
+      border: Border.all(color: AppColors.borderLight),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          MediaToolButton(
+            icon: Icons.photo_camera_outlined,
+            label: _capturing ? '截取中' : '截取画面',
+            onPressed: _capturing ? null : _captureFrame,
+          ),
+          MediaToolButton(
+            icon: Icons.schedule_outlined,
+            label: '精确跳转',
+            onPressed: () => _jumpToTime(controller),
+          ),
+          MediaToolButton(
+            icon: Icons.bookmark_add_outlined,
+            label: '添加标记',
+            onPressed: () => _addMarker(controller),
+          ),
+          MediaToolButton(
+            icon: Icons.replay_outlined,
+            label: '后退 1 秒',
+            onPressed: () => _stepSecond(controller, -1),
+          ),
+          MediaToolButton(
+            icon: Icons.arrow_forward_outlined,
+            label: '前进 1 秒',
+            onPressed: () => _stepSecond(controller, 1),
+          ),
+          MediaToolButton(
+            icon: Icons.aspect_ratio_outlined,
+            label: _fitLabel,
+            onPressed: _cycleFit,
+          ),
+          MediaToolButton(
+            icon: Icons.repeat_rounded,
+            label: '循环播放',
+            selected: _looping,
+            onPressed: _toggleLoop,
+          ),
+          if (Platform.isAndroid)
+            MediaToolButton(
+              icon: Icons.picture_in_picture_alt_outlined,
+              label: '画中画',
+              onPressed: _enterPip,
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _playbackPanel(VideoPlayerController controller) => MediaPanel(
+    title: '播放设置',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '播放速度',
+          style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final speed in [.5, .75, 1.0, 1.25, 1.5, 2.0])
+              ChoiceChip(
+                label: Text(
+                  '${speed == 1 ? '1' : speed}×',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                selected: speed == _speed,
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                onSelected: (_) => _setSpeed(speed),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                '循环播放',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ),
+            Switch(value: _looping, onChanged: (_) => _toggleLoop()),
+          ],
+        ),
+        const Divider(color: AppColors.borderLight, height: 22),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                '时间标记',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ),
+            IconButton(
+              tooltip: '标记当前位置',
+              onPressed: () => _addMarker(controller),
+              icon: const AppStatusIcon(Icons.add_outlined, size: 17),
+            ),
+          ],
+        ),
+        if ((_markers[_current.id] ?? []).isEmpty)
+          const Text(
+            '标记精彩片段，点击时间即可回看。',
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.6,
+              color: AppColors.textMuted,
+            ),
+          )
+        else
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final time in _markers[_current.id]!)
+                InputChip(
+                  label: Text(
+                    VideoPlayerControls.formatDuration(time),
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  onPressed: () => controller.seekTo(time),
+                  onDeleted: () =>
+                      setState(() => _markers[_current.id]!.remove(time)),
+                ),
+            ],
+          ),
+      ],
+    ),
+  );
+
+  Widget _playlistPanel() => MediaPanel(
+    title: '本轮视频',
+    trailing: MediaBadge('${_playlist.length} 个'),
+    child: Column(
+      children: [
+        for (var i = 0; i < _playlist.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: ListTile(
+              selected: i == _index,
+              selectedTileColor: AppColors.primaryLight,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(9),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+              leading: Icon(
+                i == _index ? Icons.play_circle_outline : Icons.movie_outlined,
+                size: 22,
+                color: i == _index ? AppColors.primary : AppColors.textMuted,
+              ),
+              title: Text(
+                _playlist[i].filename,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
+              subtitle: Text(
+                i == _index ? '当前视频' : mediaFileSize(_playlist[i].sizeBytes),
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              onTap: () => _playAt(i),
+            ),
+          ),
+      ],
+    ),
+  );
+
+  void _addMarker(VideoPlayerController controller) {
+    final time = Duration(seconds: controller.value.position.inSeconds);
+    setState(() {
+      final markers = _markers.putIfAbsent(_current.id, () => []);
+      if (!markers.contains(time)) markers.add(time);
+      markers.sort();
+    });
+  }
+
+  Future<void> _stepSecond(
+    VideoPlayerController controller,
+    int seconds,
+  ) async {
+    await controller.pause();
+    if (!mounted || controller != _controller) return;
+    final target = (controller.value.position.inMilliseconds + seconds * 1000)
+        .clamp(0, controller.value.duration.inMilliseconds);
+    await controller.seekTo(Duration(milliseconds: target));
+  }
+
+  Future<void> _jumpToTime(VideoPlayerController controller) async {
+    final input = TextEditingController(
+      text: VideoPlayerControls.formatDuration(controller.value.position),
+    );
+    String? error;
+    final target = await showDialog<Duration>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          title: const Text('跳转到指定时间'),
+          content: SizedBox(
+            width: 300,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: input,
+                  autofocus: true,
+                  keyboardType: TextInputType.datetime,
+                  decoration: InputDecoration(
+                    labelText: '时间',
+                    hintText: '01:30 或 90',
+                    helperText:
+                        '视频总时长 ${VideoPlayerControls.formatDuration(controller.value.duration)}',
+                    errorText: error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final time = VideoPlayerControls.parseTimestamp(input.text);
+                if (time == null || time > controller.value.duration) {
+                  update(() => error = '请输入视频时长范围内的秒数或 分:秒');
+                  return;
+                }
+                Navigator.pop(dialogContext, time);
+              },
+              child: const Text('跳转'),
+            ),
+          ],
+        ),
+      ),
+    );
+    // 等待对话框退场后再释放输入框控制器。
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    input.dispose();
+    if (target != null && mounted && controller == _controller) {
+      await controller.seekTo(target);
+    }
   }
 
   Widget _buildPlayer(VideoPlayerController controller) {
@@ -603,19 +1078,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
               },
               child: RepaintBoundary(
                 key: _stageKey,
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: _aspectRatio(controller),
-                    child: FittedBox(
-                      fit: _fit,
-                      child: SizedBox(
-                        width: controller.value.size.width,
-                        height: controller.value.size.height,
-                        child: VideoPlayer(controller),
-                      ),
-                    ),
-                  ),
-                ),
+                child: _videoSurface(controller),
               ),
             ),
 
@@ -721,21 +1184,59 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   }
 
   Future<void> _playNext() async {
-    if (!_hasNext) return;
-    final old = _controller;
-    setState(() {
-      _index += 1;
-      _initializing = true;
-    });
-    old?.removeListener(_onTick);
-    await old?.dispose();
-    await _open();
+    if (_hasNext) await _playAt(_index + 1);
   }
 
-  double _aspectRatio(VideoPlayerController controller) {
-    final ratio = controller.value.aspectRatio;
-    return ratio == 0 ? 16 / 9 : ratio;
+  Future<void> _playAt(int index) async {
+    if (_initializing ||
+        index == _index ||
+        index < 0 ||
+        index >= _playlist.length) {
+      return;
+    }
+    final old = _controller;
+    if (old != null) {
+      unawaited(
+        PlayerProgressStore.write(
+          widget.taskId,
+          _current.id,
+          old.value.position,
+        ),
+      );
+    }
+    _hideTimer?.cancel();
+    setState(() {
+      _controller = null;
+      _index = index;
+      _initializing = true;
+      _scrubPosition = null;
+      _gestureSeek = null;
+      _speedMenuOpen = false;
+      _buffering = false;
+      _ended = false;
+    });
+    old?.removeListener(_onTick);
+    debugPrint('TRACE before dispose');
+    await old?.dispose();
+    debugPrint('TRACE after dispose');
+    if (mounted) await _open();
   }
+
+  Widget _videoSurface(VideoPlayerController controller) => ColoredBox(
+    color: Colors.black,
+    child: SizedBox.expand(
+      child: ClipRect(
+        child: FittedBox(
+          fit: _fit,
+          child: SizedBox(
+            width: controller.value.size.width,
+            height: controller.value.size.height,
+            child: VideoPlayer(controller),
+          ),
+        ),
+      ),
+    ),
+  );
 
   /// 桌面端：控制栏常显在画面下方，再下面是文件信息，不遮挡画面。
   Widget _buildDesktopPlayer(VideoPlayerController controller) {
@@ -746,22 +1247,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
             fit: StackFit.expand,
             children: [
               Container(color: Colors.black),
-              RepaintBoundary(
-                key: _stageKey,
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: _aspectRatio(controller),
-                    child: FittedBox(
-                      fit: _fit,
-                      child: SizedBox(
-                        width: controller.value.size.width,
-                        height: controller.value.size.height,
-                        child: VideoPlayer(controller),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+              RepaintBoundary(key: _stageKey, child: _videoSurface(controller)),
               if (_buffering) const _BufferingIndicator(),
               ValueListenableBuilder<VideoPlayerValue>(
                 valueListenable: controller,
@@ -772,19 +1258,20 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
                   onTap: _togglePlay,
                 ),
               ),
-              _TopBar(
-                title: _current.filename,
-                subtitle: _metaLine(controller),
-                onBack: () => Navigator.of(context).maybePop(),
-                onSave: _save,
-                onShare: _share,
-                onCapture: _captureFrame,
-                onPip: _enterPip,
-                onFit: _cycleFit,
-                fitLabel: _fitLabel,
-                hasNext: _hasNext,
-                onNext: _playNext,
-              ),
+              if (_fullscreen)
+                _TopBar(
+                  title: _current.filename,
+                  subtitle: _metaLine(controller),
+                  onBack: () => Navigator.of(context).maybePop(),
+                  onSave: _save,
+                  onShare: _share,
+                  onCapture: _captureFrame,
+                  onPip: _enterPip,
+                  onFit: _cycleFit,
+                  fitLabel: _fitLabel,
+                  hasNext: _hasNext,
+                  onNext: _playNext,
+                ),
               _GestureHud(
                 visible: _hud != null,
                 seconds: _hudSeconds,
@@ -811,7 +1298,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
             valueListenable: controller,
             builder: (context, _, __) => VideoPlayerControls(
               controller: controller,
-              isDesktop: true,
+              isDesktop: _isDesktop,
               speed: _speed,
               looping: _looping,
               speedMenuOpen: _speedMenuOpen,
@@ -831,7 +1318,6 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
             ),
           ),
         ),
-        _DesktopMeta(artifact: _current, controller: controller),
       ],
     );
   }
@@ -998,7 +1484,7 @@ class _ErrorView extends StatelessWidget {
                 ),
               ),
               child: Center(
-                child: PlayerIcons.error(20, AppColors.statusErrorLight),
+                child: PlayerIcons.error(20, AppColors.statusError),
               ),
             ),
             const SizedBox(height: 16),
@@ -1006,7 +1492,7 @@ class _ErrorView extends StatelessWidget {
               message,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                color: Colors.white,
+                color: AppColors.textPrimary,
                 fontSize: 13,
                 height: 1.6,
               ),
@@ -1031,75 +1517,6 @@ class _ErrorView extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// 桌面端文件信息：控制栏下方直接列出，便于核对。
-class _DesktopMeta extends StatelessWidget {
-  final AiArtifact artifact;
-  final VideoPlayerController controller;
-
-  const _DesktopMeta({required this.artifact, required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    final size = controller.value.size;
-    final resolution = size.width > 0 && size.height > 0
-        ? '${size.width.round()} × ${size.height.round()}'
-        : '—';
-    final duration = controller.value.duration;
-    final entries = <(String, String)>[
-      ('文件名', artifact.filename),
-      (
-        '时长',
-        duration > Duration.zero
-            ? VideoPlayerControls.formatDuration(duration)
-            : '—',
-      ),
-      ('分辨率', resolution),
-      ('大小', artifact.sizeBytes > 0 ? formatBytes(artifact.sizeBytes) : '—'),
-      ('格式', artifact.mimeType.replaceFirst('video/', '').toUpperCase()),
-    ];
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 15, 16, 17),
-      decoration: const BoxDecoration(
-        color: Color(0xFF0A0E14),
-        border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
-      ),
-      child: Wrap(
-        spacing: 26,
-        runSpacing: 12,
-        children: [
-          for (final entry in entries)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  entry.$1,
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.4,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  entry.$2,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-        ],
       ),
     );
   }

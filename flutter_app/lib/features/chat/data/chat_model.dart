@@ -1946,6 +1946,9 @@ class ModelInfo {
 
   /// 是否会员专属模型：列表里置顶，并用金色展示。
   final bool member;
+
+  /// 控制台为该模型勾了"支持破甲"（默认只有 DeepSeek 系列支持）。
+  final bool armor;
   final String providerBaseUrl;
   final String providerConsoleUrl;
   final String modelID;
@@ -1965,6 +1968,7 @@ class ModelInfo {
     required this.modelID,
     this.modelName = '',
     this.member = false,
+    this.armor = false,
     required this.name,
     this.variants = const [],
     this.image = false,
@@ -2004,6 +2008,9 @@ class ModelInfo {
 
   /// DeepSeek 系列模型才会开放破甲模式。
   bool get isDeepSeek => looksLikeDeepSeekModel(providerID, modelID, name);
+
+  /// 是否允许开启破甲：DeepSeek 系列，或控制台标记了"支持破甲"的会员模型。
+  bool get supportsArmor => isDeepSeek || armor;
 
   // 格式化为 metadata 传输字段 "providerID/modelID"
   String get metaKey => '$providerID/$modelID';

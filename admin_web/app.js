@@ -4897,7 +4897,14 @@ function membershipTierPanel(policy, tierIndex, models) {
           <div class="form-grid preset-levels">
             ${MEMBERSHIP_REASONING_LEVELS.map(([value, label]) => thinkingBox(value, `思考 · ${label}`)).join("")}
           </div>
+          <div class="form-grid two preset-modalities">
+            <label class="switch-row preset-check">
+              <span>支持破甲</span>
+              <input type="checkbox" data-field="preset_armor" data-tier="${tierIndex}" data-entry="${entryIndex}" ${preset.supports_armor ? "checked" : ""} />
+            </label>
+          </div>
           <p class="muted">思考强度可多选（关闭/最小/低/中/高/极高/最大，与 App 一致）：勾一档=固定强度，勾多档=用户可在 App 里切换；都不勾=不预设该能力。</p>
+          <p class="muted">「支持破甲」勾选后，该模型也能开启破甲模式（默认只有 DeepSeek 系列支持）。</p>
         </details>
       </div>`;
       }
@@ -4993,6 +5000,13 @@ function readMembershipForm() {
       } else {
         entry.preset.reasoning_levels = list.filter((item) => item !== node.value);
       }
+      return;
+    }
+    if (field === "preset_armor") {
+      const entry = policy.entries[Number(node.dataset.entry)];
+      if (!entry) return;
+      entry.preset = entry.preset || {};
+      entry.preset.supports_armor = node.checked;
       return;
     }
     if (field === "preset_context" || field === "preset_output") {

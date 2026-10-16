@@ -1502,7 +1502,8 @@ func (a *API) CreateTask(w http.ResponseWriter, r *http.Request) {
 	// 门控在后端再做一次（前端也会拦），避免非 DeepSeek 模型被注入。
 	deepSeekJailbreak := false
 	if a.jailbreakEnabledFor(operator.ID, req.AgentID) {
-		baseSystemPrompt, deepSeekJailbreak = applyDeepSeekJailbreak(baseSystemPrompt, req.Metadata["model"], true)
+		allowArmor := a.memberModelSupportsArmor(r.Context(), operator.ID, req.Metadata["model"])
+		baseSystemPrompt, deepSeekJailbreak = applyDeepSeekJailbreak(baseSystemPrompt, req.Metadata["model"], true, allowArmor)
 	}
 	// 模型专属提示词：控制台「模型提示词预设」按本次会话实际模型匹配（生效模式 model/both），
 	// 命中则整段前置，由 opencode 侧置顶到基础提示词之前。
@@ -5253,9 +5254,15 @@ func mergeMemberProviderIntoModels(payload map[string]any, policy model.Membersh
 		// 标记为会员 provider：App 端据此置顶展示，并用金色标签
 		item["member"] = true
 		if models, ok := item["models"].(map[string]any); ok {
-			for _, entry := range models {
-				if modelEntry, ok := entry.(map[string]any); ok {
-					modelEntry["member"] = true
+			for id, entry := range models {
+				modelEntry, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				modelEntry["member"] = true
+				// 控制台勾了"支持破甲"才放行：App 端据此允许对该模型开启破甲
+				if preset, ok := policy.Presets[id]; ok && preset.SupportsArmor {
+					modelEntry["armor"] = true
 				}
 			}
 		}
@@ -5263,6 +5270,25 @@ func mergeMemberProviderIntoModels(payload map[string]any, policy model.Membersh
 	payload["all"] = append(anySlice(payload["all"]), anySlice(member["all"])...)
 	payload["connected"] = append(stringSlice(payload["connected"]), policy.ProviderID)
 	return payload
+}
+
+// memberModelSupportsArmor 判断这次要用的模型是否被控制台标记为"支持破甲"。
+// modelRef 形如 "cc-pro/cc-pro-flash"；只有会员模型才可能被放行，其它模型仍按 DeepSeek 系列判断。
+func (a *API) memberModelSupportsArmor(ctx context.Context, operatorID int64, modelRef string) bool {
+	providerID, modelID, ok := strings.Cut(strings.TrimSpace(modelRef), "/")
+	if !ok || providerID == "" || modelID == "" {
+		return false
+	}
+	record, err := a.store.GetOperatorGatewayKey(ctx, operatorID)
+	if err != nil || record == nil || record.State != model.GatewayKeyStateActive {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(record.Provider), providerID) {
+		return false
+	}
+	policy := a.tierPolicy(ctx, record.DesiredTier)
+	preset, ok := policy.Presets[modelID]
+	return ok && preset.SupportsArmor
 }
 
 // mapSlice 兼容 []any / []map[string]any 两种形态（内存构造 vs JSON 解码）。

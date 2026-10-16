@@ -1658,6 +1658,7 @@ class ChatRepository {
         final modelID = entry.key;
         final modelName = m['name'] as String? ?? modelID;
         final memberModel = memberProvider || m['member'] == true;
+        final armorModel = m['armor'] == true;
         final status = m['status'] as String? ?? 'active';
         if (status == 'deprecated') {
           skippedDeprecated += 1;
@@ -1690,6 +1691,7 @@ class ChatRepository {
             modelID: modelID,
             modelName: modelName,
             member: memberModel,
+            armor: armorModel,
             name: '$name / $modelName',
             variants: variants,
             image: m['image'] == true,

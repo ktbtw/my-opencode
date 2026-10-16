@@ -162,6 +162,9 @@ type ModelPreset struct {
 	OutputModalities []string `json:"output_modalities,omitempty"`
 	ContextLimit     int64    `json:"context_limit,omitempty"`
 	OutputLimit      int64    `json:"output_limit,omitempty"`
+	// SupportsArmor 表示这个模型也支持破甲模式（默认只有 DeepSeek 系列支持）。
+	SupportsArmor bool `json:"supports_armor,omitempty"`
+
 	// ReasoningLevels 是"思考强度"可选档位（多选）：low / medium / high。
 	// 空数组 = 不开启思考；单档位 = 固定强度；多档 = 用户可在 App 里切换。
 	ReasoningLevels []string `json:"reasoning_levels,omitempty"`
@@ -172,7 +175,7 @@ type ModelPreset struct {
 // Empty 表示这个预设什么都没配，可整条丢掉。
 func (p ModelPreset) Empty() bool {
 	return len(p.InputModalities) == 0 && len(p.OutputModalities) == 0 &&
-		p.ContextLimit == 0 && p.OutputLimit == 0 &&
+		p.ContextLimit == 0 && p.OutputLimit == 0 && !p.SupportsArmor &&
 		len(p.ReasoningLevels) == 0 && p.Reasoning == ""
 }
 

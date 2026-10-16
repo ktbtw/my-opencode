@@ -50,6 +50,25 @@ class VideoPlayerControls extends StatelessWidget {
     return '$minutes:$seconds';
   }
 
+  /// 支持秒数、分:秒与时:分:秒；拒绝溢出的分秒和负数。
+  static Duration? parseTimestamp(String input) {
+    final parts = input.trim().split(':');
+    if (parts.isEmpty ||
+        parts.length > 3 ||
+        parts.any((part) => !RegExp(r'^\d+$').hasMatch(part))) {
+      return null;
+    }
+    final numbers = parts.map(int.tryParse).toList();
+    if (numbers.any((value) => value == null)) return null;
+    if (numbers.skip(1).any((value) => value! >= 60)) return null;
+    var seconds = 0;
+    for (final number in numbers) {
+      seconds = seconds * 60 + number!;
+      if (seconds > 31536000) return null;
+    }
+    return Duration(seconds: seconds);
+  }
+
   @override
   Widget build(BuildContext context) {
     final value = controller.value;
@@ -86,6 +105,9 @@ class VideoPlayerControls extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (!isDesktop)
+              Align(alignment: Alignment.centerLeft, child: _TimeLabel(
+                position: formatDuration(position), duration: formatDuration(duration))),
             _SeekBar(
               progress: progress,
               buffered: buffered,
@@ -122,7 +144,7 @@ class VideoPlayerControls extends StatelessWidget {
                   tooltip: '快进 10 秒',
                 ),
                 const SizedBox(width: 6),
-                _TimeLabel(
+                if (isDesktop) _TimeLabel(
                   position: formatDuration(position),
                   duration: formatDuration(duration),
                 ),

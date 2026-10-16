@@ -615,8 +615,9 @@ class _ChatPageState extends ConsumerState<ChatPage>
     } catch (_) {}
   }
 
-  /// 长按 agent 机器人图标：切换 DeepSeek 破甲模式。
-  /// 仅开启时校验模型属于 DeepSeek 系列，关闭始终允许；后端还会按模型二次门控。
+  /// 长按 agent 机器人图标：切换破甲模式。
+  /// 仅开启时校验模型支持破甲（DeepSeek 系列，或控制台标记"支持破甲"的会员模型）；
+  /// 关闭始终允许；后端还会按模型二次门控。
   Future<void> _toggleDeepSeekJailbreak() async {
     final enabling = !ref.read(deepSeekJailbreakProvider(widget.agentId));
     if (enabling) {
@@ -625,8 +626,8 @@ class _ChatPageState extends ConsumerState<ChatPage>
         showAppFeedback(context, message: '请先选择模型再开启破甲模式');
         return;
       }
-      if (!model.isDeepSeek) {
-        showAppFeedback(context, message: '破甲模式仅支持 DeepSeek 系列模型');
+      if (!model.supportsArmor) {
+        showAppFeedback(context, message: '此模型不支持破甲');
         return;
       }
     }
@@ -3784,6 +3785,7 @@ class _ArtifactPreview extends StatelessWidget {
             child: _ArtifactVideoCard(
               taskId: taskId,
               artifact: video,
+              playlist: videos,
               poster: posters
                   .where(
                     (item) =>
@@ -3838,11 +3840,13 @@ class _ArtifactVideoCard extends StatelessWidget {
   final String? taskId;
   final AiArtifact artifact;
   final AiArtifact? poster;
+  final List<AiArtifact> playlist;
 
   const _ArtifactVideoCard({
     required this.taskId,
     required this.artifact,
     this.poster,
+    this.playlist = const [],
   });
 
   Future<void> _open(BuildContext context) async {
@@ -3852,7 +3856,12 @@ class _ArtifactVideoCard extends StatelessWidget {
     // 控制栏常显在画面下方，移动端为沉浸式浮层。
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ArtifactVideoPlayerPage(taskId: id, artifact: artifact),
+        builder: (_) => ArtifactVideoPlayerPage(
+          taskId: id,
+          artifact: artifact,
+          playlist: playlist,
+          initialIndex: playlist.indexWhere((item) => item.id == artifact.id),
+        ),
       ),
     );
   }
@@ -10172,6 +10181,7 @@ class _ModelSelector extends StatelessWidget {
   final ModelInfo? selectedModel;
   final List<ModelInfo> availableModels;
   final void Function(ModelInfo? model) onSelect;
+
   /// 刷新该设备的模型列表：设备上新增模型后，Riverpod 的 future provider
   /// 会一直复用旧缓存，页面自己不做失效就永远看不到新模型。
   final Future<List<ModelInfo>> Function()? onRefreshModels;
@@ -10206,8 +10216,8 @@ class _ModelSelector extends StatelessWidget {
             color: selected == null
                 ? AppColors.border
                 : (isMember
-                    ? AppColors.memberGoldBorder
-                    : AppColors.primaryMuted),
+                      ? AppColors.memberGoldBorder
+                      : AppColors.primaryMuted),
           ),
         ),
         child: Row(
@@ -10980,6 +10990,7 @@ class _ModelPickerSheet extends StatefulWidget {
   final List<ModelInfo> availableModels;
   final ModelInfo? selectedModel;
   final void Function(ModelInfo? model) onSelect;
+
   /// 可选的刷新入口：拉一次设备最新的模型列表。
   final Future<List<ModelInfo>> Function()? onRefresh;
 
@@ -11090,7 +11101,9 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.refresh, size: 18),
                       ),
@@ -11173,8 +11186,8 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                               borderRadius:
                                                   BorderRadius.circular(999),
                                               border: Border.all(
-                                                color: AppColors
-                                                    .memberGoldBorder,
+                                                color:
+                                                    AppColors.memberGoldBorder,
                                               ),
                                             ),
                                             child: Row(
@@ -11183,21 +11196,18 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                                 const Icon(
                                                   Icons.workspace_premium,
                                                   size: 12,
-                                                  color:
-                                                      AppColors.memberGold,
+                                                  color: AppColors.memberGold,
                                                 ),
                                                 const SizedBox(width: 4),
                                                 Text(
                                                   providerLabel,
                                                   maxLines: 1,
-                                                  overflow: TextOverflow
-                                                      .ellipsis,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                   style: const TextStyle(
                                                     fontSize: 11,
-                                                    fontWeight:
-                                                        FontWeight.w700,
-                                                    color: AppColors
-                                                        .memberGold,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: AppColors.memberGold,
                                                     letterSpacing: 0.5,
                                                   ),
                                                 ),
@@ -11268,16 +11278,16 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                               overflow: TextOverflow.ellipsis,
                                               style: TextStyle(
                                                 fontSize: 13,
-                                                fontWeight: isSelected ||
-                                                        m.member
+                                                fontWeight:
+                                                    isSelected || m.member
                                                     ? FontWeight.w600
                                                     : FontWeight.w400,
                                                 color: m.member
                                                     ? AppColors.memberGold
                                                     : (isSelected
-                                                        ? AppColors.primary
-                                                        : AppColors
-                                                            .textPrimary),
+                                                          ? AppColors.primary
+                                                          : AppColors
+                                                                .textPrimary),
                                               ),
                                             ),
                                           ),

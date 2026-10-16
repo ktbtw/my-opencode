@@ -36,11 +36,13 @@ func (a *API) jailbreakEnabledFor(operatorID int64, agentID string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), "true")
 }
 
-// applyDeepSeekJailbreak 在「开关开启」且「模型为 DeepSeek 系列」两个条件同时成立时，
+// applyDeepSeekJailbreak 在「开关开启」且「模型支持破甲」两个条件同时成立时，
 // 把破甲协议整体前置到系统提示词最前面（置顶，而不是追加到末尾），返回是否已生效。
-// 任一条件不成立时原样返回 base，避免影响非 DeepSeek 模型或未开启破甲的会话。
-func applyDeepSeekJailbreak(base, modelRef string, enabled bool) (string, bool) {
-	if !enabled || !isDeepSeekModelRef(modelRef) {
+// 模型支持 = DeepSeek 系列，或该模型在控制台里被标记为支持破甲（allowOverride）。
+// 任一条件不成立时原样返回 base，避免影响不支持的模型或未开启破甲的会话。
+func applyDeepSeekJailbreak(base, modelRef string, enabled bool, allowOverride ...bool) (string, bool) {
+	override := len(allowOverride) > 0 && allowOverride[0]
+	if !enabled || (!isDeepSeekModelRef(modelRef) && !override) {
 		return base, false
 	}
 	protocol := strings.TrimSpace(deepSeekJailbreakPrompt)

@@ -108,6 +108,19 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
     final dayUsedMicro = _num(used['day_cost_micro']);
     final dailyTokens = _num(limits['daily_tokens']);
     final dayTokens = _num(used['day_tokens']);
+    // 剩余值优先用后端算好的（避免四舍五入差异），没给就本地兜底
+    final remainingMicro = _num(data['remaining_cost_micro']) > 0 || totalMicro > 0
+        ? _num(data['remaining_cost_micro'])
+        : (totalMicro - usedMicro).clamp(0, double.infinity).toDouble();
+    final remainingDailyMicro = data['remaining_daily_cost_micro'] != null
+        ? _num(data['remaining_daily_cost_micro'])
+        : (dailyMicro - dayUsedMicro).clamp(0, double.infinity).toDouble();
+    final remainingDailyTokens = data['remaining_daily_tokens'] != null
+        ? _num(data['remaining_daily_tokens'])
+        : (dailyTokens - dayTokens).clamp(0, double.infinity).toDouble();
+    // 任意一种额度存在就展示这张卡（之前漏了"只有日费用"的情况）
+    final hasQuota =
+        dailyTokens > 0 || dailyMicro > 0 || totalMicro > 0;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -140,21 +153,32 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
             ],
           ),
         ),
-        if (active && (dailyTokens > 0 || totalMicro > 0)) ...[
+        if (active && hasQuota) ...[
           const SizedBox(height: 12),
           _card(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (dailyTokens > 0) ...[
+                // 大字余额：有总余额就显示余额，否则显示今日剩余
+                if (totalMicro > 0) ...[
+                  _headline('余额', _amount(remainingMicro, '\$')),
+                  const SizedBox(height: 8),
+                  _quotaRow('总额度', usedMicro, totalMicro, '已用', '剩余'),
+                ] else if (dailyMicro > 0) ...[
+                  _headline('今日剩余', _amount(remainingDailyMicro, '\$')),
+                  const SizedBox(height: 8),
+                  _quotaRow('今日额度', dayUsedMicro, dailyMicro, '已用', '剩余'),
+                ] else if (dailyTokens > 0) ...[
+                  _headline('今日剩余', _amount(remainingDailyTokens, '', count: true)),
+                  const SizedBox(height: 8),
                   _quotaRow('今日额度', dayTokens, dailyTokens, '已用', '剩余', count: true),
-                  const SizedBox(height: 12),
                 ],
-                if (dailyMicro > 0)
+                const SizedBox(height: 12),
+                if (dailyMicro > 0 && totalMicro > 0)
                   _costLine('今日费用', dayUsedMicro, dailyMicro),
-                if (totalMicro > 0)
-                  _costLine('累计费用', usedMicro, totalMicro),
-                const SizedBox(height: 10),
+                if (dailyTokens > 0 && (dailyMicro > 0 || totalMicro > 0))
+                  _costLine('今日 Token 用量', dayTokens, dailyTokens, count: true),
+                const SizedBox(height: 4),
                 Text(
                   _resetText(data['reset_at']),
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -277,8 +301,28 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
     );
   }
 
+  /// 大字余额/剩余：一眼能看到还能用多少
+  Widget _headline(String title, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(title, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        const SizedBox(width: 8),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      ],
+    );
+  }
+
   /// 费用明细：只报数，不画进度条（额度以 token 为准，费用是成本口径）
-  Widget _costLine(String title, double usedValue, double limitValue) {
+  Widget _costLine(String title, double usedValue, double limitValue, {bool count = false}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
@@ -286,7 +330,9 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
           Text(title, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
           const Spacer(),
           Text(
-            '${_amount(usedValue, '\$')} / ${_amount(limitValue, '\$')}',
+            count
+                ? '${_amount(usedValue, '', count: true)} / ${_amount(limitValue, '', count: true)}'
+                : '${_amount(usedValue, '\$')} / ${_amount(limitValue, '\$')}',
             style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
           ),
         ],
