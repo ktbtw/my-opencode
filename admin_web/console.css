@@ -296,27 +296,22 @@ kbd { font: 11px Geist, sans-serif; border: 1px solid var(--border); border-radi
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 
-/* ── 会员模型分级页 ─────────────────────────────────────────────── */
+/* 会员模型页：只补一条"一行三个字段 + 移除按钮"的排布，其余全部复用既有组件类 */
 body.membership-view .toolbar { display: none; }
-body.membership-view .stats-grid { display: none; }
-.membership-page { display: flex; flex-direction: column; gap: 16px; padding: 4px 2px 24px; }
-.membership-gateway { font-size: 13px; color: var(--text-muted, #5b6472); background: var(--surface-2, #f6f7f9); border-radius: 10px; padding: 10px 12px; }
-.membership-gateway code { background: rgba(0,0,0,.05); padding: 1px 5px; border-radius: 4px; }
-.membership-warnings { background: #fff8e6; border: 1px solid #f2d17a; border-radius: 10px; padding: 10px 14px; font-size: 13px; }
-.membership-warnings ul { margin: 6px 0 0 18px; padding: 0; }
-.membership-tier { border: 1px solid var(--border, #e3e6ea); border-radius: 12px; padding: 14px 16px; background: #fff; }
-.membership-tier > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.membership-tier > header strong { font-size: 15px; }
-.membership-toggle { font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
-.membership-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 14px; margin-bottom: 12px; }
-.membership-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted, #5b6472); }
-.membership-grid input { padding: 7px 9px; border: 1px solid var(--border, #e3e6ea); border-radius: 8px; font-size: 13px; }
-.membership-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-.membership-table th, .membership-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border, #eef0f3); font-size: 13px; }
-.membership-table th { font-weight: 600; color: var(--text-muted, #5b6472); font-size: 12px; }
-.membership-table select, .membership-table input { width: 100%; padding: 6px 8px; border: 1px solid var(--border, #e3e6ea); border-radius: 8px; font-size: 13px; }
-.membership-actions { display: flex; align-items: center; gap: 12px; }
-.membership-hint { font-size: 12px; color: var(--text-muted, #5b6472); }
-.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
-.chip.ok { background: #e7f6ec; color: #1c7c3c; }
-.chip.warn { background: #fdecec; color: #b3261e; }
+/* 这个页面的卡片刻意整行显示：卡片内部是三列表单，挤成多列会导致字段换行 */
+body.membership-view .recommendation-grid { grid-template-columns: minmax(0, 1fr); }
+.membership-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.membership-model-row + .membership-model-row { margin-top: 10px; }
+.membership-model-row .compact-button { white-space: nowrap; }
+@media (max-width: 900px) {
+  .membership-model-row { grid-template-columns: 1fr; }
+}

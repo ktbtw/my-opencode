@@ -4722,81 +4722,127 @@ function membershipDollars(micro) {
   return value ? String(value) : "";
 }
 
+function membershipTierLabel(tier) {
+  return tier === "pro" ? "Pro 会员" : tier === "plus" ? "Plus 会员" : "普通用户";
+}
+
+function renderMembershipStats() {
+  const tiers = state.membershipPolicies || [];
+  const entries = tiers.reduce((count, tier) => count + ((tier.entries || []).length), 0);
+  const active = tiers.filter((tier) => tier.enabled).length;
+  el.statTotalLabel.textContent = "等级数";
+  el.statTotal.textContent = tiers.length;
+  el.statCategoriesLabel.textContent = "模型条目";
+  el.statCategories.textContent = entries;
+  el.statEnabledLabel.textContent = "发放中";
+  el.statEnabled.textContent = active;
+  el.statDisabledLabel.textContent = "已停用";
+  el.statDisabled.textContent = tiers.length - active;
+}
+
 function renderMembershipPage() {
   syncViewChrome();
+  renderMembershipStats();
   el.loadingState.classList.add("hidden");
   el.emptyState.classList.add("hidden");
   el.loadError.classList.toggle("hidden", !state.loadError);
   el.loadErrorMessage.textContent = state.loadError || "";
-  const gateway = state.membershipGateway || {};
-  const models = gateway.allowed_models || [];
+  el.grid.classList.remove("hidden");
   el.resultCount.textContent = `${state.membershipPolicies.length} 个等级`;
 
-  const gatewayLine = gateway.configured
-    ? `<span class="chip ok">网关已连接</span> 管理口 <code>${gateway.base_url || "-"}</code> · 设备推理口 <code>${gateway.device_base_url || "-"}</code> · 白名单 ${models.length} 个模型${gateway.secret_configured ? "" : ' · <span class="chip warn">未配置钥匙加密密钥</span>'}`
-    : `<span class="chip warn">未配置网关</span> 需要设置 CC_GATEWAY_BASE_URL 与 CC_GATEWAY_ADMIN_KEY`;
-
-  const warnings = (state.membershipWarnings || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-  const panels = state.membershipPolicies.map((policy, tierIndex) => membershipTierPanel(policy, tierIndex, models)).join("");
+  const gateway = state.membershipGateway || {};
+  const allowed = gateway.allowed_models || [];
+  const warnings = state.membershipWarnings || [];
+  const panels = state.membershipPolicies.map((policy, index) => membershipTierPanel(policy, index, allowed)).join("");
 
   el.grid.innerHTML = `
-    <div class="membership-page">
-      <section class="membership-gateway">${gatewayLine}</section>
-      ${warnings ? `<section class="membership-warnings"><strong>提示</strong><ul>${warnings}</ul></section>` : ""}
-      ${panels}
-      <section class="membership-actions">
-        <button type="button" id="membershipSaveButton" class="primary-button">保存并生效</button>
-        <span class="membership-hint">保存后会自动同步别名到网关，并把该等级会员的设备模型列表刷新（通常几秒内）。</span>
-      </section>
-    </div>`;
-  el.grid.classList.remove("hidden");
+    <article class="recommendation-card">
+      <div class="card-head">
+        <div>
+          <h2>会员模型分级</h2>
+          <p class="muted">按等级配置专属模型：对外模型名（别名）、展示名与额度。</p>
+        </div>
+        <span class="pill">${gateway.configured ? "网关已连接" : "未配置网关"}</span>
+      </div>
+      <p class="card-code multiline">管理口 ${escapeHtml(gateway.base_url || "-")} · 设备推理口 ${escapeHtml(gateway.device_base_url || "-")} · 网关白名单 ${allowed.length} 个模型${gateway.secret_configured ? "" : " · 未配置钥匙加密密钥"}</p>
+      ${warnings.length ? `<p class="card-warning">${warnings.map((item) => escapeHtml(item)).join("；")}</p>` : ""}
+      <div class="card-actions">
+        <button type="button" class="primary-button" id="membershipSaveButton">保存并生效</button>
+        <button type="button" class="secondary-button" data-membership-action="reload">重新读取</button>
+      </div>
+    </article>
+    ${panels}`;
+
   const saveButton = document.getElementById("membershipSaveButton");
   if (saveButton) saveButton.addEventListener("click", saveMembershipPolicies);
   el.grid.querySelectorAll("[data-tier-index]").forEach((node) => {
     node.addEventListener("click", (event) => {
       const action = event.target.closest("[data-membership-action]");
       if (!action) return;
-      const tierIndex = Number(node.dataset.tierIndex);
-      const actionName = action.dataset.membershipAction;
       const row = event.target.closest("[data-entry-index]");
-      const entryIndex = row ? Number(row.dataset.entryIndex) : -1;
-      handleMembershipAction(actionName, tierIndex, entryIndex);
+      handleMembershipAction(action.dataset.membershipAction, Number(node.dataset.tierIndex), row ? Number(row.dataset.entryIndex) : -1);
     });
   });
 }
 
 function membershipTierPanel(policy, tierIndex, models) {
-  const options = (selected) => {
+  const optionsFor = (selected) => {
     const list = models.slice();
     if (selected && !list.includes(selected)) list.unshift(selected);
-    return list.map((id) => `<option value="${escapeHtml(id)}"${id === selected ? " selected" : ""}>${escapeHtml(id)}</option>`).join("");
+    if (!list.length) list.push(selected || "");
+    return list
+      .filter((id) => id !== "")
+      .map((id) => `<option value="${escapeAttr(id)}"${id === selected ? " selected" : ""}>${escapeHtml(id)}</option>`)
+      .join("");
   };
-  const rows = (policy.entries || []).map((entry, entryIndex) => `
-    <tr data-entry-index="${entryIndex}">
-      <td><select data-field="real_model" data-tier="${tierIndex}" data-entry="${entryIndex}">${options(entry.real_model)}</select></td>
-      <td><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeHtml(entry.alias || "")}" placeholder="留空=用真实模型名" /></td>
-      <td><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeHtml(entry.display_name || "")}" placeholder="App 里显示的名字" /></td>
-      <td><button type="button" class="text-button" data-membership-action="remove-entry">移除</button></td>
-    </tr>`).join("");
+  const rows = (policy.entries || [])
+    .map(
+      (entry, entryIndex) => `
+      <div class="membership-model-row" data-entry-index="${entryIndex}">
+        <label><span>真实模型</span><select data-field="real_model" data-tier="${tierIndex}" data-entry="${entryIndex}">${optionsFor(entry.real_model)}</select></label>
+        <label><span>对外模型名（别名）</span><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.alias || "")}" placeholder="留空则用真实模型名" /></label>
+        <label><span>展示名</span><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.display_name || "")}" placeholder="App 里显示的名字" /></label>
+        <button type="button" class="compact-button" data-membership-action="remove-entry">移除</button>
+      </div>`
+    )
+    .join("");
+  const limits = policy.limits || {};
+  const modelCount = (policy.entries || []).length;
   return `
-    <section class="membership-tier" data-tier-index="${tierIndex}">
-      <header>
-        <strong>${policy.tier === "pro" ? "Pro 会员" : policy.tier === "plus" ? "Plus 会员" : "普通用户"}</strong>
-        <label class="membership-toggle"><input type="checkbox" data-field="enabled" data-tier="${tierIndex}" ${policy.enabled ? "checked" : ""} /> 发放专属模型</label>
-      </header>
-      <div class="membership-grid">
-        <label>供应商标识<input data-field="provider_id" data-tier="${tierIndex}" value="${escapeHtml(policy.provider_id || "")}" placeholder="cc-pro" /></label>
-        <label>分组名<input data-field="display_name" data-tier="${tierIndex}" value="${escapeHtml(policy.display_name || "")}" placeholder="高级专线" /></label>
-        <label>日额度（$）<input data-field="daily_cost" data-tier="${tierIndex}" value="${membershipDollars(policy.limits && policy.limits.daily_cost_micro)}" placeholder="8" /></label>
-        <label>总额度（$）<input data-field="max_cost" data-tier="${tierIndex}" value="${membershipDollars(policy.limits && policy.limits.max_cost_micro)}" placeholder="300" /></label>
-        <label>日 token 上限<input data-field="daily_tokens" data-tier="${tierIndex}" value="${policy.limits && policy.limits.daily_tokens ? policy.limits.daily_tokens : ""}" placeholder="8000000" /></label>
+    <article class="recommendation-card" data-tier-index="${tierIndex}">
+      <div class="card-head">
+        <div>
+          <h2>${membershipTierLabel(policy.tier)}</h2>
+          <p class="muted">${escapeHtml(policy.provider_id || "未设置标识")} · ${modelCount} 个模型 · 日 $${membershipDollars(limits.daily_cost_micro) || "不限"} / 总额 $${membershipDollars(limits.max_cost_micro) || "不限"}</p>
+        </div>
+        <span class="pill">${policy.enabled ? "发放中" : "未发放"}</span>
       </div>
-      <table class="membership-table">
-        <thead><tr><th>真实模型（网关白名单内）</th><th>对外模型名（别名）</th><th>展示名</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <button type="button" class="secondary-button" data-membership-action="add-entry">添加模型</button>
-    </section>`;
+      <div class="stack-form">
+        <section class="form-section">
+          <div class="section-title"><h3>基础</h3><span>标识与开关</span></div>
+          <label class="switch-row"><span>发放专属模型</span><input type="checkbox" data-field="enabled" data-tier="${tierIndex}" ${policy.enabled ? "checked" : ""} /></label>
+          <div class="form-grid two">
+            <label><span>供应商标识</span><input data-field="provider_id" data-tier="${tierIndex}" value="${escapeAttr(policy.provider_id || "")}" placeholder="cc-pro" /></label>
+            <label><span>分组名</span><input data-field="display_name" data-tier="${tierIndex}" value="${escapeAttr(policy.display_name || "")}" placeholder="高级专线" /></label>
+          </div>
+        </section>
+        <section class="form-section">
+          <div class="section-title"><h3>额度</h3><span>网关按钥匙记账，超限自动拒绝</span></div>
+          <div class="form-grid three">
+            <label><span>日额度（$）</span><input data-field="daily_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.daily_cost_micro))}" placeholder="8" /></label>
+            <label><span>总额度（$）</span><input data-field="max_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.max_cost_micro))}" placeholder="300" /></label>
+            <label><span>日 token 上限</span><input data-field="daily_tokens" data-tier="${tierIndex}" value="${escapeAttr(limits.daily_tokens ? String(limits.daily_tokens) : "")}" placeholder="8000000" /></label>
+          </div>
+        </section>
+        <section class="form-section">
+          <div class="section-title"><h3>模型包</h3><span>真实模型取自网关白名单；别名就是用户看到的模型名</span></div>
+          ${rows || '<p class="muted">还没有模型，点下面的按钮添加。</p>'}
+          <div class="card-actions">
+            <button type="button" class="secondary-button" data-membership-action="add-entry">添加模型</button>
+          </div>
+        </section>
+      </div>
+    </article>`;
 }
 
 function readMembershipForm() {
@@ -4834,6 +4880,10 @@ function handleMembershipAction(action, tierIndex, entryIndex) {
   const policy = policies[tierIndex];
   if (!policy) return;
   policy.entries = policy.entries || [];
+  if (action === "reload") {
+    loadMembershipPolicies();
+    return;
+  }
   if (action === "add-entry") {
     const gatewayModels = (state.membershipGateway && state.membershipGateway.allowed_models) || [];
     policy.entries.push({ real_model: gatewayModels[0] || "", alias: "", display_name: "" });
