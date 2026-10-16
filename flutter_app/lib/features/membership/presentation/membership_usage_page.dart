@@ -175,19 +175,19 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
               else
                 ...models.map((item) {
                   final map = (item as Map).cast<String, dynamic>();
-                  final id = (map['id'] ?? '').toString();
-                  final name = (map['display_name'] ?? '').toString();
-                  final real = (map['real_model'] ?? '').toString();
+                  final name = (map['name'] ?? '').toString();
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
                       children: [
-                        Text(name.isEmpty ? id : name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                        const SizedBox(height: 2),
-                        Text('模型 ID：$id', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-                        if (real.isNotEmpty)
-                          Text('底层模型：$real', style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                        const Icon(Icons.check_circle_outline, size: 16, color: AppColors.statusSuccess),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                        ),
                       ],
                     ),
                   );

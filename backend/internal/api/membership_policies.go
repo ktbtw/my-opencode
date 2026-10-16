@@ -213,11 +213,12 @@ func (a *API) syncGatewayAliases(ctx context.Context, cfg gatewayConfig, aliases
 	return err
 }
 
-// membershipUsageModel 是额度页要展示的一个模型（对外 id + 展示名 + 真实模型）。
+// membershipUsageModel 是额度页要展示的一个模型。
+//
+// 只给"给人看的名字"：别名 id 与底层真实模型都不下发给用户端——
+// 模型名已经白标，用户不需要、也不应该看到这两个内部标识。
 type membershipUsageModel struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name,omitempty"`
-	RealModel   string `json:"real_model,omitempty"`
+	Name string `json:"name"`
 }
 
 // membershipUsageCounters 是额度页展示的用量数字（网关按钥匙记账的原始字段）。
@@ -257,11 +258,8 @@ func (a *API) GetMembershipUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	models := make([]membershipUsageModel, 0, len(policy.Models))
 	for _, id := range policy.Models {
-		models = append(models, membershipUsageModel{
-			ID:          id,
-			DisplayName: policy.DisplayNameFor(id),
-			RealModel:   policy.RealModels[id],
-		})
+		// 没配展示名时用别名（也是我们自己起的名字），仍然不暴露真实模型
+		models = append(models, membershipUsageModel{Name: policy.DisplayNameFor(id)})
 	}
 	resp["models"] = models
 
