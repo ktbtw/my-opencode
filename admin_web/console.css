@@ -336,3 +336,6 @@ body.membership-view .recommendation-card { overflow: visible; }
 /* 一键预设按钮行 */
 .preset-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 4px; }
 .preset-actions .muted { margin-right: 2px; }
+
+/* 思考强度：7 档一行铺开 */
+.preset-levels { grid-template-columns: repeat(4, minmax(0, 1fr)); }

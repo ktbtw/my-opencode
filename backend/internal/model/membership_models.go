@@ -191,33 +191,47 @@ func (p ModelPreset) Normalize() ModelPreset {
 	if single := strings.ToLower(strings.TrimSpace(p.Reasoning)); single != "" && single != "off" {
 		levels = append(levels, single)
 	}
-	seen := map[string]bool{}
+	// 与 App/opencode 的档位词表对齐：none < minimal < low < medium < high < xhigh < max
+	canonical := map[string]string{
+		"none": "none", "off": "none", "disabled": "none",
+		"minimal": "minimal",
+		"low":     "low",
+		"medium":  "medium", "mid": "medium",
+		"high":  "high",
+		"xhigh": "xhigh", "extra_high": "xhigh",
+		"max": "max", "maximum": "max",
+	}
+	normalized := map[string]bool{}
+	for _, item := range levels {
+		if level, ok := canonical[strings.ToLower(strings.TrimSpace(item))]; ok {
+			normalized[level] = true
+		}
+	}
 	p.ReasoningLevels = nil
-	for _, level := range []string{"low", "medium", "high"} {
-		for _, item := range levels {
-			if strings.ToLower(strings.TrimSpace(item)) == level {
-				if !seen[level] {
-					seen[level] = true
-					p.ReasoningLevels = append(p.ReasoningLevels, level)
-				}
-			}
+	for _, level := range ReasoningLevelOrder {
+		if normalized[level] {
+			p.ReasoningLevels = append(p.ReasoningLevels, level)
 		}
 	}
 	p.Reasoning = ""
 	return p
 }
 
-// ReasoningLevelNames 把档位翻译成控制台/日志用的中文名。
+// ReasoningLevelOrder 是档位的规范顺序（也是控制台/App 的展示顺序）。
+var ReasoningLevelOrder = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// ReasoningLevelLabels 是 App 里用的中文名，控制台保持一致。
+var ReasoningLevelLabels = map[string]string{
+	"none": "关闭", "minimal": "最小", "low": "低", "medium": "中",
+	"high": "高", "xhigh": "极高", "max": "最大",
+}
+
+// ReasoningLevelNames 把档位翻译成控制台/日志用的中文名（与 App 一致）。
 func ReasoningLevelNames(levels []string) []string {
 	names := make([]string, 0, len(levels))
 	for _, level := range levels {
-		switch level {
-		case "low":
-			names = append(names, "低")
-		case "medium":
-			names = append(names, "中")
-		case "high":
-			names = append(names, "高")
+		if label, ok := ReasoningLevelLabels[level]; ok {
+			names = append(names, label)
 		}
 	}
 	return names

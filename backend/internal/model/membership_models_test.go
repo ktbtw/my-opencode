@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // 控制台策略 → 收敛策略：对外用别名，别名映射交给网关。
 func TestTierPolicyToPolicyUsesAliasAndDisplayName(t *testing.T) {
@@ -108,11 +111,21 @@ func TestModelPresetNormalizeAndPolicyMapping(t *testing.T) {
 	if len(preset.InputModalities) != 2 || preset.InputModalities[0] != "image" || preset.InputModalities[1] != "text" {
 		t.Fatalf("多模态应去重排序并过滤未知项：%+v", preset.InputModalities)
 	}
-	if preset.Reasoning != "high" {
-		t.Fatalf("思考强度应小写归一：%q", preset.Reasoning)
+	// 档位现在统一进 ReasoningLevels（旧的单档写法会被并入）
+	if len(preset.ReasoningLevels) != 1 || preset.ReasoningLevels[0] != "high" {
+		t.Fatalf("思考强度应归一成 high 档：%+v", preset.ReasoningLevels)
 	}
-	if (ModelPreset{Reasoning: "whatever"}).Normalize().Reasoning != "" {
-		t.Fatal("未知档位应清空")
+	if len((ModelPreset{Reasoning: "whatever"}).Normalize().ReasoningLevels) != 0 {
+		t.Fatal("未知档位应被丢弃")
+	}
+	// 全套七档：顺序固定为 none→max
+	all := ModelPreset{ReasoningLevels: []string{"max", "low", "none", "xhigh", "minimal", "high", "medium"}}.Normalize()
+	want := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	if strings.Join(all.ReasoningLevels, ",") != strings.Join(want, ",") {
+		t.Fatalf("档位顺序/集合不对：%v", all.ReasoningLevels)
+	}
+	if labels := ReasoningLevelNames(all.ReasoningLevels); labels[0] != "关闭" || labels[6] != "最大" {
+		t.Fatalf("中文名应与 App 一致：%v", labels)
 	}
 
 	tier := MembershipTierPolicy{
@@ -130,7 +143,8 @@ func TestModelPresetNormalizeAndPolicyMapping(t *testing.T) {
 	if !ok {
 		t.Fatalf("预设应按别名索引：%+v", policy.Presets)
 	}
-	if got.ContextLimit != 128000 || got.OutputLimit != 8192 || got.Reasoning != "high" {
+	if got.ContextLimit != 128000 || got.OutputLimit != 8192 ||
+		len(got.ReasoningLevels) != 1 || got.ReasoningLevels[0] != "high" {
 		t.Fatalf("预设内容不对：%+v", got)
 	}
 	// 空预设不该出现

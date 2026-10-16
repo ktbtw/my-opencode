@@ -4894,12 +4894,10 @@ function membershipTierPanel(policy, tierIndex, models) {
             ${modalityBox("output", "image", "图片输出")}
             ${modalityBox("output", "audio", "音频输出")}
           </div>
-          <div class="form-grid three preset-modalities">
-            ${thinkingBox("low", "思考 · 低")}
-            ${thinkingBox("medium", "思考 · 中")}
-            ${thinkingBox("high", "思考 · 高")}
+          <div class="form-grid preset-levels">
+            ${MEMBERSHIP_REASONING_LEVELS.map(([value, label]) => thinkingBox(value, `思考 · ${label}`)).join("")}
           </div>
-          <p class="muted">思考强度可多选：勾一档=固定强度，勾多档=用户可在 App 里切换；都不勾=不开启。留空表示不预设。</p>
+          <p class="muted">思考强度可多选（关闭/最小/低/中/高/极高/最大，与 App 一致）：勾一档=固定强度，勾多档=用户可在 App 里切换；都不勾=不预设该能力。</p>
         </details>
       </div>`;
       }
@@ -5031,10 +5029,21 @@ function readMembershipForm() {
 }
 
 // 一键预设：点击就把整套参数填进这个模型（参考 Flutter 端"OpenCode 预设"的呈现方式）
+// 思考强度档位：与 App（thinking_variant.dart）和 opencode 的词表一致
+const MEMBERSHIP_REASONING_LEVELS = [
+  ["none", "关闭"],
+  ["minimal", "最小"],
+  ["low", "低"],
+  ["medium", "中"],
+  ["high", "高"],
+  ["xhigh", "极高"],
+  ["max", "最大"],
+];
+
 const MEMBERSHIP_PRESET_TEMPLATES = {
   chat:     { label: "通用对话",        input: ["text"],          output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: [] },
-  vision:   { label: "视觉 + 思考",     input: ["text", "image"], output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: ["low", "medium", "high"] },
-  long:     { label: "长上下文",        input: ["text"],          output: ["text"], context: 1000000, maxOutput: 32768, reasoning: ["low", "medium", "high"] },
+  vision:   { label: "视觉 + 思考",     input: ["text", "image"], output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: ["minimal", "low", "medium", "high"] },
+  long:     { label: "长上下文",        input: ["text"],          output: ["text"], context: 1000000, maxOutput: 32768, reasoning: ["low", "medium", "high", "xhigh"] },
   fast:     { label: "短问答 · 无思考", input: ["text"],          output: ["text"], context: 32000,   maxOutput: 4096,  reasoning: [] },
 };
 
@@ -5050,8 +5059,10 @@ function inferMembershipPreset(entry) {
   } else if (/(200k|\b200000\b)/.test(text)) {
     preset.context = 200000;
   }
-  if (/(reason|thinking|o1|o3|o4|r1|deepseek|qwq|glm-z|flash)/.test(text)) {
-    preset.reasoning = ["low", "medium", "high"];
+  if (/(gpt-5\.?2|gpt-5\.?3|xhigh|max-effort)/.test(text)) {
+    preset.reasoning = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+  } else if (/(reason|thinking|o1|o3|o4|r1|deepseek|qwq|glm-z|flash)/.test(text)) {
+    preset.reasoning = ["minimal", "low", "medium", "high"];
   }
   if (/(audio|voice|tts)/.test(text)) {
     preset.input = Array.from(new Set([...preset.input, "audio"]));
