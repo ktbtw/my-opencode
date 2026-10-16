@@ -4810,8 +4810,8 @@ function membershipTierPanel(policy, tierIndex, models) {
       (entry, entryIndex) => `
       <div class="membership-model-row" data-entry-index="${entryIndex}">
         <label><span>真实模型</span><select data-field="real_model" data-tier="${tierIndex}" data-entry="${entryIndex}">${optionsFor(entry.real_model)}</select></label>
-        <label><span>对外模型名（别名）</span><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.alias || "")}" placeholder="留空则用真实模型名" /></label>
-        <label><span>展示名</span><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.display_name || "")}" placeholder="App 里显示的名字" /></label>
+        <label><span>对外模型名（别名，= 用户请求里的模型 id）</span><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.alias || "")}" placeholder="留空则用真实模型名" /></label>
+        <label><span>展示名（只给界面看，不影响调用）</span><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.display_name || "")}" placeholder="例如 高级专线 · DeepSeek Flash" /></label>
         <button type="button" class="compact-button" data-membership-action="remove-entry">移除</button>
       </div>`
     )
@@ -4845,7 +4845,7 @@ function membershipTierPanel(policy, tierIndex, models) {
           </div>
         </section>
         <section class="form-section">
-          <div class="section-title"><h3>模型包</h3><span>真实模型取自网关白名单；别名就是用户看到的模型名</span></div>
+          <div class="section-title"><h3>模型包</h3><span>真实模型＝网关转发用；别名＝用户请求里的 id；展示名＝界面文字</span></div>
           ${rows || '<p class="muted">还没有模型，点下面的按钮添加。</p>'}
           <div class="card-actions">
             <button type="button" class="secondary-button" data-membership-action="add-entry">添加模型</button>
