@@ -10185,7 +10185,11 @@ class _ModelSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = selectedModel?.modelID ?? '默认模型';
+    final selected = selectedModel;
+    final isMember = selected?.member ?? false;
+    final label = selected == null
+        ? '默认模型'
+        : (isMember ? selected.displayModelName : selected.modelID);
     return InkWell(
       onTap: () => _showModelPicker(context),
       borderRadius: AppRadius.smRadius,
@@ -10194,14 +10198,16 @@ class _ModelSelector extends StatelessWidget {
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: selectedModel != null
-              ? AppColors.primaryLight
-              : AppColors.inputBackground,
+          color: selected == null
+              ? AppColors.inputBackground
+              : (isMember ? AppColors.memberGoldLight : AppColors.primaryLight),
           borderRadius: AppRadius.smRadius,
           border: Border.all(
-            color: selectedModel != null
-                ? AppColors.primaryMuted
-                : AppColors.border,
+            color: selected == null
+                ? AppColors.border
+                : (isMember
+                    ? AppColors.memberGoldBorder
+                    : AppColors.primaryMuted),
           ),
         ),
         child: Row(
@@ -10210,18 +10216,19 @@ class _ModelSelector extends StatelessWidget {
             Icon(
               Icons.auto_awesome_outlined,
               size: 13,
-              color: selectedModel != null
-                  ? AppColors.primary
-                  : AppColors.textSecondary,
+              color: selected == null
+                  ? AppColors.textSecondary
+                  : (isMember ? AppColors.memberGold : AppColors.primary),
             ),
             const SizedBox(width: 4),
             Text(
               label,
               style: TextStyle(
                 fontSize: 12,
-                color: selectedModel != null
-                    ? AppColors.primary
-                    : AppColors.textSecondary,
+                fontWeight: isMember ? FontWeight.w600 : FontWeight.w400,
+                color: selected == null
+                    ? AppColors.textSecondary
+                    : (isMember ? AppColors.memberGold : AppColors.primary),
               ),
             ),
             const SizedBox(width: 3),
@@ -11027,11 +11034,18 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
           m.name.toLowerCase().contains(q);
     }).toList();
 
-    // 按 providerID 分组
+    // 按 providerID 分组；会员 provider 置顶展示
     final grouped = <String, List<ModelInfo>>{};
     for (final m in filtered) {
       grouped.putIfAbsent(m.providerID, () => []).add(m);
     }
+    final memberKeys = <String>[];
+    final otherKeys = <String>[];
+    for (final key in grouped.keys) {
+      final isMember = grouped[key]!.any((m) => m.member);
+      (isMember ? memberKeys : otherKeys).add(key);
+    }
+    final providerKeys = <String>[...memberKeys, ...otherKeys];
     final signature =
         '$_search|${_models.length}|${filtered.length}|${grouped.length}';
     if (signature != _lastLoggedSignature) {
@@ -11132,10 +11146,12 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                   )
                 : ListView.builder(
                     controller: scrollCtrl,
-                    itemCount: grouped.length,
+                    itemCount: providerKeys.length,
                     itemBuilder: (_, gi) {
-                      final provider = grouped.keys.elementAt(gi);
+                      final provider = providerKeys[gi];
                       final models = grouped[provider]!;
+                      final isMemberGroup = models.any((m) => m.member);
+                      final providerLabel = models.first.displayProviderName;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -11144,17 +11160,62 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                             child: Row(
                               children: [
                                 Expanded(
-                                  child: Text(
-                                    provider,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.textMuted,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
+                                  child: isMemberGroup
+                                      ? Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 3,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.memberGoldLight,
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: AppColors
+                                                    .memberGoldBorder,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(
+                                                  Icons.workspace_premium,
+                                                  size: 12,
+                                                  color:
+                                                      AppColors.memberGold,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  providerLabel,
+                                                  maxLines: 1,
+                                                  overflow: TextOverflow
+                                                      .ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight:
+                                                        FontWeight.w700,
+                                                    color: AppColors
+                                                        .memberGold,
+                                                    letterSpacing: 0.5,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        )
+                                      : Text(
+                                          provider,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.textMuted,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
                                 ),
                                 IconButton(
                                   tooltip: '打开供应商控制台',
@@ -11200,17 +11261,23 @@ class _ModelPickerSheetState extends State<_ModelPickerSheet> {
                                         children: [
                                           Flexible(
                                             child: Text(
-                                              m.modelID,
+                                              m.member
+                                                  ? m.displayModelName
+                                                  : m.modelID,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
                                               style: TextStyle(
                                                 fontSize: 13,
-                                                fontWeight: isSelected
+                                                fontWeight: isSelected ||
+                                                        m.member
                                                     ? FontWeight.w600
                                                     : FontWeight.w400,
-                                                color: isSelected
-                                                    ? AppColors.primary
-                                                    : AppColors.textPrimary,
+                                                color: m.member
+                                                    ? AppColors.memberGold
+                                                    : (isSelected
+                                                        ? AppColors.primary
+                                                        : AppColors
+                                                            .textPrimary),
                                               ),
                                             ),
                                           ),

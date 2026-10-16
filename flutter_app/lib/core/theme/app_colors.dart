@@ -18,6 +18,11 @@ class AppColors {
 
   // 主色 - 蓝色系
   static const Color primary = Color(0xFF2563EB);
+
+  // 会员专属：金色标签与金色模型名
+  static const Color memberGold = Color(0xFFC9A227);
+  static const Color memberGoldLight = Color(0xFFFFF6DA);
+  static const Color memberGoldBorder = Color(0xFFE8CE7A);
   static const Color primaryHover = Color(0xFF1D4ED8);
   static const Color primaryLight = Color(0xFFEFF6FF);
   static const Color primaryMuted = Color(0xFFBFD7FF);

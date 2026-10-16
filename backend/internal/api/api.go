@@ -5250,6 +5250,15 @@ func mergeMemberProviderIntoModels(payload map[string]any, policy model.Membersh
 	for _, item := range memberAll {
 		// 供应商名（控制台里配的，默认"会员专属"），不是 provider id
 		item["name"] = membershipProviderName(policy)
+		// 标记为会员 provider：App 端据此置顶展示，并用金色标签
+		item["member"] = true
+		if models, ok := item["models"].(map[string]any); ok {
+			for _, entry := range models {
+				if modelEntry, ok := entry.(map[string]any); ok {
+					modelEntry["member"] = true
+				}
+			}
+		}
 	}
 	payload["all"] = append(anySlice(payload["all"]), anySlice(member["all"])...)
 	payload["connected"] = append(stringSlice(payload["connected"]), policy.ProviderID)

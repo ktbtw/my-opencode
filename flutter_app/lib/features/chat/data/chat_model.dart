@@ -1937,6 +1937,15 @@ class ImageGenerationCapabilities {
 // 可用模型信息
 class ModelInfo {
   final String providerID;
+
+  /// 供应商展示名（例如"会员专属"）；为空时回退 providerID。
+  final String providerName;
+
+  /// 模型展示名（例如"肥美大鲸鱼"）；为空时回退 modelID。
+  final String modelName;
+
+  /// 是否会员专属模型：列表里置顶，并用金色展示。
+  final bool member;
   final String providerBaseUrl;
   final String providerConsoleUrl;
   final String modelID;
@@ -1950,9 +1959,12 @@ class ModelInfo {
 
   const ModelInfo({
     required this.providerID,
+    this.providerName = '',
     this.providerBaseUrl = '',
     this.providerConsoleUrl = '',
     required this.modelID,
+    this.modelName = '',
+    this.member = false,
     required this.name,
     this.variants = const [],
     this.image = false,
@@ -1963,6 +1975,14 @@ class ModelInfo {
   });
 
   bool get hasVariants => variants.isNotEmpty;
+
+  /// 列表里显示的供应商名（会员专属这种），没配就用 id。
+  String get displayProviderName =>
+      providerName.trim().isEmpty ? providerID : providerName.trim();
+
+  /// 列表里显示的模型名（肥美大鲸鱼这种），没配就用 id。
+  String get displayModelName =>
+      modelName.trim().isEmpty ? modelID : modelName.trim();
 
   String get contextWindowLabel => formatContextWindow(contextLimit);
 

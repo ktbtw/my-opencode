@@ -1643,6 +1643,8 @@ class ChatRepository {
         continue;
       }
       final name = p['name'] as String? ?? providerID;
+      // 会员 provider：平台会打 member 标记，App 端置顶并用金色展示
+      final memberProvider = p['member'] == true;
       final providerBaseUrl = _providerUrlValue(
         p['base_url'] ?? p['baseUrl'] ?? p['api'],
       );
@@ -1655,6 +1657,7 @@ class ChatRepository {
         if (m is! Map<String, dynamic>) continue;
         final modelID = entry.key;
         final modelName = m['name'] as String? ?? modelID;
+        final memberModel = memberProvider || m['member'] == true;
         final status = m['status'] as String? ?? 'active';
         if (status == 'deprecated') {
           skippedDeprecated += 1;
@@ -1681,9 +1684,12 @@ class ChatRepository {
         result.add(
           ModelInfo(
             providerID: providerID,
+            providerName: name,
             providerBaseUrl: providerBaseUrl,
             providerConsoleUrl: providerConsoleUrl,
             modelID: modelID,
+            modelName: modelName,
+            member: memberModel,
             name: '$name / $modelName',
             variants: variants,
             image: m['image'] == true,
