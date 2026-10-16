@@ -33,12 +33,17 @@ export const layer = Layer.effect(
     return Service.of({
       environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model) {
         const ctx = yield* InstanceState.context
+        // 网关别名（cc-pro-flash 这种内部标识）绝不能进提示词：
+        // 模型会把它当身份自报，等于把白标后的内部模型名泄露给用户。
+        // 有展示名就用展示名；展示名等于 id（说明没配）时干脆不写这行。
+        const displayName = (model.name ?? "").trim()
+        const modelLabel =
+          displayName && displayName !== model.api.id
+            ? `Runtime model label: ${displayName} (not an identity).`
+            : undefined
         return [
           [
-            // 网关模型标签：只作为运行环境事实给出，不做身份断言。
-            // 旧文案 "You are powered by the model named …" 会被模型读成身份声明，
-            // 与工作区约定/角色提示词的人设抢身份（实测会出现「我是 X 模型」式混答）。
-            `Runtime model label: ${model.api.id} (provider ${model.providerID}; gateway alias, not an identity).`,
+            ...(modelLabel ? [modelLabel] : []),
             `Here is some useful information about the environment you are running in:`,
             `<env>`,
             `  Working directory: ${ctx.directory}`,
