@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -250,3 +251,64 @@ func TestConvergeWithoutModelsSuspends(t *testing.T) {
 }
 
 var _ io.Reader // 保持导入稳定（httptest 请求体在别处使用）
+
+// 打真实网关的端到端用例：验证「平台契约」与线上网关完全对得上。
+//
+// 跑法（需先打通到网关管理口的通道，例如 SSH -L 127.0.0.1:13051:127.0.0.1:3051）：
+//
+//	CC_GATEWAY_E2E=1 CC_GATEWAY_BASE_URL=http://127.0.0.1:13051 \
+//	CC_GATEWAY_ADMIN_KEY=<admin.key> CC_GATEWAY_KEY_SECRET=e2e \
+//	CC_GATEWAY_POLICIES='{"free":{"models":["z-ai/glm-5.3-flash"],"limits":{"daily_cost_micro":250000}}}' \
+//	go test ./internal/api -run TestConvergeAgainstRealGateway -v
+func TestConvergeAgainstRealGateway(t *testing.T) {
+	if os.Getenv("CC_GATEWAY_E2E") != "1" {
+		t.Skip("未开启：需要 CC_GATEWAY_E2E=1 且能访问网关管理口")
+	}
+	const operatorID int64 = 424242
+	cfg := loadGatewayConfig()
+	if !cfg.enabled() {
+		t.Fatal("需要 CC_GATEWAY_BASE_URL 与 CC_GATEWAY_ADMIN_KEY")
+	}
+	policy := cfg.policyFor("free")
+	if !policy.GatewayEnabled() {
+		t.Fatal("需要为 free 等级配置模型包（CC_GATEWAY_POLICIES）")
+	}
+
+	api := &API{store: store.NewMemory(nil), broker: broker.New()}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 清场：上一次失败留下的同名钥匙
+	if view, found, err := api.gatewayFindKeyByName(ctx, cfg, gatewayKeyName(operatorID)); err == nil && found {
+		_ = api.gatewayDeleteKey(ctx, cfg, view.ID)
+	}
+
+	record, err := api.ConvergeOperatorMembership(ctx, operatorID)
+	if err != nil {
+		t.Fatalf("对真实网关收敛失败：%v", err)
+	}
+	if record.State != model.GatewayKeyStateActive || record.KeyID == "" {
+		t.Fatalf("收敛结果异常：state=%s key_id=%q last_error=%s", record.State, record.KeyID, record.LastError)
+	}
+
+	view, found, err := api.gatewayFindKeyByName(ctx, cfg, gatewayKeyName(operatorID))
+	if err != nil || !found {
+		t.Fatalf("真实网关上应能按名字查到钥匙：found=%v err=%v", found, err)
+	}
+	if !sameStringSet(view.Models, policy.Models) {
+		t.Fatalf("网关上的模型包与策略不一致：gateway=%v policy=%v", view.Models, policy.Models)
+	}
+	if view.Limits != policy.Limits {
+		t.Fatalf("网关上的额度与策略不一致：gateway=%+v policy=%+v", view.Limits, policy.Limits)
+	}
+	t.Logf("✅ 真实网关钥匙已建：id=%s models=%v limits=%+v", view.ID, view.Models, view.Limits)
+
+	// 撤销路径：非会员时应当把设备 provider 撤掉并删除钥匙
+	if _, err := api.deprovisionOperator(ctx, cfg, *record, policy, "端到端用例收尾"); err != nil {
+		t.Fatalf("撤销失败：%v", err)
+	}
+	if _, found, _ := api.gatewayFindKeyByName(ctx, cfg, gatewayKeyName(operatorID)); found {
+		t.Fatal("撤销后钥匙应已从网关删除")
+	}
+	t.Log("✅ 撤销完成：网关钥匙已删除")
+}
