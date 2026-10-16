@@ -1,0 +1,76 @@
+package aiconfig
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// 会员 provider：读的时候要隐藏（列表 + 展示 JSON），写的时候要保留。
+func TestManagedProviderHiddenOnReadAndPreservedOnWrite(t *testing.T) {
+	raw := `{
+	  "provider": {
+	    "cc-pro": {
+	      "x-chat-codex-managed": "membership",
+	      "options": {"apiKey": "sk-member-key", "baseURL": "http://114.66.31.184:3050/v1"},
+	      "models": {"cc-pro-flash": {"name": "高级专线 · DeepSeek Flash"}}
+	    },
+	    "my-own": {
+	      "options": {"apiKey": "sk-user-key", "baseURL": "https://api.example.com/v1"},
+	      "models": {"gpt-x": {"name": "自己配的"}}
+	    }
+	  },
+	  "model": "my-own/gpt-x"
+	}`
+
+	info, err := parseInfo("/tmp/opencode.json", raw)
+	if err != nil {
+		t.Fatalf("parseInfo: %v", err)
+	}
+	for _, provider := range info.Providers {
+		if provider.ID == "cc-pro" {
+			t.Fatal("托管的会员 provider 不应出现在 provider 列表里")
+		}
+	}
+	if len(info.Providers) != 1 || info.Providers[0].ID != "my-own" {
+		t.Fatalf("应只剩用户自己的 provider：%+v", info.Providers)
+	}
+	if strings.Contains(info.RawJSON, "cc-pro") || strings.Contains(info.PreviewJSON, "cc-pro") {
+		t.Fatalf("展示用 JSON 不应包含托管 provider：%s", info.RawJSON)
+	}
+	if strings.Contains(info.RawJSON, "sk-member-key") {
+		t.Fatalf("展示用 JSON 不应包含会员密钥：%s", info.RawJSON)
+	}
+	if !strings.Contains(info.RawJSON, "my-own") {
+		t.Fatalf("用户自己的 provider 必须保留：%s", info.RawJSON)
+	}
+
+	// 保存用户编辑后的 JSON（里面没有托管 provider）→ 必须把托管 provider 合回去
+	var current, incoming map[string]any
+	if err := json.Unmarshal([]byte(raw), &current); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(`{"provider":{"my-own":{"options":{"apiKey":"sk-new"}}},"model":"my-own/gpt-x"}`), &incoming); err != nil {
+		t.Fatal(err)
+	}
+	restoreManagedProviders(incoming, current)
+
+	providers := asMap(incoming["provider"])
+	if _, ok := providers["cc-pro"]; !ok {
+		t.Fatal("保存后托管 provider 被冲掉了")
+	}
+	if got := asMap(providers["cc-pro"])[managedProviderKey]; got != managedProviderValue {
+		t.Fatalf("托管标记应保留：%v", got)
+	}
+	if asMap(asMap(providers["my-own"])["options"])["apiKey"] != strings.TrimSpace("sk-new") {
+		t.Fatal("用户自己的改动应保留")
+	}
+}
+
+// 没有托管 provider 时不能误伤：JSON 原样返回。
+func TestStripManagedProvidersNoopWithoutMarker(t *testing.T) {
+	raw := `{"provider":{"relay":{"models":{"a":{"name":"A"}}}}}`
+	if got := stripManagedProviders(raw, managedProviderIDs(map[string]any{})); got != raw {
+		t.Fatalf("无托管 provider 时不应改写：%s", got)
+	}
+}

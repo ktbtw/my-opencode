@@ -1043,6 +1043,7 @@ func decodeSaveAIConfigInput(payload any) (model.DeviceAIConfigInfo, error) {
 		APIMode    string                    `json:"api_mode"`
 		Model      string                    `json:"model"`
 		Force      bool                      `json:"force"`
+		Managed    bool                      `json:"managed"`
 		Models     []model.DeviceAIModelInfo `json:"models"`
 		Config     struct {
 			Provider   string                    `json:"provider"`
@@ -1051,6 +1052,7 @@ func decodeSaveAIConfigInput(payload any) (model.DeviceAIConfigInfo, error) {
 			APIKey     string                    `json:"api_key"`
 			APIMode    string                    `json:"api_mode"`
 			Model      string                    `json:"model"`
+			Managed    bool                      `json:"managed"`
 			Models     []model.DeviceAIModelInfo `json:"models"`
 		} `json:"config"`
 	}
@@ -1073,6 +1075,7 @@ func decodeSaveAIConfigInput(payload any) (model.DeviceAIConfigInfo, error) {
 		APIMode:      firstNonEmpty(input.Config.APIMode, input.APIMode),
 		Model:        firstNonEmpty(input.Config.Model, input.Model),
 		Force:        input.Force,
+		Managed:      input.Managed || input.Config.Managed,
 		Models:       models,
 	}, nil
 }

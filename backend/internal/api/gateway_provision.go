@@ -423,6 +423,9 @@ func (a *API) deliverMemberProvider(ctx context.Context, cfg gatewayConfig, oper
 			_, _ = a.requestDeviceAIConfig(ctx, operatorID, launcherID, cleanupID, "device.ai_config.clear_provider", cleanup)
 		}
 		payload := model.DeviceAIConfigSavePayload{
+			// 会员 provider 由平台托管：启动器侧会对用户隐藏（AI 配置页 + 全局 JSON），
+			// 保存 JSON 时也会被保留，避免被用户编辑冲掉。
+			Managed:  true,
 			AgentID:  machine.MachineID,
 			Provider: policy.ProviderID,
 			BaseURL:  baseURL,

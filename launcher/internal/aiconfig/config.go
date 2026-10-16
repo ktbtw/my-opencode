@@ -28,6 +28,67 @@ type provider struct {
 	ConsoleURL string            `json:"x-operit-console-url,omitempty"`
 }
 
+// 由会员服务下发的 provider：对用户隐藏（AI 配置页与全局 JSON 都不显示），
+// 但保存时必须保留——用户看不到它，编辑 JSON 时也不应该把它冲掉。
+const (
+	managedProviderKey   = "x-chat-codex-managed"
+	managedProviderValue = "membership"
+)
+
+// managedProviderIDs 找出由会员服务托管的 provider。
+func managedProviderIDs(parsed map[string]any) map[string]bool {
+	out := map[string]bool{}
+	for id, value := range asMap(parsed["provider"]) {
+		if strings.TrimSpace(asString(asMap(value)[managedProviderKey])) == managedProviderValue {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+// stripManagedProviders 从原始 JSON 里摘掉托管 provider（只用于展示）。
+func stripManagedProviders(raw string, managed map[string]bool) string {
+	if len(managed) == 0 {
+		return raw
+	}
+	var parsed map[string]any
+	if decodeConfig([]byte(raw), &parsed) != nil {
+		return raw
+	}
+	providers := asMap(parsed["provider"])
+	for id := range managed {
+		delete(providers, id)
+	}
+	if len(providers) == 0 {
+		delete(parsed, "provider")
+	} else {
+		parsed["provider"] = providers
+	}
+	out, err := marshalConfig(parsed)
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
+
+// restoreManagedProviders 把托管 provider 从当前配置合并回用户提交的内容。
+func restoreManagedProviders(dst, current map[string]any) {
+	if dst == nil || current == nil {
+		return
+	}
+	managed := managedProviderIDs(current)
+	if len(managed) == 0 {
+		return
+	}
+	providers := ensureMapField(dst, "provider")
+	currentProviders := asMap(current["provider"])
+	for id := range managed {
+		if block, ok := currentProviders[id]; ok {
+			providers[id] = block
+		}
+	}
+}
+
 type rule struct {
 	Pattern    *regexp.Regexp
 	Modalities *model.DeviceAIModalities
@@ -396,6 +457,11 @@ func parseInfo(configPath string, raw string) (*model.DeviceAIConfigInfo, error)
 	if err := decodeConfig([]byte(raw), &parsed); err != nil {
 		return nil, err
 	}
+	// 会员服务下发的 provider 对用户隐藏：不进 provider 列表，也不出现在展示的 JSON 里
+	var rawMap map[string]any
+	_ = decodeConfig([]byte(raw), &rawMap)
+	managed := managedProviderIDs(rawMap)
+	displayRaw := stripManagedProviders(raw, managed)
 	providerID := selectedProvider(parsed.Model, parsed.Provider)
 	baseURL := ""
 	consoleURL := ""
@@ -410,6 +476,9 @@ func parseInfo(configPath string, raw string) (*model.DeviceAIConfigInfo, error)
 	sort.Strings(providerIDs)
 	providers := make([]model.DeviceAIProviderInfo, 0, len(providerIDs))
 	for _, id := range providerIDs {
+		if managed[id] {
+			continue // 托管的会员 provider 不展示
+		}
 		item := parsed.Provider[id]
 		providerModels := parseModels(item.Models, id)
 		providerBaseURL := providerBaseURL(item)
@@ -440,8 +509,8 @@ func parseInfo(configPath string, raw string) (*model.DeviceAIConfigInfo, error)
 		APIMode:      apiMode,
 		Model:        modelID,
 		Models:       models,
-		RawJSON:      raw,
-		PreviewJSON:  scrub(raw),
+		RawJSON:      displayRaw,
+		PreviewJSON:  scrub(displayRaw),
 		Providers:    providers,
 		ChangedKeys:  []string{"provider", "model"},
 	}, nil
@@ -532,7 +601,7 @@ func Save(input model.DeviceAIConfigInfo) (*model.DeviceAIConfigInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Models, input.Force, false)
+	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Models, input.Force, false, input.Managed)
 	raw, err := marshalConfig(updated)
 	if err != nil {
 		return nil, err
@@ -551,6 +620,10 @@ func SaveText(text string) (*model.DeviceAIConfigInfo, error) {
 	var parsed map[string]any
 	if err := decodeConfig([]byte(trimmed), &parsed); err != nil {
 		return nil, err
+	}
+	// 用户看不到托管 provider，这里把当前的合回去，避免"编辑 JSON 后会员模型消失"
+	if _, _, current, err := readRaw(); err == nil {
+		restoreManagedProviders(parsed, current)
 	}
 	if _, _, err := opencodeconfig.WriteMap(parsed); err != nil {
 		return nil, err
@@ -694,7 +767,7 @@ func LoadWithModels(input model.DeviceAIConfigInput) (*model.DeviceAIConfigInfo,
 	if err != nil {
 		return nil, err
 	}
-	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKey, input.APIMode, input.Model, models, len(models) > 0, true)
+	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKey, input.APIMode, input.Model, models, len(models) > 0, true, input.Managed)
 	raw, err := marshalConfig(updated)
 	if err != nil {
 		return nil, err
@@ -950,7 +1023,7 @@ func joinModelRef(providerID, modelID string) string {
 	return providerID + "/" + modelID
 }
 
-func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, apiKey, apiMode, modelID string, models []model.DeviceAIModelInfo, force, preserveOverrides bool) map[string]any {
+func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, apiKey, apiMode, modelID string, models []model.DeviceAIModelInfo, force, preserveOverrides bool, managed bool) map[string]any {
 	if parsed == nil {
 		parsed = map[string]any{}
 	}
@@ -982,6 +1055,12 @@ func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, ap
 	if strings.TrimSpace(apiKey) != "" && !strings.Contains(apiKey, "****") {
 		options := ensureMapField(providerCfg, "options")
 		options["apiKey"] = strings.TrimSpace(apiKey)
+	}
+	// 标记由会员服务托管：读时隐藏、写时保留
+	if managed {
+		providerCfg[managedProviderKey] = managedProviderValue
+	} else {
+		delete(providerCfg, managedProviderKey)
 	}
 	options := ensureMapField(providerCfg, "options")
 	options["apiMode"] = effectiveAPIMode(apiMode, append([]string{modelID}, modelIDs(models)...)...)
