@@ -98,3 +98,26 @@ func TestProviderNameFromPlatform(t *testing.T) {
 		t.Fatalf("不应覆盖已有名字，实际 %q", got)
 	}
 }
+
+// 迁移场景：老启动器写的托管块没有标记，按平台给的 provider id 也要能清掉。
+func TestDropManagedBlockByProviderIDWithoutMarker(t *testing.T) {
+	parsed := map[string]any{"provider": map[string]any{
+		"cc-pro": map[string]any{"name": "cc-pro"},
+		"my-own": map[string]any{"name": "自己用的"},
+	}}
+	out, changed := dropManagedBlocksFromUserConfig(parsed, "cc-pro")
+	if !changed {
+		t.Fatal("应识别出需要清理")
+	}
+	providers := asMap(out["provider"])
+	if _, ok := providers["cc-pro"]; ok {
+		t.Fatal("没有标记但平台指明托管的 provider 也应被清掉")
+	}
+	if _, ok := providers["my-own"]; !ok {
+		t.Fatal("用户自己的 provider 不能被误删")
+	}
+	// 传了不存在的 id 且没有标记 → 不该动文件
+	if _, changed := dropManagedBlocksFromUserConfig(map[string]any{"provider": map[string]any{"x": map[string]any{}}}, "cc-pro"); changed {
+		t.Fatal("没有可清理项时不应改动配置")
+	}
+}

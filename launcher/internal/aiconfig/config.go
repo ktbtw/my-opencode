@@ -665,9 +665,18 @@ func removeManagedProvider(providerID string) error {
 }
 
 // dropManagedBlocksFromUserConfig 把用户配置里遗留的托管 provider 摘掉（迁移用）。
-func dropManagedBlocksFromUserConfig(parsed map[string]any) (map[string]any, bool) {
+// 除了带标记的，还要按平台明确告知的 provider id 摘——老版本启动器写的块没有标记。
+func dropManagedBlocksFromUserConfig(parsed map[string]any, providerIDs ...string) (map[string]any, bool) {
 	managed := managedProviderIDs(parsed)
+	for _, id := range providerIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			managed[id] = true
+		}
+	}
 	if len(managed) == 0 {
+		return parsed, false
+	}
+	if _, exists := asMap(parsed["provider"])[strings.TrimSpace(firstNonEmpty(providerIDs...))]; !exists && len(managedProviderIDs(parsed)) == 0 {
 		return parsed, false
 	}
 	providers := asMap(parsed["provider"])
@@ -696,7 +705,7 @@ func Save(input model.DeviceAIConfigInfo) (*model.DeviceAIConfigInfo, error) {
 		if err := writeManagedProvider(asMap(block), input.Provider); err != nil {
 			return nil, err
 		}
-		cleaned, changed := dropManagedBlocksFromUserConfig(parsed)
+		cleaned, changed := dropManagedBlocksFromUserConfig(parsed, input.Provider)
 		if changed {
 			cleanedRaw, err := marshalConfig(cleaned)
 			if err != nil {
