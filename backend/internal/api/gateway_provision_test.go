@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -415,5 +416,168 @@ func TestGatewayDeviceModelsSingleReasoningLevel(t *testing.T) {
 	}
 	if _, ok := models[0].Variants["medium"]; !ok {
 		t.Fatalf("档位不对：%+v", models[0].Variants)
+	}
+}
+
+// 会员模型要出现在给 App 的模型列表里（供应商名与展示名、参数预设都要带上）。
+func TestMergeMemberProviderIntoModels(t *testing.T) {
+	policy := model.MembershipModelPolicy{
+		Tier:        "pro",
+		ProviderID:  "cc-pro",
+		DisplayName: "会员专属",
+		Models:      []string{"cc-pro-flash"},
+		ModelNames:  map[string]string{"cc-pro-flash": "肥美大鲸鱼"},
+		RealModels:  map[string]string{"cc-pro-flash": "deepseek-v4.1-flash-free"},
+		Presets: map[string]model.ModelPreset{
+			"cc-pro-flash": {ContextLimit: 1000000, OutputLimit: 384000, ReasoningLevels: []string{"low", "medium", "high", "max"}},
+		},
+	}
+	payload := map[string]any{
+		"connected": []string{"ds22"},
+		"all":       []map[string]any{{"id": "ds22", "name": "ds22"}},
+		"default":   map[string]any{},
+	}
+	out := mergeMemberProviderIntoModels(payload, policy, "http://114.66.31.184:3050/v1")
+
+	connected := stringSlice(out["connected"])
+	if len(connected) != 2 || connected[1] != "cc-pro" {
+		t.Fatalf("会员 provider 应进 connected：%v", connected)
+	}
+	var member map[string]any
+	for _, item := range mapSlice(out["all"]) {
+		if id, _ := item["id"].(string); id == "cc-pro" {
+			member = item
+		}
+	}
+	if member == nil {
+		t.Fatalf("会员 provider 没进模型列表：%+v", out["all"])
+	}
+	if member["name"] != "会员专属" {
+		t.Fatalf("供应商名应为 会员专属：%v", member["name"])
+	}
+	entries, _ := member["models"].(map[string]any)
+	entry, _ := entries["cc-pro-flash"].(map[string]any)
+	if entry == nil {
+		t.Fatalf("模型条目缺失：%+v", member["models"])
+	}
+	if entry["name"] != "肥美大鲸鱼" {
+		t.Fatalf("展示名不对：%v", entry["name"])
+	}
+	if toInt64(entry["context_limit"]) != 1000000 || toInt64(entry["output_limit"]) != 384000 {
+		t.Fatalf("上下文/输出不对：%v / %v", entry["context_limit"], entry["output_limit"])
+	}
+	if variants, _ := entry["variants"].(map[string]any); len(variants) != 4 {
+		t.Fatalf("思考档位应带上：%+v", entry["variants"])
+	}
+	// 真实模型名不能出现在给 App 的列表里
+	if raw := fmt.Sprintf("%+v", out); strings.Contains(raw, "deepseek-v4.1-flash-free") {
+		t.Fatalf("真实模型名泄露：%s", raw[:200])
+	}
+
+	// 启动器已经报过就不重复补
+	out2 := mergeMemberProviderIntoModels(map[string]any{
+		"connected": []string{"cc-pro"},
+		"all":       []map[string]any{{"id": "cc-pro"}},
+		"default":   map[string]any{},
+	}, policy, "")
+	if len(mapSlice(out2["all"])) != 1 {
+		t.Fatalf("重复注入：%+v", out2["all"])
+	}
+}
+
+// 只勾一档 = 固定强度（variants 里只有一个）。
+func TestMergeMemberModelsAddsActiveMemberProvider(t *testing.T) {
+	ctx := context.Background()
+	memory := store.NewMemory(nil)
+	api := &API{store: memory, broker: broker.New()}
+
+	if err := memory.UpsertOperatorGatewayKey(ctx, model.OperatorGatewayKey{
+		OperatorID:  7,
+		Provider:    "cc-pro",
+		DesiredTier: "pro",
+		State:       model.GatewayKeyStateActive,
+		KeyID:       "k_test",
+		Models:      []string{"cc-pro-flash"},
+	}); err != nil {
+		t.Fatalf("写钥匙记录: %v", err)
+	}
+	if err := memory.UpsertMembershipTierPolicy(ctx, model.MembershipTierPolicy{
+		Tier:        "pro",
+		Enabled:     true,
+		ProviderID:  "cc-pro",
+		DisplayName: "会员专属",
+		Entries: []model.TierModelEntry{{
+			RealModel:   "deepseek-v4.1-flash-free",
+			Alias:       "cc-pro-flash",
+			DisplayName: "肥美大鲸鱼",
+			Preset:      &model.ModelPreset{ContextLimit: 1000000, OutputLimit: 384000, ReasoningLevels: []string{"low", "medium", "high", "max"}},
+		}},
+	}); err != nil {
+		t.Fatalf("写等级策略: %v", err)
+	}
+
+	payload := map[string]any{
+		"connected": []string{"ds22"},
+		"all":       []map[string]any{{"id": "ds22", "name": "ds22"}},
+		"default":   map[string]any{},
+	}
+	out := api.mergeMemberModels(ctx, 7, payload)
+
+	connected := stringSlice(out["connected"])
+	if len(connected) != 2 || connected[1] != "cc-pro" {
+		t.Fatalf("会员 provider 应进 connected：%v", connected)
+	}
+	var member map[string]any
+	for _, item := range mapSlice(out["all"]) {
+		if id, _ := item["id"].(string); id == "cc-pro" {
+			member = item
+		}
+	}
+	if member == nil {
+		t.Fatalf("会员 provider 没进模型列表：%+v", out["all"])
+	}
+	if member["name"] != "会员专属" {
+		t.Fatalf("供应商名应为 会员专属：%v", member["name"])
+	}
+	models := mapSlice(map[string]any{"x": member["models"]}) // 复用 mapSlice 的 []any 兼容
+	_ = models
+	entries, _ := member["models"].(map[string]any)
+	entry, _ := entries["cc-pro-flash"].(map[string]any)
+	if entry == nil {
+		t.Fatalf("模型条目缺失：%+v", member["models"])
+	}
+	if entry["name"] != "肥美大鲸鱼" {
+		t.Fatalf("展示名不对：%v", entry["name"])
+	}
+	if entry["context_limit"] != int64(1000000) && entry["context_limit"] != 1000000 {
+		t.Fatalf("上下文不对：%v", entry["context_limit"])
+	}
+	variants, _ := entry["variants"].(map[string]any)
+	if len(variants) != 4 {
+		t.Fatalf("思考档位应带上：%+v", entry["variants"])
+	}
+
+	// 已经报过就不重复补
+	out2 := api.mergeMemberModels(ctx, 7, map[string]any{
+		"connected": []string{"cc-pro"},
+		"all":       []map[string]any{{"id": "cc-pro"}},
+		"default":   map[string]any{},
+	})
+	if len(mapSlice(out2["all"])) != 1 {
+		t.Fatalf("重复注入：%+v", out2["all"])
+	}
+}
+
+// toInt64 兼容 int / int64 / float64 三种数值形态（内存构造 vs JSON 解码）。
+func toInt64(value any) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	default:
+		return 0
 	}
 }

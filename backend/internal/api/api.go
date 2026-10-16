@@ -75,19 +75,19 @@ func (a *API) enrichOrchestrationTaskMetadata(operatorID int64, metadata map[str
 }
 
 type API struct {
-	store                 *store.Memory
-	broker                *broker.Broker
-	auth                  *auth.Manager
-	mailer                *mail.Mailer
-	notifyService         *notify.Service
-	artifactFetcher       func(context.Context, *model.Task, model.Artifact, io.Writer) error
-	pushService           *push.Service
-	aiConfigRequest       func(context.Context, int64, string, string, string, any) (model.DeviceAIConfigResultPayload, error)
-	goalOptimizeRequest   func(context.Context, int64, string, string, string, any) (model.GoalOptimizeResultPayload, error)
-	mcpConfigRequest      func(context.Context, int64, string, string, string, any) (model.DeviceMCPConfigResultPayload, error)
-	envConfigRequest      func(context.Context, int64, string, string, string, any) (model.DeviceEnvConfigResultPayload, error)
-	launcherRequest       func(context.Context, int64, string, string, string, any) (model.DeviceLauncherResultPayload, error)
-	directoryRequest      func(context.Context, int64, string, string, string, any) (model.DeviceDirectoriesResultPayload, error)
+	store               *store.Memory
+	broker              *broker.Broker
+	auth                *auth.Manager
+	mailer              *mail.Mailer
+	notifyService       *notify.Service
+	artifactFetcher     func(context.Context, *model.Task, model.Artifact, io.Writer) error
+	pushService         *push.Service
+	aiConfigRequest     func(context.Context, int64, string, string, string, any) (model.DeviceAIConfigResultPayload, error)
+	goalOptimizeRequest func(context.Context, int64, string, string, string, any) (model.GoalOptimizeResultPayload, error)
+	mcpConfigRequest    func(context.Context, int64, string, string, string, any) (model.DeviceMCPConfigResultPayload, error)
+	envConfigRequest    func(context.Context, int64, string, string, string, any) (model.DeviceEnvConfigResultPayload, error)
+	launcherRequest     func(context.Context, int64, string, string, string, any) (model.DeviceLauncherResultPayload, error)
+	directoryRequest    func(context.Context, int64, string, string, string, any) (model.DeviceDirectoriesResultPayload, error)
 	// directoryChunkRequest 是 directoryRequest 的分块增强版：
 	// 末尾参数为分块原始字节，非空时走二进制帧下发（省掉 base64 膨胀）。
 	directoryChunkRequest func(context.Context, int64, string, string, string, any, []byte) (model.DeviceDirectoriesResultPayload, error)
@@ -5209,8 +5209,107 @@ func (a *API) fetchLauncherModels(ctx context.Context, operatorID int64, machine
 	}
 	enrichDeviceAIConfigResult(&result)
 	payload := launcherModels(result.Config)
+	// 会员 provider 存在启动器的私有覆盖文件里，launcher 上报的用户配置里看不到它，
+	// 但 App 的模型选择必须能选到它 —— 这里按控制台策略补进列表。
+	payload = a.mergeMemberModels(ctx, operatorID, payload)
 	a.broker.SetModelCache(operatorID, machineID, payload)
 	return payload, nil
+}
+
+// mergeMemberModels 把会员 provider 的模型补进给 App 的模型列表（含展示名与参数预设）。
+func (a *API) mergeMemberModels(ctx context.Context, operatorID int64, payload map[string]any) map[string]any {
+	record, err := a.store.GetOperatorGatewayKey(ctx, operatorID)
+	if err != nil || record == nil || record.State != model.GatewayKeyStateActive {
+		return payload
+	}
+	policy := a.tierPolicy(ctx, record.DesiredTier)
+	return mergeMemberProviderIntoModels(payload, policy, loadGatewayConfig().deviceBaseURL())
+}
+
+// mergeMemberProviderIntoModels 是纯函数版本，便于测试：按策略把一个会员 provider 合进模型列表。
+func mergeMemberProviderIntoModels(payload map[string]any, policy model.MembershipModelPolicy, baseURL string) map[string]any {
+	providerID := strings.TrimSpace(policy.ProviderID)
+	if providerID == "" || len(policy.Models) == 0 {
+		return payload
+	}
+	for _, item := range mapSlice(payload["all"]) {
+		if id, _ := item["id"].(string); strings.TrimSpace(id) == providerID {
+			return payload // 启动器已经报过，不重复补
+		}
+	}
+	cfg := gatewayConfig{BaseURL: baseURL}
+	member := launcherModels(&model.DeviceAIConfigPreview{
+		Providers: []model.DeviceAIProvider{{
+			ID:      policy.ProviderID,
+			BaseURL: cfg.deviceBaseURL(),
+			APIMode: "chat",
+			Models:  gatewayDeviceModels(policy),
+		}},
+	})
+	memberAll := mapSlice(member["all"])
+	for _, item := range memberAll {
+		// 供应商名（控制台里配的，默认"会员专属"），不是 provider id
+		item["name"] = membershipProviderName(policy)
+	}
+	payload["all"] = append(anySlice(payload["all"]), anySlice(member["all"])...)
+	payload["connected"] = append(stringSlice(payload["connected"]), policy.ProviderID)
+	return payload
+}
+
+// mapSlice 兼容 []any / []map[string]any 两种形态（内存构造 vs JSON 解码）。
+func mapSlice(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func anySlice(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []map[string]any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out
+	case []string:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, item)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func (a *API) refreshLauncherModels(operatorID int64, machineID string) {
