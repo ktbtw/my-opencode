@@ -300,6 +300,8 @@ kbd { font: 11px Geist, sans-serif; border: 1px solid var(--border); border-radi
 body.membership-view .toolbar { display: none; }
 /* 这个页面的卡片刻意整行显示：卡片内部是三列表单，挤成多列会导致字段换行 */
 body.membership-view .recommendation-grid { grid-template-columns: minmax(0, 1fr); }
+/* 卡片默认 overflow:hidden，会把自研下拉的菜单裁掉一半（本页下拉在卡片里） */
+body.membership-view .recommendation-card { overflow: visible; }
 .membership-model-row {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto;

@@ -4773,6 +4773,16 @@ function renderMembershipPage() {
     </article>
     ${panels}`;
 
+  // 模型下拉统一用控制台自研组件（原生 select 会被隐藏），
+  // 卡片每次重绘都要重新增强，并清掉已脱离文档的旧实例。
+  customSelects.forEach((_, select) => {
+    if (!select.isConnected) customSelects.delete(select);
+  });
+  el.grid.querySelectorAll('select[data-field="real_model"]').forEach((select) => {
+    enhanceSelect(select);
+    syncCustomSelect(select);
+  });
+
   const saveButton = document.getElementById("membershipSaveButton");
   if (saveButton) saveButton.addEventListener("click", saveMembershipPolicies);
   el.grid.querySelectorAll("[data-tier-index]").forEach((node) => {
