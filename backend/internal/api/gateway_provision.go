@@ -475,7 +475,8 @@ func (a *API) clearMemberProvider(ctx context.Context, operatorID int64, provide
 func gatewayDeviceModels(policy model.MembershipModelPolicy) []model.DeviceAIModel {
 	out := make([]model.DeviceAIModel, 0, len(policy.Models))
 	for _, id := range policy.Models {
-		out = append(out, model.DeviceAIModel{ID: id, Name: id, Owned: policy.ProviderID})
+		// id 必须是真实模型（网关用它鉴权与转发）；name 是展示名，可自定义
+		out = append(out, model.DeviceAIModel{ID: id, Name: policy.DisplayNameFor(id), Owned: policy.ProviderID})
 	}
 	return out
 }

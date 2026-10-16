@@ -28,13 +28,16 @@ type GatewayLimits struct {
 
 // MembershipModelPolicy 描述某个会员等级在网关侧的模型包与额度包。
 type MembershipModelPolicy struct {
-	Tier           string        `json:"tier"`
-	IsMember       bool          `json:"is_member"`
-	ProviderID     string        `json:"provider_id,omitempty"`
-	DisplayName    string        `json:"display_name,omitempty"`
-	Models         []string      `json:"models,omitempty"`
-	Limits         GatewayLimits `json:"limits,omitempty"`
-	DailyCostMicro int64         `json:"daily_cost_micro,omitempty"` // 兼容写法，与 Limits.DailyCostMicro 取较大者
+	Tier        string   `json:"tier"`
+	IsMember    bool     `json:"is_member"`
+	ProviderID  string   `json:"provider_id,omitempty"`
+	DisplayName string   `json:"display_name,omitempty"`
+	Models      []string `json:"models,omitempty"`
+	// ModelNames 是「模型 id → 展示名」：id 必须是网关真实模型（用于请求与鉴权），
+	// 展示名随便起，App 的模型列表显示的就是它。
+	ModelNames     map[string]string `json:"model_names,omitempty"`
+	Limits         GatewayLimits     `json:"limits,omitempty"`
+	DailyCostMicro int64             `json:"daily_cost_micro,omitempty"` // 兼容写法，与 Limits.DailyCostMicro 取较大者
 }
 
 // ModelPolicyForTier 返回等级对应的默认策略（未配置模型包时不开通专属模型）。
@@ -66,6 +69,14 @@ func (p MembershipModelPolicy) GatewayEnabled() bool {
 	return len(p.Models) > 0 && strings.TrimSpace(p.ProviderID) != ""
 }
 
+// DisplayNameFor 返回某模型的展示名（没配就用 id）。
+func (p MembershipModelPolicy) DisplayNameFor(modelID string) string {
+	if name, ok := p.ModelNames[modelID]; ok && strings.TrimSpace(name) != "" {
+		return strings.TrimSpace(name)
+	}
+	return modelID
+}
+
 // Normalize 收敛策略里的空字段，保证落库与下发一致。
 func (p MembershipModelPolicy) Normalize() MembershipModelPolicy {
 	p.Tier = NormalizeMembershipTier(p.Tier)
@@ -95,6 +106,16 @@ func (p MembershipModelPolicy) Normalize() MembershipModelPolicy {
 		models = append(models, m)
 	}
 	p.Models = models
+	names := make(map[string]string, len(p.ModelNames))
+	for id, name := range p.ModelNames {
+		id = strings.TrimSpace(id)
+		name = strings.TrimSpace(name)
+		if id == "" || name == "" {
+			continue
+		}
+		names[id] = name
+	}
+	p.ModelNames = names
 	return p
 }
 

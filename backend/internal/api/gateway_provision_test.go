@@ -325,3 +325,25 @@ func TestGatewayDeviceBaseURLUsesProxyURL(t *testing.T) {
 		t.Fatalf("回落到管理口：got %q", got)
 	}
 }
+
+// 展示名可自定义，但模型 id 必须保持真实（网关按 id 鉴权与转发）。
+func TestGatewayDeviceModelsKeepsRealIDWithCustomName(t *testing.T) {
+	policy := model.MembershipModelPolicy{
+		ProviderID: model.GatewayProviderPro,
+		Models:     []string{"deepseek-v4.1-flash-free"},
+		ModelNames: map[string]string{"deepseek-v4.1-flash-free": "高级专线 · DeepSeek 4.1"},
+	}.Normalize()
+	items := gatewayDeviceModels(policy)
+	if len(items) != 1 {
+		t.Fatalf("want 1 model, got %d", len(items))
+	}
+	if items[0].ID != "deepseek-v4.1-flash-free" {
+		t.Fatalf("id 必须保持真实模型：got %q", items[0].ID)
+	}
+	if items[0].Name != "高级专线 · DeepSeek 4.1" {
+		t.Fatalf("展示名应可自定义：got %q", items[0].Name)
+	}
+	if items[0].Owned != model.GatewayProviderPro {
+		t.Fatalf("owned_by 应为 provider id：got %q", items[0].Owned)
+	}
+}
