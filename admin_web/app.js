@@ -4970,7 +4970,8 @@ function readMembershipForm() {
     if (field === "provider_id") { policy.provider_id = node.value.trim(); return; }
     if (field === "display_name") { policy.display_name = node.value.trim(); return; }
     if (field === "preset_modality") {
-      const entry = policy.entries[entryIndex];
+      const entry = policy.entries[Number(node.dataset.entry)];
+      if (!entry) return;
       entry.preset = entry.preset || {};
       const key = node.dataset.direction === "output" ? "output_modalities" : "input_modalities";
       const list = entry.preset[key] || [];
@@ -4982,7 +4983,8 @@ function readMembershipForm() {
       return;
     }
     if (field === "preset_reasoning_level") {
-      const entry = policy.entries[entryIndex];
+      const entry = policy.entries[Number(node.dataset.entry)];
+      if (!entry) return;
       entry.preset = entry.preset || {};
       const list = entry.preset.reasoning_levels || [];
       if (node.checked) {
@@ -4993,14 +4995,15 @@ function readMembershipForm() {
       return;
     }
     if (field === "preset_context" || field === "preset_output") {
-      const entry = policy.entries[entryIndex];
+      const entry = policy.entries[Number(node.dataset.entry)];
+      if (!entry) return;
       entry.preset = entry.preset || {};
       const key = field === "preset_context" ? "context_limit" : "output_limit";
       entry.preset[key] = node.value === "" ? 0 : Number(node.value) || 0;
       return;
     }
     if (field === "preset_reasoning") {
-      const entry = policy.entries[entryIndex];
+      const entry = policy.entries[Number(node.dataset.entry)];
       entry.preset = entry.preset || {};
       entry.preset.reasoning = node.value;
       return;
