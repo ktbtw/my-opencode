@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
+	"time"
 
 	"relay-server/internal/model"
 )
@@ -209,4 +211,137 @@ func (a *API) syncGatewayAliases(ctx context.Context, cfg gatewayConfig, aliases
 	payload := map[string]any{"model_aliases": aliases}
 	_, err := a.gatewayRequest(ctx, cfg, http.MethodPut, "/admin/settings", payload)
 	return err
+}
+
+// membershipUsageModel 是额度页要展示的一个模型（对外 id + 展示名 + 真实模型）。
+type membershipUsageModel struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name,omitempty"`
+	RealModel   string `json:"real_model,omitempty"`
+}
+
+// membershipUsageCounters 是额度页展示的用量数字（网关按钥匙记账的原始字段）。
+type membershipUsageCounters struct {
+	Requests     int64 `json:"requests"`
+	CostMicro    int64 `json:"cost_micro"`
+	DayRequests  int64 `json:"day_requests"`
+	DayTokens    int64 `json:"day_tokens"`
+	DayCostMicro int64 `json:"day_cost_micro"`
+}
+
+// GetMembershipUsage 返回当前用户的会员额度状态（网关侧实时用量 + 设备下发情况）。
+//
+// App 的「我的额度」页用它渲染：等级、已用/剩余、日额度、可用模型、重置时间。
+func (a *API) GetMembershipUsage(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ctx := r.Context()
+	tier := model.MembershipTierFree
+	if resolved, err := a.store.GetOperatorMembershipTier(operator.ID); err == nil && strings.TrimSpace(resolved) != "" {
+		tier = resolved
+	}
+	tier = model.NormalizeMembershipTier(tier)
+	policy := a.tierPolicy(ctx, tier)
+
+	resp := map[string]any{
+		"tier":        tier,
+		"is_member":   model.IsMemberTier(tier),
+		"provider_id": policy.ProviderID,
+		"group_name":  policy.DisplayName,
+		"active":      false,
+		"limits":      policy.Limits,
+		"used":        membershipUsageCounters{},
+	}
+	models := make([]membershipUsageModel, 0, len(policy.Models))
+	for _, id := range policy.Models {
+		models = append(models, membershipUsageModel{
+			ID:          id,
+			DisplayName: policy.DisplayNameFor(id),
+			RealModel:   policy.RealModels[id],
+		})
+	}
+	resp["models"] = models
+
+	record, err := a.store.GetOperatorGatewayKey(ctx, operator.ID)
+	if err != nil || record == nil || record.KeyID == "" {
+		write(w, http.StatusOK, resp)
+		return
+	}
+	resp["active"] = record.State == model.GatewayKeyStateActive
+	resp["state"] = record.State
+	resp["key_last4"] = record.KeyLast4
+	resp["device_status"] = record.Machines
+
+	// 实时用量：直接读网关的钥匙记录（网关按钥匙记账，含跨日字段）。
+	cfg := loadGatewayConfig()
+	if cfg.enabled() {
+		if used, ok := a.gatewayKeyUsage(ctx, cfg, record.KeyID); ok {
+			resp["used"] = used
+			if policy.Limits.MaxCostMicro > 0 {
+				remaining := policy.Limits.MaxCostMicro - used.CostMicro
+				if remaining < 0 {
+					remaining = 0
+				}
+				resp["remaining_cost_micro"] = remaining
+			}
+			if policy.Limits.DailyCostMicro > 0 {
+				dailyRemaining := policy.Limits.DailyCostMicro - used.DayCostMicro
+				if dailyRemaining < 0 {
+					dailyRemaining = 0
+				}
+				resp["remaining_daily_cost_micro"] = dailyRemaining
+			}
+			if policy.Limits.DailyTokens > 0 {
+				dailyTokens := policy.Limits.DailyTokens - used.DayTokens
+				if dailyTokens < 0 {
+					dailyTokens = 0
+				}
+				resp["remaining_daily_tokens"] = dailyTokens
+			}
+		}
+	}
+	// 网关按 UTC 日翻滚额度
+	now := time.Now().UTC()
+	next := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).Add(24 * time.Hour)
+	resp["reset_at"] = next.Format(time.RFC3339)
+	write(w, http.StatusOK, resp)
+}
+
+// gatewayKeyUsage 读某把钥匙在网关上的累计/当日用量。
+func (a *API) gatewayKeyUsage(ctx context.Context, cfg gatewayConfig, keyID string) (membershipUsageCounters, bool) {
+	raw, err := a.gatewayRequest(ctx, cfg, http.MethodGet, "/admin/keys", nil)
+	if err != nil {
+		return membershipUsageCounters{}, false
+	}
+	var parsed struct {
+		Keys []struct {
+			ID    string `json:"id"`
+			Usage struct {
+				Requests     int64 `json:"requests"`
+				CostMicro    int64 `json:"cost_micro"`
+				DayRequests  int64 `json:"day_requests"`
+				DayTokens    int64 `json:"day_tokens"`
+				DayCostMicro int64 `json:"day_cost_micro"`
+			} `json:"usage"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return membershipUsageCounters{}, false
+	}
+	for _, key := range parsed.Keys {
+		if key.ID != keyID {
+			continue
+		}
+		return membershipUsageCounters{
+			Requests:     key.Usage.Requests,
+			CostMicro:    key.Usage.CostMicro,
+			DayRequests:  key.Usage.DayRequests,
+			DayTokens:    key.Usage.DayTokens,
+			DayCostMicro: key.Usage.DayCostMicro,
+		}, true
+	}
+	return membershipUsageCounters{}, false
 }

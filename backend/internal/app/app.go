@@ -1454,6 +1454,8 @@ func (a *App) Router() http.Handler {
 	// 会员模型分级（控制台配置：模型包 / 别名 / 展示名 / 额度）
 	r.Get("/api/admin/membership/policies", h.GetMembershipPolicies)
 	r.Put("/api/admin/membership/policies", h.SaveMembershipPolicies)
+	// 会员本人查看额度（App「我的额度」页）
+	r.Get("/api/membership/usage", h.GetMembershipUsage)
 	r.Get("/api/skills", h.ListPublicSkills)
 	r.Get("/api/devices/{machineID}/launcher", h.GetDeviceLauncherState)
 	r.Get("/api/devices/{machineID}/launcher/diagnostics", h.GetDeviceLauncherDiagnostics)

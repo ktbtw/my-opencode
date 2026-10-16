@@ -36,6 +36,7 @@ const state = {
   membershipGateway: null,
   membershipWarnings: [],
   membershipAliasSynced: false,
+  membershipDirty: false,
   promptRegistry: [],
   promptSemanticAgents: [],
   promptDeviceAgents: [],
@@ -81,6 +82,8 @@ const el = {
   currentUser: document.querySelector("#currentUser"),
   logoutButton: document.querySelector("#logoutButton"),
   refreshButton: document.querySelector("#refreshButton"),
+  membershipSaveButton: document.querySelector("#membershipSaveButton"),
+  membershipDirtyHint: document.querySelector("#membershipDirtyHint"),
   newButton: document.querySelector("#newButton"),
   searchInput: document.querySelector("#searchInput"),
   categoryFilter: document.querySelector("#categoryFilter"),
@@ -272,6 +275,14 @@ function bootstrap() {
   el.loginForm.addEventListener("submit", login);
   el.logoutButton.addEventListener("click", () => logout());
   el.refreshButton.addEventListener("click", loadCurrentView);
+  el.membershipSaveButton.addEventListener("click", saveMembershipPolicies);
+  const markDirty = () => {
+    if (state.view !== "membership" || state.membershipDirty) return;
+    state.membershipDirty = true;
+    syncViewChrome();
+  };
+  el.grid.addEventListener("input", markDirty);
+  el.grid.addEventListener("change", markDirty);
   el.newButton.addEventListener("click", () => openEditor());
   el.searchInput.addEventListener("input", render);
   el.categoryFilter.addEventListener("change", render);
@@ -463,6 +474,9 @@ function syncViewChrome() {
   el.statusFilterGroup.classList.toggle("hidden", state.view === "operators" || state.view === "prompts" || state.view === "membership");
   document.body.classList.toggle("membership-view", state.view === "membership");
   el.newButton.classList.toggle("hidden", !chrome.canCreate);
+  const isMembership = state.view === "membership";
+  el.membershipSaveButton.classList.toggle("hidden", !isMembership);
+  el.membershipDirtyHint.classList.toggle("hidden", !isMembership || !state.membershipDirty);
   el.emptyTitle.textContent = chrome.emptyTitle;
   el.emptyDescription.textContent = chrome.emptyDescription;
 }
@@ -4756,21 +4770,7 @@ function renderMembershipPage() {
   const panels = state.membershipPolicies.map((policy, index) => membershipTierPanel(policy, index, allowed)).join("");
 
   el.grid.innerHTML = `
-    <article class="recommendation-card">
-      <div class="card-head">
-        <div>
-          <h2>会员模型分级</h2>
-          <p class="muted">按等级配置专属模型：对外模型名（别名）、展示名与额度。</p>
-        </div>
-        <span class="pill">${gateway.configured ? "网关已连接" : "未配置网关"}</span>
-      </div>
-      <p class="card-code multiline">管理口 ${escapeHtml(gateway.base_url || "-")} · 设备推理口 ${escapeHtml(gateway.device_base_url || "-")} · 网关白名单 ${allowed.length} 个模型${gateway.secret_configured ? "" : " · 未配置钥匙加密密钥"}</p>
-      ${warnings.length ? `<p class="card-warning">${warnings.map((item) => escapeHtml(item)).join("；")}</p>` : ""}
-      <div class="card-actions">
-        <button type="button" class="primary-button" id="membershipSaveButton">保存并生效</button>
-        <button type="button" class="secondary-button" data-membership-action="reload">重新读取</button>
-      </div>
-    </article>
+    <p class="muted">${gateway.configured ? "网关已连接" : "未配置网关"} · 管理口 ${escapeHtml(gateway.base_url || "-")} · 设备推理口 ${escapeHtml(gateway.device_base_url || "-")} · 网关白名单 ${allowed.length} 个模型${gateway.secret_configured ? "" : " · 未配置钥匙加密密钥"}${warnings.length ? ` · <span class="card-warning">${warnings.map((item) => escapeHtml(item)).join("；")}</span>` : ""}</p>
     ${panels}`;
 
   // 模型下拉统一用控制台自研组件（原生 select 会被隐藏），
@@ -4783,8 +4783,6 @@ function renderMembershipPage() {
     syncCustomSelect(select);
   });
 
-  const saveButton = document.getElementById("membershipSaveButton");
-  if (saveButton) saveButton.addEventListener("click", saveMembershipPolicies);
   el.grid.querySelectorAll("[data-tier-index]").forEach((node) => {
     node.addEventListener("click", (event) => {
       const action = event.target.closest("[data-membership-action]");
@@ -4906,19 +4904,19 @@ function handleMembershipAction(action, tierIndex, entryIndex) {
 
 async function saveMembershipPolicies() {
   const policies = readMembershipForm();
-  const button = document.getElementById("membershipSaveButton");
-  setBusy(button, true, "保存中");
+  setBusy(el.membershipSaveButton, true, "保存中");
   try {
     const result = await apiPut("/api/admin/membership/policies", { items: policies });
     state.membershipWarnings = Array.isArray(result.warnings) ? result.warnings : [];
     state.membershipPolicies = Array.isArray(result.items) ? result.items : policies;
+    state.membershipDirty = false;
     const aliases = result.aliases ? Object.keys(result.aliases).length : 0;
     showToast(result.alias_synced ? `已保存并生效（同步 ${aliases} 个别名，会员设备将自动刷新）` : "已保存；别名同步到网关失败，请查看提示");
     renderMembershipPage();
   } catch (error) {
     showToast(error.message || "保存失败");
   } finally {
-    const next = document.getElementById("membershipSaveButton");
-    if (next) setBusy(next, false, "保存并生效");
+    setBusy(el.membershipSaveButton, false, "保存并生效");
+    syncViewChrome();
   }
 }

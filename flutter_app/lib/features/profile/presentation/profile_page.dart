@@ -250,6 +250,15 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                           child: Column(
                             children: [
                               _MenuItem(
+                                icon: Icons.savings_outlined,
+                                label: '我的额度',
+                                onTap: () => context.push('/membership'),
+                              ),
+                              const Divider(
+                                height: 1,
+                                color: AppColors.borderLight,
+                              ),
+                              _MenuItem(
                                 icon: Icons.lock_outline,
                                 label: '修改密码',
                                 onTap: () => _showChangePassword(context),

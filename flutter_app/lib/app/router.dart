@@ -16,6 +16,7 @@ import '../../features/chat/presentation/project_files_page.dart';
 import '../../features/project_memory/presentation/project_memory_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
 import '../../features/profile/presentation/profile_page.dart';
+import '../../features/membership/presentation/membership_usage_page.dart';
 import '../../features/settings/presentation/app_release_history_page.dart';
 import '../../features/guide/presentation/guide_page.dart';
 import '../../features/onboarding/presentation/mobile_onboarding_page.dart';
@@ -149,6 +150,11 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/profile',
       pageBuilder: (context, state) => _buildPage(state, const ProfilePage()),
+    ),
+    GoRoute(
+      path: '/membership',
+      pageBuilder: (context, state) =>
+          _buildPage(state, const MembershipUsagePage()),
     ),
     GoRoute(
       path: '/app-release-history',
