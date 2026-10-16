@@ -140,21 +140,21 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
             ],
           ),
         ),
-        if (active && totalMicro > 0) ...[
+        if (active && (dailyTokens > 0 || totalMicro > 0)) ...[
           const SizedBox(height: 12),
           _card(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _quotaRow('总额度', usedMicro, totalMicro, '已用', '剩余'),
-                const SizedBox(height: 16),
-                if (dailyMicro > 0) _quotaRow('今日额度', dayUsedMicro, dailyMicro, '已用', '剩余'),
                 if (dailyTokens > 0) ...[
-                  const SizedBox(height: 16),
-                  // token 是原始计数，不按金额（1e-6）换算
-                  _quotaRow('今日 Token 用量', dayTokens, dailyTokens, '已用', '剩余', count: true),
+                  _quotaRow('今日额度', dayTokens, dailyTokens, '已用', '剩余', count: true),
+                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 12),
+                if (dailyMicro > 0)
+                  _costLine('今日费用', dayUsedMicro, dailyMicro),
+                if (totalMicro > 0)
+                  _costLine('累计费用', usedMicro, totalMicro),
+                const SizedBox(height: 10),
                 Text(
                   _resetText(data['reset_at']),
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
@@ -277,6 +277,23 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
     );
   }
 
+  /// 费用明细：只报数，不画进度条（额度以 token 为准，费用是成本口径）
+  Widget _costLine(String title, double usedValue, double limitValue) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Text(title, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          const Spacer(),
+          Text(
+            '${_amount(usedValue, '\$')} / ${_amount(limitValue, '\$')}',
+            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _tierBadge(String tier) {
     final label = tier == 'pro'
         ? 'Pro 会员'
@@ -326,7 +343,9 @@ double _num(Object? value) {
 
 String _amount(double raw, String unit, {bool count = false}) {
   if (count) {
-    // 原始计数（token）：加千分位，不做 1e-6 缩放
+    // token 用 亿/万 展示，短数字才用千分位
+    if (raw >= 1e8) return '${_trimNumber(raw / 1e8)} 亿';
+    if (raw >= 1e4) return '${_trimNumber(raw / 1e4)} 万';
     final digits = raw.round().toString();
     final buffer = StringBuffer();
     for (var i = 0; i < digits.length; i++) {
@@ -341,6 +360,11 @@ String _amount(double raw, String unit, {bool count = false}) {
 }
 
 /// 说人话的重置说明：直接给出本地时间点，不暴露内部时区概念。
+String _trimNumber(double value) {
+  if (value == value.roundToDouble()) return value.toStringAsFixed(0);
+  return value.toStringAsFixed(2);
+}
+
 String _resetText(Object? resetAt) {
   final text = _localTime(resetAt?.toString() ?? '');
   final clock = text.contains(' ') ? text.split(' ').last : text;

@@ -49,3 +49,49 @@ func TestTierPolicyDisabledMeansNoModels(t *testing.T) {
 		t.Fatalf("未启用不该发放：%+v", policy)
 	}
 }
+
+// 额度口径：只生效选中的那一套，未选中的置 0（网关侧 0 = 不限）。
+func TestTierPolicyQuotaModeSelectsWhichLimitsApply(t *testing.T) {
+	base := MembershipTierPolicy{
+		Tier:    "pro",
+		Enabled: true,
+		Entries: []TierModelEntry{{RealModel: "deepseek-v4.1-flash-free", Alias: "cc-pro-flash"}},
+		Limits: GatewayLimits{
+			DailyTokens:    300_000_000,
+			DailyCostMicro: 360_000_000,
+			MaxCostMicro:   10_800_000_000,
+		},
+	}
+
+	tokenOnly := base
+	tokenOnly.QuotaMode = QuotaModeToken
+	limits := tokenOnly.EffectiveLimits()
+	if limits.DailyTokens != 300_000_000 || limits.DailyCostMicro != 0 || limits.MaxCostMicro != 0 {
+		t.Fatalf("token 口径下只应保留 token 额度：%+v", limits)
+	}
+
+	costOnly := base
+	costOnly.QuotaMode = QuotaModeCost
+	limits = costOnly.EffectiveLimits()
+	if limits.DailyTokens != 0 || limits.DailyCostMicro == 0 || limits.MaxCostMicro == 0 {
+		t.Fatalf("金额口径下只应保留金额额度：%+v", limits)
+	}
+
+	both := base
+	both.QuotaMode = QuotaModeBoth
+	limits = both.EffectiveLimits()
+	if limits.DailyTokens == 0 || limits.DailyCostMicro == 0 || limits.MaxCostMicro == 0 {
+		t.Fatalf("两个都启用时都应保留：%+v", limits)
+	}
+
+	// 留空时按已填字段推断（老配置兼容）
+	inferred := base.Normalize()
+	if inferred.QuotaMode != QuotaModeBoth {
+		t.Fatalf("两套都填应推断为 both：%s", inferred.QuotaMode)
+	}
+	onlyTokens := base
+	onlyTokens.Limits.DailyCostMicro, onlyTokens.Limits.MaxCostMicro = 0, 0
+	if got := onlyTokens.Normalize().QuotaMode; got != QuotaModeToken {
+		t.Fatalf("只填 token 应推断为 token：%s", got)
+	}
+}

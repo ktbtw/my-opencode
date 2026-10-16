@@ -20,6 +20,8 @@ const (
 
 // GatewayLimits 对应网关 key 的 limits 字段（额度单位：微单位，1e-6 货币）。
 type GatewayLimits struct {
+	// MaxTokens 是会员套餐的总量 token 上限（输入+输出累计）；0 表示不限。
+	MaxTokens      int64 `json:"max_tokens,omitempty"`
 	DailyRequests  int64 `json:"daily_requests,omitempty"`
 	DailyTokens    int64 `json:"daily_tokens,omitempty"`
 	DailyCostMicro int64 `json:"daily_cost_micro,omitempty"`
@@ -155,6 +157,35 @@ type TierModelEntry struct {
 	DisplayName string `json:"display_name,omitempty"`
 }
 
+// 额度口径：控制台可自由选择按 Token、按金额，或两者都启用（谁先到谁生效）。
+const (
+	QuotaModeToken = "token"
+	QuotaModeCost  = "cost"
+	QuotaModeBoth  = "both"
+)
+
+// NormalizeQuotaMode 收敛额度口径；留空时按已填的字段推断，避免老配置失效。
+func NormalizeQuotaMode(raw string, limits GatewayLimits) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case QuotaModeToken:
+		return QuotaModeToken
+	case QuotaModeCost:
+		return QuotaModeCost
+	case QuotaModeBoth:
+		return QuotaModeBoth
+	}
+	hasToken := limits.DailyTokens > 0 || limits.MaxTokens > 0
+	hasCost := limits.DailyCostMicro > 0 || limits.MaxCostMicro > 0
+	switch {
+	case hasToken && hasCost:
+		return QuotaModeBoth
+	case hasCost:
+		return QuotaModeCost
+	default:
+		return QuotaModeToken
+	}
+}
+
 // MembershipTierPolicy 是控制台上可编辑的等级策略（一个等级一行配置）。
 type MembershipTierPolicy struct {
 	Tier        string           `json:"tier"`
@@ -162,8 +193,11 @@ type MembershipTierPolicy struct {
 	DisplayName string           `json:"display_name,omitempty"`
 	Entries     []TierModelEntry `json:"entries,omitempty"`
 	Limits      GatewayLimits    `json:"limits,omitempty"`
-	Enabled     bool             `json:"enabled"`
-	UpdatedAt   string           `json:"updated_at,omitempty"`
+	// QuotaMode 决定上面哪些额度真正生效：token / cost / both。
+	// 两套数字都保留在 Limits 里，切换口径不用重填。
+	QuotaMode string `json:"quota_mode,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 // ToPolicy 把控制台配置转成收敛用的策略：
@@ -173,7 +207,7 @@ func (t MembershipTierPolicy) ToPolicy() MembershipModelPolicy {
 		Tier:        t.Tier,
 		ProviderID:  t.ProviderID,
 		DisplayName: t.DisplayName,
-		Limits:      t.Limits,
+		Limits:      t.EffectiveLimits(),
 		RealModels:  map[string]string{},
 		ModelNames:  map[string]string{},
 	}
@@ -198,6 +232,20 @@ func (t MembershipTierPolicy) ToPolicy() MembershipModelPolicy {
 		}
 	}
 	return policy.Normalize()
+}
+
+// EffectiveLimits 按额度口径裁掉不生效的那一套：未选中的维度置 0（0 = 网关侧不限）。
+func (t MembershipTierPolicy) EffectiveLimits() GatewayLimits {
+	limits := t.Limits
+	switch NormalizeQuotaMode(t.QuotaMode, t.Limits) {
+	case QuotaModeToken:
+		limits.DailyCostMicro = 0
+		limits.MaxCostMicro = 0
+	case QuotaModeCost:
+		limits.DailyTokens = 0
+		limits.MaxTokens = 0
+	}
+	return limits
 }
 
 // NormalizeTierPolicy 收敛控制台输入。
@@ -232,5 +280,6 @@ func (t MembershipTierPolicy) Normalize() MembershipTierPolicy {
 	if t.DisplayName == "" {
 		t.DisplayName = "会员专属 · " + strings.ToUpper(t.Tier)
 	}
+	t.QuotaMode = NormalizeQuotaMode(t.QuotaMode, t.Limits)
 	return t
 }

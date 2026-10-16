@@ -121,7 +121,7 @@ func (a *API) defaultTierPolicies(overview membershipGatewayOverview) []model.Me
 			}
 			item.Entries = append(item.Entries, entry)
 		}
-		out = append(out, item)
+		out = append(out, item.Normalize())
 	}
 	return out
 }
@@ -229,11 +229,13 @@ type membershipUsageDevice struct {
 
 // membershipUsageCounters 是额度页展示的用量数字（网关按钥匙记账的原始字段）。
 type membershipUsageCounters struct {
-	Requests     int64 `json:"requests"`
-	CostMicro    int64 `json:"cost_micro"`
-	DayRequests  int64 `json:"day_requests"`
-	DayTokens    int64 `json:"day_tokens"`
-	DayCostMicro int64 `json:"day_cost_micro"`
+	Requests         int64 `json:"requests"`
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	CostMicro        int64 `json:"cost_micro"`
+	DayRequests      int64 `json:"day_requests"`
+	DayTokens        int64 `json:"day_tokens"`
+	DayCostMicro     int64 `json:"day_cost_micro"`
 }
 
 // GetMembershipUsage 返回当前用户的会员额度状态（网关侧实时用量 + 设备下发情况）。
@@ -323,6 +325,14 @@ func (a *API) GetMembershipUsage(w http.ResponseWriter, r *http.Request) {
 				}
 				resp["remaining_daily_cost_micro"] = dailyRemaining
 			}
+			if policy.Limits.MaxTokens > 0 {
+				totalTokens := used.PromptTokens + used.CompletionTokens
+				remainingTokens := policy.Limits.MaxTokens - totalTokens
+				if remainingTokens < 0 {
+					remainingTokens = 0
+				}
+				resp["remaining_tokens"] = remainingTokens
+			}
 			if policy.Limits.DailyTokens > 0 {
 				dailyTokens := policy.Limits.DailyTokens - used.DayTokens
 				if dailyTokens < 0 {
@@ -349,11 +359,13 @@ func (a *API) gatewayKeyUsage(ctx context.Context, cfg gatewayConfig, keyID stri
 		Keys []struct {
 			ID    string `json:"id"`
 			Usage struct {
-				Requests     int64 `json:"requests"`
-				CostMicro    int64 `json:"cost_micro"`
-				DayRequests  int64 `json:"day_requests"`
-				DayTokens    int64 `json:"day_tokens"`
-				DayCostMicro int64 `json:"day_cost_micro"`
+				Requests         int64 `json:"requests"`
+				PromptTokens     int64 `json:"prompt_tokens"`
+				CompletionTokens int64 `json:"completion_tokens"`
+				CostMicro        int64 `json:"cost_micro"`
+				DayRequests      int64 `json:"day_requests"`
+				DayTokens        int64 `json:"day_tokens"`
+				DayCostMicro     int64 `json:"day_cost_micro"`
 			} `json:"usage"`
 		} `json:"keys"`
 	}
@@ -365,11 +377,13 @@ func (a *API) gatewayKeyUsage(ctx context.Context, cfg gatewayConfig, keyID stri
 			continue
 		}
 		return membershipUsageCounters{
-			Requests:     key.Usage.Requests,
-			CostMicro:    key.Usage.CostMicro,
-			DayRequests:  key.Usage.DayRequests,
-			DayTokens:    key.Usage.DayTokens,
-			DayCostMicro: key.Usage.DayCostMicro,
+			Requests:         key.Usage.Requests,
+			PromptTokens:     key.Usage.PromptTokens,
+			CompletionTokens: key.Usage.CompletionTokens,
+			CostMicro:        key.Usage.CostMicro,
+			DayRequests:      key.Usage.DayRequests,
+			DayTokens:        key.Usage.DayTokens,
+			DayCostMicro:     key.Usage.DayCostMicro,
 		}, true
 	}
 	return membershipUsageCounters{}, false

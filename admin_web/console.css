@@ -317,3 +317,9 @@ body.membership-view .recommendation-card { overflow: visible; }
 @media (max-width: 900px) {
   .membership-model-row { grid-template-columns: 1fr; }
 }
+
+/* 额度口径选择：三个并排的开关行，紧凑一点 */
+.quota-mode-row { padding: 9px 12px; }
+.quota-mode-row input { width: 18px; height: 18px; accent-color: var(--primary); box-shadow: none; }
+
+.quota-group[style*="display: none"] { display: none !important; }

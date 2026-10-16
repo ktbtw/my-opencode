@@ -19,6 +19,7 @@ var membershipPolicySchemaStatements = []string{
   display_name VARCHAR(64) NULL,
   entries_json JSON NOT NULL,
   limits_json JSON NOT NULL,
+  quota_mode VARCHAR(8) NULL,
   enabled TINYINT(1) NOT NULL DEFAULT 1,
   updated_at DATETIME(6) NOT NULL,
   PRIMARY KEY (tier)
@@ -49,13 +50,14 @@ func (m *MySQLArchive) UpsertMembershipTierPolicy(ctx context.Context, policy mo
 		enabled = 1
 	}
 	_, err = m.db.ExecContext(ctx, `INSERT INTO membership_model_policies
-  (tier, provider_id, display_name, entries_json, limits_json, enabled, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  (tier, provider_id, display_name, entries_json, limits_json, quota_mode, enabled, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON DUPLICATE KEY UPDATE
     provider_id = VALUES(provider_id), display_name = VALUES(display_name),
     entries_json = VALUES(entries_json), limits_json = VALUES(limits_json),
-    enabled = VALUES(enabled), updated_at = VALUES(updated_at)`,
-		policy.Tier, policy.ProviderID, nullIfEmpty(policy.DisplayName), entries, limits, enabled, time.Now().UTC())
+    quota_mode = VALUES(quota_mode), enabled = VALUES(enabled), updated_at = VALUES(updated_at)`,
+		policy.Tier, policy.ProviderID, nullIfEmpty(policy.DisplayName), entries, limits,
+		nullIfEmpty(policy.QuotaMode), enabled, time.Now().UTC())
 	return err
 }
 
@@ -63,7 +65,7 @@ func (m *MySQLArchive) ListMembershipTierPolicies(ctx context.Context) ([]model.
 	if m == nil || m.db == nil {
 		return nil, nil
 	}
-	rows, err := m.db.QueryContext(ctx, `SELECT tier, provider_id, display_name, entries_json, limits_json, enabled, updated_at
+	rows, err := m.db.QueryContext(ctx, `SELECT tier, provider_id, display_name, entries_json, limits_json, quota_mode, enabled, updated_at
   FROM membership_model_policies ORDER BY tier`)
 	if err != nil {
 		return nil, err
@@ -76,13 +78,15 @@ func (m *MySQLArchive) ListMembershipTierPolicies(ctx context.Context) ([]model.
 			displayName sql.NullString
 			entriesRaw  []byte
 			limitsRaw   []byte
+			quotaMode   sql.NullString
 			enabled     int
 			updatedAt   time.Time
 		)
-		if err := rows.Scan(&policy.Tier, &policy.ProviderID, &displayName, &entriesRaw, &limitsRaw, &enabled, &updatedAt); err != nil {
+		if err := rows.Scan(&policy.Tier, &policy.ProviderID, &displayName, &entriesRaw, &limitsRaw, &quotaMode, &enabled, &updatedAt); err != nil {
 			return nil, err
 		}
 		policy.DisplayName = displayName.String
+		policy.QuotaMode = quotaMode.String
 		policy.Enabled = enabled == 1
 		policy.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
 		if len(entriesRaw) > 0 {

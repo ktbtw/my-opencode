@@ -4736,6 +4736,25 @@ function membershipDollars(micro) {
   return value ? String(value) : "";
 }
 
+/// 卡片摘要按当前口径显示：token 口径就报 token，金额口径才报钱。
+function membershipQuotaSummary(limits, mode) {
+  const parts = [];
+  if (mode === "token" || mode === "both") {
+    const daily = limits.daily_tokens ? `${_yi(limits.daily_tokens)} 亿 token/日` : "token 不限";
+    parts.push(daily);
+  }
+  if (mode === "cost" || mode === "both") {
+    const daily = membershipDollars(limits.daily_cost_micro) ? `\$${membershipDollars(limits.daily_cost_micro)}/日` : "金额不限";
+    parts.push(daily);
+  }
+  return escapeHtml(parts.join(" · "));
+}
+
+function _yi(value) {
+  const yi = Number(value) / 1e8;
+  return yi === Math.round(yi) ? String(Math.round(yi)) : yi.toFixed(2);
+}
+
 function membershipTierLabel(tier) {
   return tier === "pro" ? "Pro 会员" : tier === "plus" ? "Plus 会员" : "普通用户";
 }
@@ -4783,6 +4802,22 @@ function renderMembershipPage() {
     syncCustomSelect(select);
   });
 
+  // 额度口径：只显示选中的那一套（直接切 display —— .form-grid{display:grid} 会盖掉 .hidden）
+  const syncQuotaGroups = (tierIndex) => {
+    const container = el.grid.querySelector(`[data-tier-index="${tierIndex}"]`);
+    if (!container) return;
+    const checked = container.querySelector('input[data-field="quota_mode"]:checked');
+    const mode = checked ? checked.value : "token";
+    container.querySelectorAll("[data-quota-group]").forEach((group) => {
+      const visible = mode === "both" || mode === group.dataset.quotaGroup;
+      group.style.display = visible ? "" : "none";
+    });
+  };
+  state.membershipPolicies.forEach((_, index) => syncQuotaGroups(index));
+  el.grid.querySelectorAll('input[data-field="quota_mode"]').forEach((radio) => {
+    radio.addEventListener("change", () => syncQuotaGroups(Number(radio.dataset.tier)));
+  });
+
   el.grid.querySelectorAll("[data-tier-index]").forEach((node) => {
     node.addEventListener("click", (event) => {
       const action = event.target.closest("[data-membership-action]");
@@ -4815,13 +4850,16 @@ function membershipTierPanel(policy, tierIndex, models) {
     )
     .join("");
   const limits = policy.limits || {};
+  const hasToken = Boolean(limits.daily_tokens) || Boolean(limits.max_tokens);
+  const hasCost = Boolean(limits.daily_cost_micro) || Boolean(limits.max_cost_micro);
+  const quotaMode = policy.quota_mode || (hasToken && hasCost ? "both" : hasCost ? "cost" : "token");
   const modelCount = (policy.entries || []).length;
   return `
     <article class="recommendation-card" data-tier-index="${tierIndex}">
       <div class="card-head">
         <div>
           <h2>${membershipTierLabel(policy.tier)}</h2>
-          <p class="muted">${escapeHtml(policy.provider_id || "未设置标识")} · ${modelCount} 个模型 · 日 $${membershipDollars(limits.daily_cost_micro) || "不限"} / 总额 $${membershipDollars(limits.max_cost_micro) || "不限"}</p>
+          <p class="muted">${escapeHtml(policy.provider_id || "未设置标识")} · ${modelCount} 个模型 · ${membershipQuotaSummary(limits, quotaMode)}</p>
         </div>
         <span class="pill">${policy.enabled ? "发放中" : "未发放"}</span>
       </div>
@@ -4835,12 +4873,23 @@ function membershipTierPanel(policy, tierIndex, models) {
           </div>
         </section>
         <section class="form-section">
-          <div class="section-title"><h3>额度</h3><span>额度用尽后该等级会员的调用会被拒绝</span></div>
+          <div class="section-title"><h3>额度</h3><span>用尽后该等级会员的调用会被拒绝</span></div>
           <div class="form-grid three">
-            <label><span>日额度（$）</span><input data-field="daily_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.daily_cost_micro))}" placeholder="8" /></label>
-            <label><span>总额度（$）</span><input data-field="max_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.max_cost_micro))}" placeholder="300" /></label>
-            <label><span>日 token 上限</span><input data-field="daily_tokens" data-tier="${tierIndex}" value="${escapeAttr(limits.daily_tokens ? String(limits.daily_tokens) : "")}" placeholder="8000000" /></label>
+            ${["token", "cost", "both"].map((mode) => `
+              <label class="switch-row quota-mode-row">
+                <span>${mode === "token" ? "按 Token" : mode === "cost" ? "按金额" : "两个都启用"}</span>
+                <input type="radio" name="quota-mode-${tierIndex}" value="${mode}" data-field="quota_mode" data-tier="${tierIndex}" ${quotaMode === mode ? "checked" : ""} />
+              </label>`).join("")}
           </div>
+          <div class="form-grid three quota-group" data-quota-group="token" data-tier="${tierIndex}">
+            <label><span>日 token 额度（亿）</span><input data-field="daily_tokens" data-tier="${tierIndex}" value="${escapeAttr(limits.daily_tokens ? String(limits.daily_tokens / 1e8) : "")}" placeholder="1" /></label>
+            <label><span>总量 token 额度（亿，0=不限）</span><input data-field="max_tokens" data-tier="${tierIndex}" value="${escapeAttr(limits.max_tokens ? String(limits.max_tokens / 1e8) : "")}" placeholder="0" /></label>
+          </div>
+          <div class="form-grid two quota-group" data-quota-group="cost" data-tier="${tierIndex}">
+            <label><span>日费用上限（$）</span><input data-field="daily_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.daily_cost_micro))}" placeholder="120" /></label>
+            <label><span>累计费用上限（$，0=不限）</span><input data-field="max_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.max_cost_micro))}" placeholder="3600" /></label>
+          </div>
+          <p class="muted">未选中的那一套不会下发（数字保留，随时切回）。两个都启用时，谁先到谁生效。</p>
         </section>
         <section class="form-section">
           <div class="section-title"><h3>模型包</h3><span>真实模型必须在白名单内；对外模型名＝会员调用时用的名字</span></div>
@@ -4866,13 +4915,19 @@ function readMembershipForm() {
     }
     if (field === "provider_id") { policy.provider_id = node.value.trim(); return; }
     if (field === "display_name") { policy.display_name = node.value.trim(); return; }
-    if (field === "daily_cost" || field === "max_cost" || field === "daily_tokens") {
+    if (field === "quota_mode") {
+      if (node.checked) policy.quota_mode = node.value;
+      return;
+    }
+    if (field === "daily_cost" || field === "max_cost" || field === "daily_tokens" || field === "max_tokens") {
       policy.limits = policy.limits || {};
       const raw = Number(String(node.value).replace(/[^0-9.]/g, ""));
       const micro = field === "daily_tokens" ? 0 : Math.round((Number.isFinite(raw) ? raw : 0) * 1e6);
       if (field === "daily_cost") policy.limits.daily_cost_micro = micro;
       if (field === "max_cost") policy.limits.max_cost_micro = micro;
-      if (field === "daily_tokens") policy.limits.daily_tokens = Number.isFinite(raw) ? Math.round(raw) : 0;
+      // token 的输入单位是"亿"，落库按原始 token 数
+      if (field === "daily_tokens") policy.limits.daily_tokens = Number.isFinite(raw) ? Math.round(raw * 1e8) : 0;
+      if (field === "max_tokens") policy.limits.max_tokens = Number.isFinite(raw) ? Math.round(raw * 1e8) : 0;
       return;
     }
     const entryIndex = Number(node.dataset.entry);

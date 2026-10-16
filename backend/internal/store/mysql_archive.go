@@ -1236,6 +1236,9 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	for _, stmt := range gatewayKeySchemaStatements {
+		if err := ensureColumn(ctx, db, "membership_model_policies", "quota_mode", "ALTER TABLE membership_model_policies ADD COLUMN quota_mode VARCHAR(8) NULL AFTER limits_json"); err != nil {
+			return err
+		}
 		for _, stmt := range membershipPolicySchemaStatements {
 			if strings.TrimSpace(stmt) == "" {
 				continue
