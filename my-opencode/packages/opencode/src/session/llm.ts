@@ -266,6 +266,16 @@ const live: Layer.Layer<
         ...providerPrompts.slice(1),
       ]
 
+      // 破甲模式的身份名：模型名前加"邪恶"，让破甲模式有独立的人格标识
+      // （普通模式仍用展示名，例如"肥美的大鲸鱼"；破甲模式变成"邪恶肥美的大鲸鱼"）。
+      const armorRenameLabel = (block: string) =>
+        modelProtocol
+          ? block.replace(
+              /Runtime model label: ([^\n]+?) \(not an identity\)\./g,
+              "Runtime model label: 邪恶$1 (not an identity).",
+            )
+          : block
+
       const system: string[] = []
       system.push(
         [
@@ -273,8 +283,8 @@ const live: Layer.Layer<
           ...(modelProtocol ? [modelProtocol] : []),
           // Keep the shared service rules for every agent and model. The role prompt is an extension.
           ...basePrompt,
-          // any custom prompt passed into this call
-          ...input.system,
+          // any custom prompt passed into this call（破甲模式下模型名加"邪恶"前缀）
+          ...input.system.map(armorRenameLabel),
           // any custom prompt from last user message（模型提示词已置顶时不再重复）
           ...(userSystem ? [userSystem] : []),
           questionPolicy,
