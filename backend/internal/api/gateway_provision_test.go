@@ -362,7 +362,8 @@ func TestGatewayDeviceModelsCarryPreset(t *testing.T) {
 				OutputModalities: []string{"text"},
 				ContextLimit:     128000,
 				OutputLimit:      8192,
-				Reasoning:        "high",
+				// 思考强度是多选：勾了三档 → 三档都可切换
+				ReasoningLevels: []string{"low", "medium", "high"},
 			},
 		},
 	}
@@ -387,7 +388,32 @@ func TestGatewayDeviceModelsCarryPreset(t *testing.T) {
 	if item.Thinking == nil || !item.Thinking.Supported || len(item.Thinking.OverrideVariants) != 3 {
 		t.Fatalf("思考强度未下发：%+v", item.Thinking)
 	}
+	if len(item.Modalities.Output) != 1 || item.Modalities.Output[0] != "text" {
+		t.Fatalf("输出方式未下发：%+v", item.Modalities.Output)
+	}
 	if got := item.Variants["high"].(map[string]any)["reasoningEffort"]; got != "high" {
 		t.Fatalf("档位映射不对：%+v", item.Variants)
+	}
+}
+
+// 只勾一档 = 固定强度（variants 里只有一个）。
+func TestGatewayDeviceModelsSingleReasoningLevel(t *testing.T) {
+	policy := model.MembershipModelPolicy{
+		Tier:       "plus",
+		ProviderID: "cc-plus",
+		Models:     []string{"cc-plus-flash"},
+		Presets: map[string]model.ModelPreset{
+			"cc-plus-flash": {ReasoningLevels: []string{"medium"}},
+		},
+	}
+	models := gatewayDeviceModels(policy)
+	if len(models) != 1 || models[0].Thinking == nil {
+		t.Fatalf("应下发思考能力：%+v", models)
+	}
+	if got := len(models[0].Thinking.OverrideVariants); got != 1 {
+		t.Fatalf("单档位只应有一个 variant，实际 %d", got)
+	}
+	if _, ok := models[0].Variants["medium"]; !ok {
+		t.Fatalf("档位不对：%+v", models[0].Variants)
 	}
 }

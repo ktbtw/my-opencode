@@ -162,14 +162,18 @@ type ModelPreset struct {
 	OutputModalities []string `json:"output_modalities,omitempty"`
 	ContextLimit     int64    `json:"context_limit,omitempty"`
 	OutputLimit      int64    `json:"output_limit,omitempty"`
-	// Reasoning 是"思考强度"档位：off（不开启）/ low / medium / high。
+	// ReasoningLevels 是"思考强度"可选档位（多选）：low / medium / high。
+	// 空数组 = 不开启思考；单档位 = 固定强度；多档 = 用户可在 App 里切换。
+	ReasoningLevels []string `json:"reasoning_levels,omitempty"`
+	// Reasoning 兼容旧的单档位写法，归一化时并入 ReasoningLevels。
 	Reasoning string `json:"reasoning,omitempty"`
 }
 
 // Empty 表示这个预设什么都没配，可整条丢掉。
 func (p ModelPreset) Empty() bool {
 	return len(p.InputModalities) == 0 && len(p.OutputModalities) == 0 &&
-		p.ContextLimit == 0 && p.OutputLimit == 0 && p.Reasoning == ""
+		p.ContextLimit == 0 && p.OutputLimit == 0 &&
+		len(p.ReasoningLevels) == 0 && p.Reasoning == ""
 }
 
 // Normalize 收敛预设：去掉空项、未知档位按 off 处理。
@@ -182,15 +186,41 @@ func (p ModelPreset) Normalize() ModelPreset {
 	if p.OutputLimit < 0 {
 		p.OutputLimit = 0
 	}
-	switch strings.ToLower(strings.TrimSpace(p.Reasoning)) {
-	case "low", "medium", "high":
-		p.Reasoning = strings.ToLower(strings.TrimSpace(p.Reasoning))
-	case "off", "none", "disabled":
-		p.Reasoning = "off"
-	default:
-		p.Reasoning = ""
+	// 思考强度：多档位，合并旧写法后去重、按低→高排序
+	levels := append([]string{}, p.ReasoningLevels...)
+	if single := strings.ToLower(strings.TrimSpace(p.Reasoning)); single != "" && single != "off" {
+		levels = append(levels, single)
 	}
+	seen := map[string]bool{}
+	p.ReasoningLevels = nil
+	for _, level := range []string{"low", "medium", "high"} {
+		for _, item := range levels {
+			if strings.ToLower(strings.TrimSpace(item)) == level {
+				if !seen[level] {
+					seen[level] = true
+					p.ReasoningLevels = append(p.ReasoningLevels, level)
+				}
+			}
+		}
+	}
+	p.Reasoning = ""
 	return p
+}
+
+// ReasoningLevelNames 把档位翻译成控制台/日志用的中文名。
+func ReasoningLevelNames(levels []string) []string {
+	names := make([]string, 0, len(levels))
+	for _, level := range levels {
+		switch level {
+		case "low":
+			names = append(names, "低")
+		case "medium":
+			names = append(names, "中")
+		case "high":
+			names = append(names, "高")
+		}
+	}
+	return names
 }
 
 func normalizeModalities(values []string) []string {

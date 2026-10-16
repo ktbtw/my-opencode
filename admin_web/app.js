@@ -4823,7 +4823,12 @@ function renderMembershipPage() {
       const action = event.target.closest("[data-membership-action]");
       if (!action) return;
       const row = event.target.closest("[data-entry-index]");
-      handleMembershipAction(action.dataset.membershipAction, Number(node.dataset.tierIndex), row ? Number(row.dataset.entryIndex) : -1);
+      handleMembershipAction(
+        action.dataset.membershipAction,
+        Number(node.dataset.tierIndex),
+        row ? Number(row.dataset.entryIndex) : -1,
+        action.dataset.preset || "",
+      );
     });
   });
 }
@@ -4843,10 +4848,20 @@ function membershipTierPanel(policy, tierIndex, models) {
       (entry, entryIndex) => {
         const preset = entry.preset || {};
         const inputs = preset.input_modalities || [];
-        const modalityBox = (value, label) => `
+        const outputs = preset.output_modalities || [];
+        const levels = preset.reasoning_levels || (preset.reasoning ? [preset.reasoning] : []);
+        const modalityBox = (direction, value, label) => {
+          const list = direction === "input" ? inputs : outputs;
+          return `
           <label class="switch-row preset-check">
             <span>${label}</span>
-            <input type="checkbox" data-field="preset_modality" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${inputs.includes(value) ? "checked" : ""} />
+            <input type="checkbox" data-field="preset_modality" data-direction="${direction}" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${list.includes(value) ? "checked" : ""} />
+          </label>`;
+        };
+        const thinkingBox = (value, label) => `
+          <label class="switch-row preset-check">
+            <span>${label}</span>
+            <input type="checkbox" data-field="preset_reasoning_level" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${levels.includes(value) ? "checked" : ""} />
           </label>`;
         return `
       <div class="membership-model-entry" data-entry-index="${entryIndex}">
@@ -4858,21 +4873,33 @@ function membershipTierPanel(policy, tierIndex, models) {
         </div>
         <details class="membership-preset">
           <summary>参数预设（上下文 / 最大输出 / 输入方式 / 思考强度）</summary>
-          <div class="form-grid three">
+          <div class="preset-actions">
+            <span class="muted">一键预设：</span>
+            ${Object.entries(MEMBERSHIP_PRESET_TEMPLATES).map(([key, item]) => `
+              <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="${key}">${item.label}</button>`).join("")}
+            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="auto">按模型智能填充</button>
+            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="clear">清空</button>
+          </div>
+          <div class="form-grid two">
             <label><span>上下文（tokens，0=不限）</span><input data-field="preset_context" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.context_limit ? String(preset.context_limit) : "")}" placeholder="128000" /></label>
             <label><span>最大输出（tokens，0=不限）</span><input data-field="preset_output" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.output_limit ? String(preset.output_limit) : "")}" placeholder="8192" /></label>
-            <label><span>思考强度</span><select data-field="preset_reasoning" data-tier="${tierIndex}" data-entry="${entryIndex}">
-              ${[["", "不开启"], ["low", "低"], ["medium", "中"], ["high", "高"]]
-                .map(([value, label]) => `<option value="${value}"${(preset.reasoning || "") === value ? " selected" : ""}>${label}</option>`)
-                .join("")}
-            </select></label>
           </div>
           <div class="form-grid three preset-modalities">
-            ${modalityBox("text", "文本输入")}
-            ${modalityBox("image", "图片输入")}
-            ${modalityBox("audio", "音频输入")}
+            ${modalityBox("input", "text", "文本输入")}
+            ${modalityBox("input", "image", "图片输入")}
+            ${modalityBox("input", "audio", "音频输入")}
           </div>
-          <p class="muted">留空表示不预设，由客户端自己判断；填了就会写进设备上该模型的配置。</p>
+          <div class="form-grid three preset-modalities">
+            ${modalityBox("output", "text", "文本输出")}
+            ${modalityBox("output", "image", "图片输出")}
+            ${modalityBox("output", "audio", "音频输出")}
+          </div>
+          <div class="form-grid three preset-modalities">
+            ${thinkingBox("low", "思考 · 低")}
+            ${thinkingBox("medium", "思考 · 中")}
+            ${thinkingBox("high", "思考 · 高")}
+          </div>
+          <p class="muted">思考强度可多选：勾一档=固定强度，勾多档=用户可在 App 里切换；都不勾=不开启。留空表示不预设。</p>
         </details>
       </div>`;
       }
@@ -4947,11 +4974,23 @@ function readMembershipForm() {
     if (field === "preset_modality") {
       const entry = policy.entries[entryIndex];
       entry.preset = entry.preset || {};
-      const list = entry.preset.input_modalities || [];
+      const key = node.dataset.direction === "output" ? "output_modalities" : "input_modalities";
+      const list = entry.preset[key] || [];
       if (node.checked) {
         if (!list.includes(node.value)) list.push(node.value);
       } else {
-        entry.preset.input_modalities = list.filter((item) => item !== node.value);
+        entry.preset[key] = list.filter((item) => item !== node.value);
+      }
+      return;
+    }
+    if (field === "preset_reasoning_level") {
+      const entry = policy.entries[entryIndex];
+      entry.preset = entry.preset || {};
+      const list = entry.preset.reasoning_levels || [];
+      if (node.checked) {
+        if (!list.includes(node.value)) entry.preset.reasoning_levels = [...list, node.value];
+      } else {
+        entry.preset.reasoning_levels = list.filter((item) => item !== node.value);
       }
       return;
     }
@@ -4991,7 +5030,39 @@ function readMembershipForm() {
   return policies;
 }
 
-function handleMembershipAction(action, tierIndex, entryIndex) {
+// 一键预设：点击就把整套参数填进这个模型（参考 Flutter 端"OpenCode 预设"的呈现方式）
+const MEMBERSHIP_PRESET_TEMPLATES = {
+  chat:     { label: "通用对话",        input: ["text"],          output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: [] },
+  vision:   { label: "视觉 + 思考",     input: ["text", "image"], output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: ["low", "medium", "high"] },
+  long:     { label: "长上下文",        input: ["text"],          output: ["text"], context: 1000000, maxOutput: 32768, reasoning: ["low", "medium", "high"] },
+  fast:     { label: "短问答 · 无思考", input: ["text"],          output: ["text"], context: 32000,   maxOutput: 4096,  reasoning: [] },
+};
+
+// 按模型名/展示名猜一套预设，猜不中就按通用对话兜底。
+function inferMembershipPreset(entry) {
+  const text = `${entry.real_model || ""} ${entry.alias || ""} ${entry.display_name || ""}`.toLowerCase();
+  const preset = { ...MEMBERSHIP_PRESET_TEMPLATES.chat, input: ["text"], output: ["text"], reasoning: [] };
+  if (/(vision|vl\b|image|gpt-4o|gemini|claude-3|multimodal|omni)/.test(text)) {
+    preset.input = ["text", "image"];
+  }
+  if (/(1m|1000000|million)/.test(text)) {
+    preset.context = 1000000;
+  } else if (/(200k|\b200000\b)/.test(text)) {
+    preset.context = 200000;
+  }
+  if (/(reason|thinking|o1|o3|o4|r1|deepseek|qwq|glm-z|flash)/.test(text)) {
+    preset.reasoning = ["low", "medium", "high"];
+  }
+  if (/(audio|voice|tts)/.test(text)) {
+    preset.input = Array.from(new Set([...preset.input, "audio"]));
+  }
+  if (/(image-gen|dall|生图|imagen)/.test(text)) {
+    preset.output = Array.from(new Set([...preset.output, "image"]));
+  }
+  return preset;
+}
+
+function handleMembershipAction(action, tierIndex, entryIndex, presetKey) {
   const policies = readMembershipForm();
   const policy = policies[tierIndex];
   if (!policy) return;
@@ -5000,7 +5071,21 @@ function handleMembershipAction(action, tierIndex, entryIndex) {
     loadMembershipPolicies();
     return;
   }
-  if (action === "add-entry") {
+  if (action === "apply-preset" && entryIndex >= 0) {
+    const entry = policy.entries[entryIndex] || {};
+    const template = presetKey === "auto" ? inferMembershipPreset(entry) : MEMBERSHIP_PRESET_TEMPLATES[presetKey];
+    if (presetKey === "clear") {
+      delete entry.preset;
+    } else if (template) {
+      entry.preset = {
+        input_modalities: template.input.slice(),
+        output_modalities: template.output.slice(),
+        context_limit: template.context,
+        output_limit: template.maxOutput,
+        reasoning_levels: template.reasoning.slice(),
+      };
+    }
+  } else if (action === "add-entry") {
     const gatewayModels = (state.membershipGateway && state.membershipGateway.allowed_models) || [];
     policy.entries.push({ real_model: gatewayModels[0] || "", alias: "", display_name: "" });
   } else if (action === "remove-entry" && entryIndex >= 0) {

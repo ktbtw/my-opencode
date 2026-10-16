@@ -508,11 +508,11 @@ func applyModelPreset(item model.DeviceAIModel, preset model.ModelPreset) model.
 		item.Output = preset.OutputLimit
 		item.ManualOutput = preset.OutputLimit
 	}
-	switch preset.Reasoning {
-	case "low", "medium", "high":
+	// 思考强度：按勾选的档位生成 variants（与启动器/App 的既有约定一致），
+	// 勾一档 = 固定强度，勾多档 = 用户可在 App 里切换。
+	if len(preset.ReasoningLevels) > 0 {
 		variants := map[string]any{}
-		// 与启动器/App 的既有约定一致：variants 里每档对应一个 reasoningEffort。
-		for _, level := range []string{"low", "medium", "high"} {
+		for _, level := range preset.ReasoningLevels {
 			variants[level] = map[string]any{"reasoningEffort": level}
 		}
 		item.Variants = variants
@@ -523,7 +523,7 @@ func applyModelPreset(item model.DeviceAIModel, preset model.ModelPreset) model.
 			OverrideVariants: variants,
 			Variants:         variants,
 		}
-	case "off":
+	} else {
 		item.Thinking = &model.DeviceAIThinking{Supported: false}
 	}
 	return item

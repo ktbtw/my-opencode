@@ -332,3 +332,7 @@ body.membership-view .recommendation-card { overflow: visible; }
 .preset-modalities { margin-top: 10px; }
 .preset-check { padding: 8px 10px; }
 .preset-check input { width: 18px; height: 18px; accent-color: var(--primary); box-shadow: none; }
+
+/* 一键预设按钮行 */
+.preset-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 4px; }
+.preset-actions .muted { margin-right: 2px; }
