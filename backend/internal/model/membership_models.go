@@ -1,6 +1,9 @@
 package model
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // 会员等级 → 反代网关的「模型包 + 额度包」策略。
 //
@@ -39,9 +42,11 @@ type MembershipModelPolicy struct {
 	RealModels map[string]string `json:"real_models,omitempty"`
 	// ModelNames 是「模型 id → 展示名」：id 必须是网关真实模型（用于请求与鉴权），
 	// 展示名随便起，App 的模型列表显示的就是它。
-	ModelNames     map[string]string `json:"model_names,omitempty"`
-	Limits         GatewayLimits     `json:"limits,omitempty"`
-	DailyCostMicro int64             `json:"daily_cost_micro,omitempty"` // 兼容写法，与 Limits.DailyCostMicro 取较大者
+	ModelNames map[string]string `json:"model_names,omitempty"`
+	Limits     GatewayLimits     `json:"limits,omitempty"`
+	// Presets 按对外模型名（别名）索引：随下发把上下文/最大输出/多模态/思考强度写进设备配置。
+	Presets        map[string]ModelPreset `json:"presets,omitempty"`
+	DailyCostMicro int64                  `json:"daily_cost_micro,omitempty"` // 兼容写法，与 Limits.DailyCostMicro 取较大者
 }
 
 // ModelPolicyForTier 返回等级对应的默认策略（未配置模型包时不开通专属模型）。
@@ -151,10 +156,68 @@ const (
 )
 
 // TierModelEntry 是控制台里编辑的一行：真实模型 → 对外别名 / 展示名。
+// ModelPreset 是会员模型的参数预设：控制台可调，随下发写入设备配置。
+type ModelPreset struct {
+	InputModalities  []string `json:"input_modalities,omitempty"`
+	OutputModalities []string `json:"output_modalities,omitempty"`
+	ContextLimit     int64    `json:"context_limit,omitempty"`
+	OutputLimit      int64    `json:"output_limit,omitempty"`
+	// Reasoning 是"思考强度"档位：off（不开启）/ low / medium / high。
+	Reasoning string `json:"reasoning,omitempty"`
+}
+
+// Empty 表示这个预设什么都没配，可整条丢掉。
+func (p ModelPreset) Empty() bool {
+	return len(p.InputModalities) == 0 && len(p.OutputModalities) == 0 &&
+		p.ContextLimit == 0 && p.OutputLimit == 0 && p.Reasoning == ""
+}
+
+// Normalize 收敛预设：去掉空项、未知档位按 off 处理。
+func (p ModelPreset) Normalize() ModelPreset {
+	p.InputModalities = normalizeModalities(p.InputModalities)
+	p.OutputModalities = normalizeModalities(p.OutputModalities)
+	if p.ContextLimit < 0 {
+		p.ContextLimit = 0
+	}
+	if p.OutputLimit < 0 {
+		p.OutputLimit = 0
+	}
+	switch strings.ToLower(strings.TrimSpace(p.Reasoning)) {
+	case "low", "medium", "high":
+		p.Reasoning = strings.ToLower(strings.TrimSpace(p.Reasoning))
+	case "off", "none", "disabled":
+		p.Reasoning = "off"
+	default:
+		p.Reasoning = ""
+	}
+	return p
+}
+
+func normalizeModalities(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		switch value {
+		case "text", "image", "audio", "video":
+		default:
+			continue
+		}
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 type TierModelEntry struct {
-	RealModel   string `json:"real_model"`
-	Alias       string `json:"alias,omitempty"`
-	DisplayName string `json:"display_name,omitempty"`
+	RealModel   string       `json:"real_model"`
+	Alias       string       `json:"alias,omitempty"`
+	DisplayName string       `json:"display_name,omitempty"`
+	Preset      *ModelPreset `json:"preset,omitempty"`
 }
 
 // 额度口径：控制台可自由选择按 Token、按金额，或两者都启用（谁先到谁生效）。
@@ -214,6 +277,7 @@ func (t MembershipTierPolicy) ToPolicy() MembershipModelPolicy {
 	if !t.Enabled {
 		return policy.Normalize()
 	}
+	presets := map[string]ModelPreset{}
 	for _, entry := range t.Entries {
 		real := strings.TrimSpace(entry.RealModel)
 		if real == "" {
@@ -224,12 +288,20 @@ func (t MembershipTierPolicy) ToPolicy() MembershipModelPolicy {
 			id = real
 		}
 		policy.Models = append(policy.Models, id)
+		if entry.Preset != nil {
+			if preset := entry.Preset.Normalize(); !preset.Empty() {
+				presets[id] = preset
+			}
+		}
 		if name := strings.TrimSpace(entry.DisplayName); name != "" {
 			policy.ModelNames[id] = name
 		}
 		if id != real {
 			policy.RealModels[id] = real
 		}
+	}
+	if len(presets) > 0 {
+		policy.Presets = presets
 	}
 	return policy.Normalize()
 }

@@ -95,3 +95,47 @@ func TestTierPolicyQuotaModeSelectsWhichLimitsApply(t *testing.T) {
 		t.Fatalf("只填 token 应推断为 token：%s", got)
 	}
 }
+
+// 参数预设：归一化 + 映射到 policy（按别名索引）。
+func TestModelPresetNormalizeAndPolicyMapping(t *testing.T) {
+	preset := ModelPreset{
+		InputModalities:  []string{"IMAGE", "text", "text", "weird"},
+		OutputModalities: []string{"text"},
+		ContextLimit:     128000,
+		OutputLimit:      8192,
+		Reasoning:        "HIGH",
+	}.Normalize()
+	if len(preset.InputModalities) != 2 || preset.InputModalities[0] != "image" || preset.InputModalities[1] != "text" {
+		t.Fatalf("多模态应去重排序并过滤未知项：%+v", preset.InputModalities)
+	}
+	if preset.Reasoning != "high" {
+		t.Fatalf("思考强度应小写归一：%q", preset.Reasoning)
+	}
+	if (ModelPreset{Reasoning: "whatever"}).Normalize().Reasoning != "" {
+		t.Fatal("未知档位应清空")
+	}
+
+	tier := MembershipTierPolicy{
+		Tier:    "pro",
+		Enabled: true,
+		Entries: []TierModelEntry{{
+			RealModel:   "deepseek-v4.1-flash-free",
+			Alias:       "cc-pro-flash",
+			DisplayName: "高级专线",
+			Preset:      &preset,
+		}},
+	}
+	policy := tier.ToPolicy()
+	got, ok := policy.Presets["cc-pro-flash"]
+	if !ok {
+		t.Fatalf("预设应按别名索引：%+v", policy.Presets)
+	}
+	if got.ContextLimit != 128000 || got.OutputLimit != 8192 || got.Reasoning != "high" {
+		t.Fatalf("预设内容不对：%+v", got)
+	}
+	// 空预设不该出现
+	empty := MembershipTierPolicy{Tier: "plus", Enabled: true, Entries: []TierModelEntry{{RealModel: "m", Alias: "a", Preset: &ModelPreset{}}}}
+	if len(empty.ToPolicy().Presets) != 0 {
+		t.Fatal("空预设应被丢弃")
+	}
+}

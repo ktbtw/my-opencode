@@ -1120,7 +1120,8 @@ func (a *App) requestDeviceAIConfig(
 	select {
 	case <-ctx.Done():
 		return model.DeviceAIConfigResultPayload{}, ctx.Err()
-	case <-time.After(20 * time.Second):
+	// 启动器保存时会顺带拉取上游模型列表，20s 可能不够（配置其实已写入，只是回执慢）。
+	case <-time.After(60 * time.Second):
 		return model.DeviceAIConfigResultPayload{}, fmt.Errorf("设备响应超时")
 	case result := <-resultCh:
 		if !result.Success {

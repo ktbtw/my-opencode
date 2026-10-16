@@ -323,3 +323,12 @@ body.membership-view .recommendation-card { overflow: visible; }
 .quota-mode-row input { width: 18px; height: 18px; accent-color: var(--primary); box-shadow: none; }
 
 .quota-group[style*="display: none"] { display: none !important; }
+
+/* 模型参数预设：折叠面板 + 多模态开关 */
+.membership-model-entry { display: grid; gap: 8px; margin-bottom: 10px; }
+.membership-preset { border: 1px solid var(--border-light); border-radius: 10px; padding: 10px 12px; }
+.membership-preset summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.membership-preset[open] summary { margin-bottom: 10px; color: var(--text-primary); }
+.preset-modalities { margin-top: 10px; }
+.preset-check { padding: 8px 10px; }
+.preset-check input { width: 18px; height: 18px; accent-color: var(--primary); box-shadow: none; }

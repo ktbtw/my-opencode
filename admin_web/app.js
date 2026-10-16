@@ -4797,7 +4797,7 @@ function renderMembershipPage() {
   customSelects.forEach((_, select) => {
     if (!select.isConnected) customSelects.delete(select);
   });
-  el.grid.querySelectorAll('select[data-field="real_model"]').forEach((select) => {
+  el.grid.querySelectorAll("select").forEach((select) => {
     enhanceSelect(select);
     syncCustomSelect(select);
   });
@@ -4840,13 +4840,42 @@ function membershipTierPanel(policy, tierIndex, models) {
   };
   const rows = (policy.entries || [])
     .map(
-      (entry, entryIndex) => `
-      <div class="membership-model-row" data-entry-index="${entryIndex}">
-        <label><span>真实模型</span><select data-field="real_model" data-tier="${tierIndex}" data-entry="${entryIndex}">${optionsFor(entry.real_model)}</select></label>
-        <label><span>对外模型名（会员调用时用）</span><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.alias || "")}" placeholder="留空则用真实模型名" /></label>
-        <label><span>展示名（App 里显示的名称）</span><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.display_name || "")}" placeholder="例如 高级专线 · DeepSeek Flash" /></label>
-        <button type="button" class="compact-button" data-membership-action="remove-entry">移除</button>
-      </div>`
+      (entry, entryIndex) => {
+        const preset = entry.preset || {};
+        const inputs = preset.input_modalities || [];
+        const modalityBox = (value, label) => `
+          <label class="switch-row preset-check">
+            <span>${label}</span>
+            <input type="checkbox" data-field="preset_modality" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${inputs.includes(value) ? "checked" : ""} />
+          </label>`;
+        return `
+      <div class="membership-model-entry" data-entry-index="${entryIndex}">
+        <div class="membership-model-row">
+          <label><span>真实模型</span><select data-field="real_model" data-tier="${tierIndex}" data-entry="${entryIndex}">${optionsFor(entry.real_model)}</select></label>
+          <label><span>对外模型名（会员调用时用）</span><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.alias || "")}" placeholder="留空则用真实模型名" /></label>
+          <label><span>展示名（App 里显示的名称）</span><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.display_name || "")}" placeholder="例如 高级专线 · DeepSeek Flash" /></label>
+          <button type="button" class="compact-button" data-membership-action="remove-entry">移除</button>
+        </div>
+        <details class="membership-preset">
+          <summary>参数预设（上下文 / 最大输出 / 输入方式 / 思考强度）</summary>
+          <div class="form-grid three">
+            <label><span>上下文（tokens，0=不限）</span><input data-field="preset_context" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.context_limit ? String(preset.context_limit) : "")}" placeholder="128000" /></label>
+            <label><span>最大输出（tokens，0=不限）</span><input data-field="preset_output" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.output_limit ? String(preset.output_limit) : "")}" placeholder="8192" /></label>
+            <label><span>思考强度</span><select data-field="preset_reasoning" data-tier="${tierIndex}" data-entry="${entryIndex}">
+              ${[["", "不开启"], ["low", "低"], ["medium", "中"], ["high", "高"]]
+                .map(([value, label]) => `<option value="${value}"${(preset.reasoning || "") === value ? " selected" : ""}>${label}</option>`)
+                .join("")}
+            </select></label>
+          </div>
+          <div class="form-grid three preset-modalities">
+            ${modalityBox("text", "文本输入")}
+            ${modalityBox("image", "图片输入")}
+            ${modalityBox("audio", "音频输入")}
+          </div>
+          <p class="muted">留空表示不预设，由客户端自己判断；填了就会写进设备上该模型的配置。</p>
+        </details>
+      </div>`;
+      }
     )
     .join("");
   const limits = policy.limits || {};
@@ -4915,6 +4944,30 @@ function readMembershipForm() {
     }
     if (field === "provider_id") { policy.provider_id = node.value.trim(); return; }
     if (field === "display_name") { policy.display_name = node.value.trim(); return; }
+    if (field === "preset_modality") {
+      const entry = policy.entries[entryIndex];
+      entry.preset = entry.preset || {};
+      const list = entry.preset.input_modalities || [];
+      if (node.checked) {
+        if (!list.includes(node.value)) list.push(node.value);
+      } else {
+        entry.preset.input_modalities = list.filter((item) => item !== node.value);
+      }
+      return;
+    }
+    if (field === "preset_context" || field === "preset_output") {
+      const entry = policy.entries[entryIndex];
+      entry.preset = entry.preset || {};
+      const key = field === "preset_context" ? "context_limit" : "output_limit";
+      entry.preset[key] = node.value === "" ? 0 : Number(node.value) || 0;
+      return;
+    }
+    if (field === "preset_reasoning") {
+      const entry = policy.entries[entryIndex];
+      entry.preset = entry.preset || {};
+      entry.preset.reasoning = node.value;
+      return;
+    }
     if (field === "quota_mode") {
       if (node.checked) policy.quota_mode = node.value;
       return;

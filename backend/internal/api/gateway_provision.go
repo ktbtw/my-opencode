@@ -479,10 +479,54 @@ func (a *API) clearMemberProvider(ctx context.Context, operatorID int64, provide
 func gatewayDeviceModels(policy model.MembershipModelPolicy) []model.DeviceAIModel {
 	out := make([]model.DeviceAIModel, 0, len(policy.Models))
 	for _, id := range policy.Models {
-		// id 必须是真实模型（网关用它鉴权与转发）；name 是展示名，可自定义
-		out = append(out, model.DeviceAIModel{ID: id, Name: policy.DisplayNameFor(id), Owned: policy.ProviderID})
+		// 下发给设备的是"对外模型名（别名）"：设备用它发请求，网关再映射到真实模型，
+		// 所以真实模型名永远不会落到用户设备上；name 是展示名，可自定义。
+		item := model.DeviceAIModel{ID: id, Name: policy.DisplayNameFor(id), Owned: policy.ProviderID}
+		if preset, ok := policy.Presets[id]; ok {
+			item = applyModelPreset(item, preset)
+		}
+		out = append(out, item)
 	}
 	return out
+}
+
+// applyModelPreset 把控制台预设写进下发的模型条目：
+// 上下文/最大输出按"手填值"下发（不会被供应商返回值覆盖），多模态与思考强度同理。
+func applyModelPreset(item model.DeviceAIModel, preset model.ModelPreset) model.DeviceAIModel {
+	if len(preset.InputModalities) > 0 || len(preset.OutputModalities) > 0 {
+		item.Modalities = &model.DeviceAIModalities{
+			Input:  preset.InputModalities,
+			Output: preset.OutputModalities,
+		}
+		item.ModalitiesSource = "manual"
+	}
+	if preset.ContextLimit > 0 {
+		item.Context = preset.ContextLimit
+		item.ManualContext = preset.ContextLimit
+	}
+	if preset.OutputLimit > 0 {
+		item.Output = preset.OutputLimit
+		item.ManualOutput = preset.OutputLimit
+	}
+	switch preset.Reasoning {
+	case "low", "medium", "high":
+		variants := map[string]any{}
+		// 与启动器/App 的既有约定一致：variants 里每档对应一个 reasoningEffort。
+		for _, level := range []string{"low", "medium", "high"} {
+			variants[level] = map[string]any{"reasoningEffort": level}
+		}
+		item.Variants = variants
+		item.Thinking = &model.DeviceAIThinking{
+			Supported:        true,
+			Source:           "manual",
+			OverrideEnabled:  true,
+			OverrideVariants: variants,
+			Variants:         variants,
+		}
+	case "off":
+		item.Thinking = &model.DeviceAIThinking{Supported: false}
+	}
+	return item
 }
 
 // ConvergeOperatorMembershipAsync 供管理操作（改等级/兑换）调用，不阻塞请求。

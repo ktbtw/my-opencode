@@ -347,3 +347,47 @@ func TestGatewayDeviceModelsKeepsRealIDWithCustomName(t *testing.T) {
 		t.Fatalf("owned_by 应为 provider id：got %q", items[0].Owned)
 	}
 }
+
+// 参数预设要真的进到下发的模型条目：多模态 / 上下文 / 最大输出 / 思考强度。
+func TestGatewayDeviceModelsCarryPreset(t *testing.T) {
+	policy := model.MembershipModelPolicy{
+		Tier:       "pro",
+		ProviderID: "cc-pro",
+		Models:     []string{"cc-pro-flash"},
+		ModelNames: map[string]string{"cc-pro-flash": "高级专线 · DeepSeek Flash"},
+		RealModels: map[string]string{"cc-pro-flash": "deepseek-v4.1-flash-free"},
+		Presets: map[string]model.ModelPreset{
+			"cc-pro-flash": {
+				InputModalities:  []string{"text", "image"},
+				OutputModalities: []string{"text"},
+				ContextLimit:     128000,
+				OutputLimit:      8192,
+				Reasoning:        "high",
+			},
+		},
+	}
+	models := gatewayDeviceModels(policy)
+	if len(models) != 1 {
+		t.Fatalf("应下发 1 个模型：%+v", models)
+	}
+	item := models[0]
+	// 设备侧只应看到别名，真实模型名不下发
+	if item.ID != "cc-pro-flash" || item.Name != "高级专线 · DeepSeek Flash" {
+		t.Fatalf("id/name 不对：%+v", item)
+	}
+	if strings.Contains(item.Name, "deepseek") || strings.Contains(item.ID, "deepseek") {
+		t.Fatalf("真实模型名不应出现在设备侧：%+v", item)
+	}
+	if item.Modalities == nil || len(item.Modalities.Input) != 2 || item.ModalitiesSource != "manual" {
+		t.Fatalf("多模态未下发：%+v", item.Modalities)
+	}
+	if item.Context != 128000 || item.ManualContext != 128000 || item.Output != 8192 || item.ManualOutput != 8192 {
+		t.Fatalf("上下文/最大输出未下发：context=%d output=%d", item.Context, item.Output)
+	}
+	if item.Thinking == nil || !item.Thinking.Supported || len(item.Thinking.OverrideVariants) != 3 {
+		t.Fatalf("思考强度未下发：%+v", item.Thinking)
+	}
+	if got := item.Variants["high"].(map[string]any)["reasoningEffort"]; got != "high" {
+		t.Fatalf("档位映射不对：%+v", item.Variants)
+	}
+}
