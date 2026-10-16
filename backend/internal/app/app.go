@@ -1451,6 +1451,9 @@ func (a *App) Router() http.Handler {
 	// 会员分级兜底巡检：存量会员/策略调整/上次失败都会在这里自愈
 	h.StartMembershipReconciler(envDuration("MEMBERSHIP_RECONCILE_INTERVAL", 10*time.Minute))
 	r.Post("/api/admin/operators/{id}/gateway-key/ensure", h.EnsureOperatorGatewayKey)
+	// 会员模型分级（控制台配置：模型包 / 别名 / 展示名 / 额度）
+	r.Get("/api/admin/membership/policies", h.GetMembershipPolicies)
+	r.Put("/api/admin/membership/policies", h.SaveMembershipPolicies)
 	r.Get("/api/skills", h.ListPublicSkills)
 	r.Get("/api/devices/{machineID}/launcher", h.GetDeviceLauncherState)
 	r.Get("/api/devices/{machineID}/launcher/diagnostics", h.GetDeviceLauncherDiagnostics)

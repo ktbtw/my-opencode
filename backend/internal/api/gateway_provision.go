@@ -268,7 +268,8 @@ func (a *API) ConvergeOperatorMembership(ctx context.Context, operatorID int64) 
 		tier = resolved
 	}
 	tier = model.NormalizeMembershipTier(tier)
-	policy := cfg.policyFor(tier)
+	// 控制台配置优先（DB），其次环境变量，最后内置默认
+	policy := a.tierPolicy(ctx, tier)
 
 	record, _ := a.store.GetOperatorGatewayKey(ctx, operatorID)
 	if record == nil {
@@ -525,7 +526,7 @@ func (a *API) GetOperatorGatewayKey(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, map[string]any{
 		"operator_id":     operatorID,
 		"membership_tier": tier,
-		"policy":          cfg.policyFor(tier),
+		"policy":          a.tierPolicy(r.Context(), tier),
 		"gateway": map[string]any{
 			"configured": cfg.enabled(), "base_url": cfg.BaseURL, "proxy_url": cfg.ProxyURL,
 			"device_base_url": cfg.deviceBaseURL(), "secret_configured": cfg.Secret != "",
@@ -579,7 +580,7 @@ func (a *API) ReconcileMembership(ctx context.Context) (int, int) {
 		if resolved, err := a.store.GetOperatorMembershipTier(operator.ID); err == nil && strings.TrimSpace(resolved) != "" {
 			tier = model.NormalizeMembershipTier(resolved)
 		}
-		policy := cfg.policyFor(tier)
+		policy := a.tierPolicy(ctx, tier)
 		record, _ := a.store.GetOperatorGatewayKey(ctx, operator.ID)
 		if !policy.GatewayEnabled() {
 			// 非会员（或该等级未开专属模型）：有残留钥匙才需要收尾

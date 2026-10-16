@@ -33,6 +33,8 @@ type MembershipModelPolicy struct {
 	ProviderID  string   `json:"provider_id,omitempty"`
 	DisplayName string   `json:"display_name,omitempty"`
 	Models      []string `json:"models,omitempty"`
+	// RealModels 是「对外 id（别名）→ 真实模型」：用于把别名同步到网关。
+	RealModels map[string]string `json:"real_models,omitempty"`
 	// ModelNames 是「模型 id → 展示名」：id 必须是网关真实模型（用于请求与鉴权），
 	// 展示名随便起，App 的模型列表显示的就是它。
 	ModelNames     map[string]string `json:"model_names,omitempty"`
@@ -145,3 +147,90 @@ const (
 	GatewayKeyStateSuspended    = "suspended"
 	GatewayKeyStateFailed       = "failed"
 )
+
+// TierModelEntry 是控制台里编辑的一行：真实模型 → 对外别名 / 展示名。
+type TierModelEntry struct {
+	RealModel   string `json:"real_model"`
+	Alias       string `json:"alias,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
+// MembershipTierPolicy 是控制台上可编辑的等级策略（一个等级一行配置）。
+type MembershipTierPolicy struct {
+	Tier        string           `json:"tier"`
+	ProviderID  string           `json:"provider_id,omitempty"`
+	DisplayName string           `json:"display_name,omitempty"`
+	Entries     []TierModelEntry `json:"entries,omitempty"`
+	Limits      GatewayLimits    `json:"limits,omitempty"`
+	Enabled     bool             `json:"enabled"`
+	UpdatedAt   string           `json:"updated_at,omitempty"`
+}
+
+// ToPolicy 把控制台配置转成收敛用的策略：
+// 对外用别名（没填别名就用真实模型名），并记录别名→真实的映射供网关同步。
+func (t MembershipTierPolicy) ToPolicy() MembershipModelPolicy {
+	policy := MembershipModelPolicy{
+		Tier:        t.Tier,
+		ProviderID:  t.ProviderID,
+		DisplayName: t.DisplayName,
+		Limits:      t.Limits,
+		RealModels:  map[string]string{},
+		ModelNames:  map[string]string{},
+	}
+	if !t.Enabled {
+		return policy.Normalize()
+	}
+	for _, entry := range t.Entries {
+		real := strings.TrimSpace(entry.RealModel)
+		if real == "" {
+			continue
+		}
+		id := strings.TrimSpace(entry.Alias)
+		if id == "" {
+			id = real
+		}
+		policy.Models = append(policy.Models, id)
+		if name := strings.TrimSpace(entry.DisplayName); name != "" {
+			policy.ModelNames[id] = name
+		}
+		if id != real {
+			policy.RealModels[id] = real
+		}
+	}
+	return policy.Normalize()
+}
+
+// NormalizeTierPolicy 收敛控制台输入。
+func (t MembershipTierPolicy) Normalize() MembershipTierPolicy {
+	t.Tier = NormalizeMembershipTier(t.Tier)
+	t.ProviderID = strings.TrimSpace(t.ProviderID)
+	t.DisplayName = strings.TrimSpace(t.DisplayName)
+	entries := make([]TierModelEntry, 0, len(t.Entries))
+	seen := map[string]bool{}
+	for _, entry := range t.Entries {
+		entry.RealModel = strings.TrimSpace(entry.RealModel)
+		entry.Alias = strings.TrimSpace(entry.Alias)
+		entry.DisplayName = strings.TrimSpace(entry.DisplayName)
+		if entry.RealModel == "" {
+			continue
+		}
+		key := entry.Alias + "\x00" + entry.RealModel
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		entries = append(entries, entry)
+	}
+	t.Entries = entries
+	if t.ProviderID == "" {
+		if t.Tier == MembershipTierPro {
+			t.ProviderID = GatewayProviderPro
+		} else {
+			t.ProviderID = GatewayProviderPlus
+		}
+	}
+	if t.DisplayName == "" {
+		t.DisplayName = "会员专属 · " + strings.ToUpper(t.Tier)
+	}
+	return t
+}

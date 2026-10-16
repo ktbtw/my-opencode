@@ -1424,6 +1424,14 @@ func (m *Memory) ListOperatorGatewayKeys(ctx context.Context, limit int) ([]mode
 	return m.archive.ListOperatorGatewayKeys(ctx, limit)
 }
 
+func (m *Memory) UpsertMembershipTierPolicy(ctx context.Context, policy model.MembershipTierPolicy) error {
+	return m.archive.UpsertMembershipTierPolicy(ctx, policy)
+}
+
+func (m *Memory) ListMembershipTierPolicies(ctx context.Context) ([]model.MembershipTierPolicy, error) {
+	return m.archive.ListMembershipTierPolicies(ctx)
+}
+
 func (m *Memory) UsernameExists(username string) (bool, error) {
 	return m.archive.UsernameExists(username)
 }

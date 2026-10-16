@@ -26,6 +26,9 @@ type TaskArchive interface {
 	UpsertOperatorGatewayKey(ctx context.Context, record model.OperatorGatewayKey) error
 	GetOperatorGatewayKey(ctx context.Context, operatorID int64) (*model.OperatorGatewayKey, error)
 	ListOperatorGatewayKeys(ctx context.Context, limit int) ([]model.OperatorGatewayKey, error)
+	// 会员模型分级策略（控制台可配）
+	UpsertMembershipTierPolicy(ctx context.Context, policy model.MembershipTierPolicy) error
+	ListMembershipTierPolicies(ctx context.Context) ([]model.MembershipTierPolicy, error)
 	UsernameExists(username string) (bool, error)
 	EmailExists(email string) (bool, error)
 	CreateOperator(username, password, email, name string) (*model.Operator, error)
@@ -179,6 +182,12 @@ func (noopArchive) UpsertOperatorGatewayKey(context.Context, model.OperatorGatew
 	return nil
 }
 func (noopArchive) GetOperatorGatewayKey(context.Context, int64) (*model.OperatorGatewayKey, error) {
+	return nil, nil
+}
+func (noopArchive) UpsertMembershipTierPolicy(context.Context, model.MembershipTierPolicy) error {
+	return nil
+}
+func (noopArchive) ListMembershipTierPolicies(context.Context) ([]model.MembershipTierPolicy, error) {
 	return nil, nil
 }
 func (noopArchive) ListOperatorGatewayKeys(context.Context, int) ([]model.OperatorGatewayKey, error) {

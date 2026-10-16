@@ -32,6 +32,10 @@ const state = {
   mcpCatalog: [],
   environmentPresets: [],
   modelPromptPresets: [],
+  membershipPolicies: [],
+  membershipGateway: null,
+  membershipWarnings: [],
+  membershipAliasSynced: false,
   promptRegistry: [],
   promptSemanticAgents: [],
   promptDeviceAgents: [],
@@ -456,7 +460,8 @@ function syncViewChrome() {
   setButtonLabel(el.newButton, chrome.newText);
   el.breadcrumbTitle.textContent = chrome.title;
   el.listTitle.textContent = state.view === "operators" ? "用户目录" : "资源目录";
-  el.statusFilterGroup.classList.toggle("hidden", state.view === "operators" || state.view === "prompts");
+  el.statusFilterGroup.classList.toggle("hidden", state.view === "operators" || state.view === "prompts" || state.view === "membership");
+  document.body.classList.toggle("membership-view", state.view === "membership");
   el.newButton.classList.toggle("hidden", !chrome.canCreate);
   el.emptyTitle.textContent = chrome.emptyTitle;
   el.emptyDescription.textContent = chrome.emptyDescription;
@@ -503,6 +508,8 @@ function dispatchViewLoad() {
       return loadToolCatalog();
     case "operators":
       return loadOperators();
+    case "membership":
+      return loadMembershipPolicies();
     default:
       return loadMCPCatalog();
   }
@@ -1228,6 +1235,10 @@ async function loadToolCatalog() {
 }
 
 function render() {
+  if (state.view === "membership") {
+    renderMembershipPage();
+    return;
+  }
   syncViewChrome();
   renderStats();
   renderCategoryFilter();
@@ -3167,6 +3178,18 @@ async function apiPost(path, body, options = {}) {
   return readResponse(response);
 }
 
+async function apiPut(path, body, options = {}) {
+  const response = await requestWithTimeout(`${state.baseUrl}${path}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${state.token}`,
+    },
+    body: JSON.stringify(body),
+  }, options.timeoutMs);
+  return readResponse(response);
+}
+
 async function requestWithTimeout(url, options, timeoutMs = 30000) {
   return fetchWithTimeout(url, options, timeoutMs);
 }
@@ -3255,6 +3278,7 @@ function initialView() {
   if (hash === "prompt-registry") return "prompts";
   if (hash === "tool-catalog") return "tools";
   if (hash === "operators") return "operators";
+  if (hash === "membership-models") return "membership";
   return "mcpCatalog";
 }
 
@@ -3265,7 +3289,7 @@ function normalizeLegacyHash() {
 }
 
 function normalizeView(view) {
-  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "modelPrompts" || view === "prompts" || view === "tools" || view === "operators") {
+  if (view === "semantic" || view === "skills" || view === "mcpCatalog" || view === "runtime" || view === "environment" || view === "modelPrompts" || view === "prompts" || view === "tools" || view === "operators" || view === "membership") {
     return view;
   }
   return "mcpCatalog";
@@ -3277,6 +3301,8 @@ function hashForView(view) {
       return "semantic-agents";
     case "skills":
       return "skills";
+    case "membership":
+      return "membership-models";
     case "mcpCatalog":
       return "mcp-catalog";
     case "runtime":
@@ -3333,6 +3359,18 @@ function viewChrome(view) {
       totalLabel: "Agent 总数",
       categoryLabel: "Skill 数量",
       deleteTitle: "删除语义 Agent",
+    },
+    membership: {
+      eyebrow: "Membership Models",
+      title: "会员模型",
+      description: "按等级配置专属模型：对外模型名（别名）、展示名与额度。保存后自动同步到网关并对该等级会员重新下发，设备上的模型列表会立刻更新。",
+      newText: "",
+      canCreate: false,
+      emptyTitle: "没有可配置的等级",
+      emptyDescription: "点击刷新重试。",
+      totalLabel: "等级数",
+      categoryLabel: "模型数",
+      deleteTitle: "",
     },
     operators: {
       eyebrow: "Membership",
@@ -4531,7 +4569,7 @@ function setDisplayMode(mode) {
 }
 
 function updateNavCounts() {
-  const counts = { mcpCatalog: state.mcpCatalog.length, skills: state.skills.length, tools: state.toolCatalog.length, semantic: state.semanticAgents.length, runtime: state.runtimeCatalog.length, environment: state.environmentPresets.length, modelPrompts: state.modelPromptPresets.length, prompts: state.promptRegistry.length, operators: state.operators.length };
+  const counts = { mcpCatalog: state.mcpCatalog.length, skills: state.skills.length, tools: state.toolCatalog.length, semantic: state.semanticAgents.length, runtime: state.runtimeCatalog.length, environment: state.environmentPresets.length, modelPrompts: state.modelPromptPresets.length, prompts: state.promptRegistry.length, operators: state.operators.length, membership: state.membershipPolicies.length };
   document.querySelectorAll("[data-count]").forEach((count) => { count.textContent = state.loadedViews.has(count.dataset.count) ? counts[count.dataset.count] : ""; });
   el.navLinks.forEach((link) => { if (link.dataset.view === state.view) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current"); });
 }
@@ -4653,3 +4691,174 @@ function handleConsoleKey(event) {
 }
 
 bootstrap();
+
+
+/* ── 会员模型分级（控制台） ────────────────────────────────────────────── */
+
+async function loadMembershipPolicies() {
+  const requestedView = state.view;
+  const loadSequence = state.loadSequence;
+  setBusy(el.refreshButton, true, "刷新中");
+  try {
+    const data = await apiGet("/api/admin/membership/policies");
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = "";
+    state.membershipPolicies = Array.isArray(data.items) ? data.items : [];
+    state.membershipGateway = data.gateway || null;
+    state.membershipWarnings = [];
+    render();
+  } catch (error) {
+    if (!isLiveLoad(requestedView, loadSequence)) return;
+    state.loadError = error.message || "加载会员模型配置失败";
+    if (error.statusCode === 401 || error.statusCode === 403) logout(error.message);
+    showToast(error.message || "加载会员模型配置失败");
+  } finally {
+    if (isLiveLoad(requestedView, loadSequence)) setBusy(el.refreshButton, false, "刷新");
+  }
+}
+
+function membershipDollars(micro) {
+  const value = Number(micro || 0) / 1e6;
+  return value ? String(value) : "";
+}
+
+function renderMembershipPage() {
+  syncViewChrome();
+  el.loadingState.classList.add("hidden");
+  el.emptyState.classList.add("hidden");
+  el.loadError.classList.toggle("hidden", !state.loadError);
+  el.loadErrorMessage.textContent = state.loadError || "";
+  const gateway = state.membershipGateway || {};
+  const models = gateway.allowed_models || [];
+  el.resultCount.textContent = `${state.membershipPolicies.length} 个等级`;
+
+  const gatewayLine = gateway.configured
+    ? `<span class="chip ok">网关已连接</span> 管理口 <code>${gateway.base_url || "-"}</code> · 设备推理口 <code>${gateway.device_base_url || "-"}</code> · 白名单 ${models.length} 个模型${gateway.secret_configured ? "" : ' · <span class="chip warn">未配置钥匙加密密钥</span>'}`
+    : `<span class="chip warn">未配置网关</span> 需要设置 CC_GATEWAY_BASE_URL 与 CC_GATEWAY_ADMIN_KEY`;
+
+  const warnings = (state.membershipWarnings || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const panels = state.membershipPolicies.map((policy, tierIndex) => membershipTierPanel(policy, tierIndex, models)).join("");
+
+  el.grid.innerHTML = `
+    <div class="membership-page">
+      <section class="membership-gateway">${gatewayLine}</section>
+      ${warnings ? `<section class="membership-warnings"><strong>提示</strong><ul>${warnings}</ul></section>` : ""}
+      ${panels}
+      <section class="membership-actions">
+        <button type="button" id="membershipSaveButton" class="primary-button">保存并生效</button>
+        <span class="membership-hint">保存后会自动同步别名到网关，并把该等级会员的设备模型列表刷新（通常几秒内）。</span>
+      </section>
+    </div>`;
+  el.grid.classList.remove("hidden");
+  const saveButton = document.getElementById("membershipSaveButton");
+  if (saveButton) saveButton.addEventListener("click", saveMembershipPolicies);
+  el.grid.querySelectorAll("[data-tier-index]").forEach((node) => {
+    node.addEventListener("click", (event) => {
+      const action = event.target.closest("[data-membership-action]");
+      if (!action) return;
+      const tierIndex = Number(node.dataset.tierIndex);
+      const actionName = action.dataset.membershipAction;
+      const row = event.target.closest("[data-entry-index]");
+      const entryIndex = row ? Number(row.dataset.entryIndex) : -1;
+      handleMembershipAction(actionName, tierIndex, entryIndex);
+    });
+  });
+}
+
+function membershipTierPanel(policy, tierIndex, models) {
+  const options = (selected) => {
+    const list = models.slice();
+    if (selected && !list.includes(selected)) list.unshift(selected);
+    return list.map((id) => `<option value="${escapeHtml(id)}"${id === selected ? " selected" : ""}>${escapeHtml(id)}</option>`).join("");
+  };
+  const rows = (policy.entries || []).map((entry, entryIndex) => `
+    <tr data-entry-index="${entryIndex}">
+      <td><select data-field="real_model" data-tier="${tierIndex}" data-entry="${entryIndex}">${options(entry.real_model)}</select></td>
+      <td><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeHtml(entry.alias || "")}" placeholder="留空=用真实模型名" /></td>
+      <td><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeHtml(entry.display_name || "")}" placeholder="App 里显示的名字" /></td>
+      <td><button type="button" class="text-button" data-membership-action="remove-entry">移除</button></td>
+    </tr>`).join("");
+  return `
+    <section class="membership-tier" data-tier-index="${tierIndex}">
+      <header>
+        <strong>${policy.tier === "pro" ? "Pro 会员" : policy.tier === "plus" ? "Plus 会员" : "普通用户"}</strong>
+        <label class="membership-toggle"><input type="checkbox" data-field="enabled" data-tier="${tierIndex}" ${policy.enabled ? "checked" : ""} /> 发放专属模型</label>
+      </header>
+      <div class="membership-grid">
+        <label>供应商标识<input data-field="provider_id" data-tier="${tierIndex}" value="${escapeHtml(policy.provider_id || "")}" placeholder="cc-pro" /></label>
+        <label>分组名<input data-field="display_name" data-tier="${tierIndex}" value="${escapeHtml(policy.display_name || "")}" placeholder="高级专线" /></label>
+        <label>日额度（$）<input data-field="daily_cost" data-tier="${tierIndex}" value="${membershipDollars(policy.limits && policy.limits.daily_cost_micro)}" placeholder="8" /></label>
+        <label>总额度（$）<input data-field="max_cost" data-tier="${tierIndex}" value="${membershipDollars(policy.limits && policy.limits.max_cost_micro)}" placeholder="300" /></label>
+        <label>日 token 上限<input data-field="daily_tokens" data-tier="${tierIndex}" value="${policy.limits && policy.limits.daily_tokens ? policy.limits.daily_tokens : ""}" placeholder="8000000" /></label>
+      </div>
+      <table class="membership-table">
+        <thead><tr><th>真实模型（网关白名单内）</th><th>对外模型名（别名）</th><th>展示名</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <button type="button" class="secondary-button" data-membership-action="add-entry">添加模型</button>
+    </section>`;
+}
+
+function readMembershipForm() {
+  const policies = JSON.parse(JSON.stringify(state.membershipPolicies || []));
+  el.grid.querySelectorAll("[data-field]").forEach((node) => {
+    const tierIndex = Number(node.dataset.tier);
+    const policy = policies[tierIndex];
+    if (!policy) return;
+    const field = node.dataset.field;
+    if (field === "enabled") {
+      policy.enabled = node.checked;
+      return;
+    }
+    if (field === "provider_id") { policy.provider_id = node.value.trim(); return; }
+    if (field === "display_name") { policy.display_name = node.value.trim(); return; }
+    if (field === "daily_cost" || field === "max_cost" || field === "daily_tokens") {
+      policy.limits = policy.limits || {};
+      const raw = Number(String(node.value).replace(/[^0-9.]/g, ""));
+      const micro = field === "daily_tokens" ? 0 : Math.round((Number.isFinite(raw) ? raw : 0) * 1e6);
+      if (field === "daily_cost") policy.limits.daily_cost_micro = micro;
+      if (field === "max_cost") policy.limits.max_cost_micro = micro;
+      if (field === "daily_tokens") policy.limits.daily_tokens = Number.isFinite(raw) ? Math.round(raw) : 0;
+      return;
+    }
+    const entryIndex = Number(node.dataset.entry);
+    const entry = policy.entries && policy.entries[entryIndex];
+    if (!entry) return;
+    entry[field] = node.value;
+  });
+  return policies;
+}
+
+function handleMembershipAction(action, tierIndex, entryIndex) {
+  const policies = readMembershipForm();
+  const policy = policies[tierIndex];
+  if (!policy) return;
+  policy.entries = policy.entries || [];
+  if (action === "add-entry") {
+    const gatewayModels = (state.membershipGateway && state.membershipGateway.allowed_models) || [];
+    policy.entries.push({ real_model: gatewayModels[0] || "", alias: "", display_name: "" });
+  } else if (action === "remove-entry" && entryIndex >= 0) {
+    policy.entries.splice(entryIndex, 1);
+  }
+  state.membershipPolicies = policies;
+  renderMembershipPage();
+}
+
+async function saveMembershipPolicies() {
+  const policies = readMembershipForm();
+  const button = document.getElementById("membershipSaveButton");
+  setBusy(button, true, "保存中");
+  try {
+    const result = await apiPut("/api/admin/membership/policies", { items: policies });
+    state.membershipWarnings = Array.isArray(result.warnings) ? result.warnings : [];
+    state.membershipPolicies = Array.isArray(result.items) ? result.items : policies;
+    const aliases = result.aliases ? Object.keys(result.aliases).length : 0;
+    showToast(result.alias_synced ? `已保存并生效（同步 ${aliases} 个别名，会员设备将自动刷新）` : "已保存；别名同步到网关失败，请查看提示");
+    renderMembershipPage();
+  } catch (error) {
+    showToast(error.message || "保存失败");
+  } finally {
+    const next = document.getElementById("membershipSaveButton");
+    if (next) setBusy(next, false, "保存并生效");
+  }
+}

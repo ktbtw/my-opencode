@@ -1236,6 +1236,14 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	for _, stmt := range gatewayKeySchemaStatements {
+		for _, stmt := range membershipPolicySchemaStatements {
+			if strings.TrimSpace(stmt) == "" {
+				continue
+			}
+			if _, err := db.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
 		if strings.TrimSpace(stmt) == "" {
 			continue
 		}
