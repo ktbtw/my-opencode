@@ -23,6 +23,7 @@ var gatewayKeySchemaStatements = []string{
   models_json JSON NULL,
   limits_json JSON NULL,
   provider VARCHAR(64) NULL,
+  device_base_url VARCHAR(255) NULL,
   machines_json JSON NULL,
   last_error TEXT NULL,
   updated_at DATETIME(6) NOT NULL,
@@ -48,15 +49,15 @@ func (m *MySQLArchive) UpsertOperatorGatewayKey(ctx context.Context, record mode
 	}
 	updatedAt := time.Now().UTC()
 	_, err = m.db.ExecContext(ctx, `INSERT INTO operator_gateway_keys
-  (operator_id, desired_tier, state, key_id, key_last4, key_cipher, models_json, limits_json, provider, machines_json, last_error, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  (operator_id, desired_tier, state, key_id, key_last4, key_cipher, models_json, limits_json, provider, device_base_url, machines_json, last_error, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON DUPLICATE KEY UPDATE
     desired_tier = VALUES(desired_tier), state = VALUES(state), key_id = VALUES(key_id),
     key_last4 = VALUES(key_last4), key_cipher = VALUES(key_cipher), models_json = VALUES(models_json),
-    limits_json = VALUES(limits_json), provider = VALUES(provider), machines_json = VALUES(machines_json),
+    limits_json = VALUES(limits_json), provider = VALUES(provider), device_base_url = VALUES(device_base_url), machines_json = VALUES(machines_json),
     last_error = VALUES(last_error), updated_at = VALUES(updated_at)`,
 		record.OperatorID, record.DesiredTier, record.State, nullIfEmpty(record.KeyID), nullIfEmpty(record.KeyLast4),
-		nullIfEmpty(record.KeyCipher), models, limits, nullIfEmpty(record.Provider), machines, nullIfEmpty(record.LastError), updatedAt)
+		nullIfEmpty(record.KeyCipher), models, limits, nullIfEmpty(record.Provider), nullIfEmpty(record.DeviceBaseURL), machines, nullIfEmpty(record.LastError), updatedAt)
 	return err
 }
 
@@ -65,7 +66,7 @@ func (m *MySQLArchive) GetOperatorGatewayKey(ctx context.Context, operatorID int
 		return nil, nil
 	}
 	row := m.db.QueryRowContext(ctx, `SELECT operator_id, desired_tier, state, key_id, key_last4, key_cipher,
-  models_json, limits_json, provider, machines_json, last_error, updated_at
+  models_json, limits_json, provider, device_base_url, machines_json, last_error, updated_at
   FROM operator_gateway_keys WHERE operator_id = ?`, operatorID)
 	record, err := scanOperatorGatewayKey(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -85,7 +86,7 @@ func (m *MySQLArchive) ListOperatorGatewayKeys(ctx context.Context, limit int) (
 		limit = 200
 	}
 	rows, err := m.db.QueryContext(ctx, `SELECT operator_id, desired_tier, state, key_id, key_last4, key_cipher,
-  models_json, limits_json, provider, machines_json, last_error, updated_at
+  models_json, limits_json, provider, device_base_url, machines_json, last_error, updated_at
   FROM operator_gateway_keys ORDER BY updated_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -115,18 +116,20 @@ func scanOperatorGatewayKey(row rowScanner) (model.OperatorGatewayKey, error) {
 		modelsRaw []byte
 		limitsRaw []byte
 		provider  sql.NullString
+		deviceURL sql.NullString
 		machines  []byte
 		lastError sql.NullString
 		updatedAt time.Time
 	)
 	if err := row.Scan(&record.OperatorID, &record.DesiredTier, &record.State, &keyID, &keyLast4, &keyCipher,
-		&modelsRaw, &limitsRaw, &provider, &machines, &lastError, &updatedAt); err != nil {
+		&modelsRaw, &limitsRaw, &provider, &deviceURL, &machines, &lastError, &updatedAt); err != nil {
 		return model.OperatorGatewayKey{}, err
 	}
 	record.KeyID = keyID.String
 	record.KeyLast4 = keyLast4.String
 	record.KeyCipher = keyCipher.String
 	record.Provider = provider.String
+	record.DeviceBaseURL = deviceURL.String
 	record.LastError = lastError.String
 	record.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
 	if len(modelsRaw) > 0 {

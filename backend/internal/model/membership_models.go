@@ -100,18 +100,21 @@ func (p MembershipModelPolicy) Normalize() MembershipModelPolicy {
 
 // OperatorGatewayKey 是平台侧保存的「期望状态 + 网关钥匙」，每个用户一行。
 type OperatorGatewayKey struct {
-	OperatorID  int64             `json:"operator_id"`
-	DesiredTier string            `json:"desired_tier"`
-	State       string            `json:"state"` // provisioning|active|suspended|failed
-	KeyID       string            `json:"key_id,omitempty"`
-	KeyLast4    string            `json:"key_last4,omitempty"`
-	KeyCipher   string            `json:"-"` // 明文钥匙密文，只在服务端内部流转
-	Models      []string          `json:"models,omitempty"`
-	Limits      GatewayLimits     `json:"limits,omitempty"`
-	Provider    string            `json:"provider,omitempty"`
-	Machines    map[string]string `json:"machines,omitempty"` // machine_id → 下发结果（ok/错误摘要）
-	LastError   string            `json:"last_error,omitempty"`
-	UpdatedAt   string            `json:"updated_at,omitempty"`
+	OperatorID  int64         `json:"operator_id"`
+	DesiredTier string        `json:"desired_tier"`
+	State       string        `json:"state"` // provisioning|active|suspended|failed
+	KeyID       string        `json:"key_id,omitempty"`
+	KeyLast4    string        `json:"key_last4,omitempty"`
+	KeyCipher   string        `json:"-"` // 明文钥匙密文，只在服务端内部流转
+	Models      []string      `json:"models,omitempty"`
+	Limits      GatewayLimits `json:"limits,omitempty"`
+	Provider    string        `json:"provider,omitempty"`
+	// DeviceBaseURL 是上次下发到设备的推理地址；变化时需要先清 provider 再下发，
+	// 否则 launcher 只在 api 字段为空时才写，会留下旧地址（真机实测踩过）。
+	DeviceBaseURL string            `json:"device_base_url,omitempty"`
+	Machines      map[string]string `json:"machines,omitempty"` // machine_id → 下发结果（ok/错误摘要）
+	LastError     string            `json:"last_error,omitempty"`
+	UpdatedAt     string            `json:"updated_at,omitempty"`
 }
 
 // 网关钥匙状态取值。

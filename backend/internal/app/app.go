@@ -1448,6 +1448,8 @@ func (a *App) Router() http.Handler {
 	r.Post("/api/admin/operators/{id}/membership", h.SetOperatorMembership)
 	// 会员网关钥匙：查看状态 / 立即收敛（自动化之外的应急入口）
 	r.Get("/api/admin/operators/{id}/gateway-key", h.GetOperatorGatewayKey)
+	// 会员分级兜底巡检：存量会员/策略调整/上次失败都会在这里自愈
+	h.StartMembershipReconciler(envDuration("MEMBERSHIP_RECONCILE_INTERVAL", 10*time.Minute))
 	r.Post("/api/admin/operators/{id}/gateway-key/ensure", h.EnsureOperatorGatewayKey)
 	r.Get("/api/skills", h.ListPublicSkills)
 	r.Get("/api/devices/{machineID}/launcher", h.GetDeviceLauncherState)

@@ -36,7 +36,8 @@ import (
 //	                      {"plus":{"models":["m1","m2"],"limits":{"daily_cost_micro":5000000}},
 //	                       "pro":{"models":["m1","m2","m3"],"limits":{"max_cost_micro":500000000}}}
 const (
-	envGatewayBaseURL  = "CC_GATEWAY_BASE_URL"
+	envGatewayBaseURL  = "CC_GATEWAY_BASE_URL"  // 平台 → 网关管理口（如经隧道的 127.0.0.1:13051）
+	envGatewayProxyURL = "CC_GATEWAY_PROXY_URL" // 设备 → 网关推理口（必须是设备能访问到的地址）
 	envGatewayAdminKey = "CC_GATEWAY_ADMIN_KEY"
 	envGatewaySecret   = "CC_GATEWAY_KEY_SECRET"
 	envGatewayPolicies = "CC_GATEWAY_POLICIES"
@@ -46,16 +47,31 @@ const (
 )
 
 type gatewayConfig struct {
-	BaseURL  string
+	BaseURL  string // 管理口（平台侧使用）
+	ProxyURL string // 推理口（下发到设备；为空时回落到 BaseURL）
 	AdminKey string
 	Secret   string
 	Policies map[string]model.MembershipModelPolicy
+}
+
+// deviceBaseURL 返回设备侧要填的 base_url（带 /v1）。
+//
+// 管理地址与推理地址常常不同：平台经隧道访问管理口（127.0.0.1:13051），
+// 而设备必须走网关的公网推理口（如 http://host:3050/v1）。混用会让设备拿到
+// 一个只在本机有效的地址——真机实测踩过。
+func (c gatewayConfig) deviceBaseURL() string {
+	base := strings.TrimSpace(c.ProxyURL)
+	if base == "" {
+		base = c.BaseURL
+	}
+	return strings.TrimRight(base, "/") + "/v1"
 }
 
 // loadGatewayConfig 每次读取环境变量：调用频率很低（改等级/心跳/管理口），换取零缓存失效问题。
 func loadGatewayConfig() gatewayConfig {
 	cfg := gatewayConfig{
 		BaseURL:  strings.TrimRight(strings.TrimSpace(os.Getenv(envGatewayBaseURL)), "/"),
+		ProxyURL: strings.TrimRight(strings.TrimSpace(os.Getenv(envGatewayProxyURL)), "/"),
 		AdminKey: strings.TrimSpace(os.Getenv(envGatewayAdminKey)),
 		Secret:   strings.TrimSpace(os.Getenv(envGatewaySecret)),
 	}
@@ -330,7 +346,11 @@ func (a *API) ConvergeOperatorMembership(ctx context.Context, operatorID int64) 
 	}
 
 	// 4) 下发到用户的在线设备（每台设备的每个 agent 一份专属 provider）。
-	record.Machines = a.deliverMemberProvider(ctx, cfg, operatorID, policy, plain)
+	// 推理地址变化时先清掉设备上的旧 provider 再下发：launcher 只在 api 字段为空时写入，
+	// 否则会留下旧地址（管理地址/推理地址分离后真机实测踩过）。
+	reset := record.DeviceBaseURL != "" && record.DeviceBaseURL != cfg.deviceBaseURL()
+	record.Machines = a.deliverMemberProvider(ctx, cfg, operatorID, policy, plain, reset)
+	record.DeviceBaseURL = cfg.deviceBaseURL()
 	record.Models = policy.Models
 	record.Limits = policy.Limits
 	if encrypted := a.encryptGatewayKey(cfg.Secret, plain); encrypted != "" {
@@ -367,6 +387,7 @@ func (a *API) deprovisionOperator(ctx context.Context, cfg gatewayConfig, record
 	record.KeyLast4 = ""
 	record.Models = nil
 	record.Limits = model.GatewayLimits{}
+	record.DeviceBaseURL = ""
 	record.State = model.GatewayKeyStateSuspended
 	record.LastError = reason
 	record.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -383,9 +404,9 @@ func operatorIDOf(record model.OperatorGatewayKey) int64 { return record.Operato
 // 语义与既有 SaveDeviceAIConfig 完全一致：请求发给该设备的 launcher agent，
 // 载荷里的 AgentID 填 machineID（设备级配置），launcher 侧按 provider id upsert，
 // 因此不会动用户自己的其它 provider。写入后刷新平台的模型缓存，App 立刻能看到专属模型。
-func (a *API) deliverMemberProvider(ctx context.Context, cfg gatewayConfig, operatorID int64, policy model.MembershipModelPolicy, plainKey string) map[string]string {
+func (a *API) deliverMemberProvider(ctx context.Context, cfg gatewayConfig, operatorID int64, policy model.MembershipModelPolicy, plainKey string, reset bool) map[string]string {
 	results := map[string]string{}
-	baseURL := cfg.BaseURL + "/v1"
+	baseURL := cfg.deviceBaseURL()
 	apiMode := normalizeDeviceAIAPIMode("")
 	models := normalizeDeviceAIModels(policy.ProviderID, gatewayDeviceModels(policy))
 
@@ -394,6 +415,11 @@ func (a *API) deliverMemberProvider(ctx context.Context, cfg gatewayConfig, oper
 		if err != nil {
 			results[machine.MachineID] = "launcher 离线，待下次心跳自愈"
 			continue
+		}
+		if reset {
+			cleanup := model.DeviceAIConfigProviderCleanupPayload{AgentID: machine.MachineID, Provider: policy.ProviderID}
+			cleanupID := fmt.Sprintf("gwrst-%d-%s-%d", operatorID, machine.MachineID, time.Now().UnixNano())
+			_, _ = a.requestDeviceAIConfig(ctx, operatorID, launcherID, cleanupID, "device.ai_config.clear_provider", cleanup)
 		}
 		payload := model.DeviceAIConfigSavePayload{
 			AgentID:  machine.MachineID,
@@ -490,13 +516,20 @@ func (a *API) GetOperatorGatewayKey(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	record.KeyCipher = ""
+	var safe any
+	if record != nil {
+		record.KeyCipher = ""
+		safe = record
+	}
 	write(w, http.StatusOK, map[string]any{
 		"operator_id":     operatorID,
 		"membership_tier": tier,
 		"policy":          cfg.policyFor(tier),
-		"gateway":         map[string]any{"configured": cfg.enabled(), "base_url": cfg.BaseURL, "secret_configured": cfg.Secret != ""},
-		"record":          record,
+		"gateway": map[string]any{
+			"configured": cfg.enabled(), "base_url": cfg.BaseURL, "proxy_url": cfg.ProxyURL,
+			"device_base_url": cfg.deviceBaseURL(), "secret_configured": cfg.Secret != "",
+		},
+		"record": safe,
 	})
 }
 
@@ -520,4 +553,74 @@ func (a *API) EnsureOperatorGatewayKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, map[string]any{"record": record})
+}
+
+// ReconcileMembership 周期性兜底：把存量会员与新策略收敛一遍（零人工的关键补丁）。
+//
+// 触发场景：改等级只针对"被改的那个人"；存量会员、策略调整、上次失败的重试、
+// 网关抖动恢复，都靠这个巡检自愈。幂等：只在快照不一致时才真的调用网关。
+func (a *API) ReconcileMembership(ctx context.Context) (int, int) {
+	cfg := loadGatewayConfig()
+	if !cfg.enabled() {
+		return 0, 0
+	}
+	operators, err := a.store.ListOperators()
+	if err != nil {
+		log.Printf("[gateway] 会员巡检：读取用户失败：%v", err)
+		return 0, 0
+	}
+	converged, failed := 0, 0
+	for _, operator := range operators {
+		if ctx.Err() != nil {
+			break
+		}
+		tier := model.NormalizeMembershipTier(operator.MembershipTier)
+		if resolved, err := a.store.GetOperatorMembershipTier(operator.ID); err == nil && strings.TrimSpace(resolved) != "" {
+			tier = model.NormalizeMembershipTier(resolved)
+		}
+		policy := cfg.policyFor(tier)
+		record, _ := a.store.GetOperatorGatewayKey(ctx, operator.ID)
+		if !policy.GatewayEnabled() {
+			// 非会员（或该等级未开专属模型）：有残留钥匙才需要收尾
+			if record != nil && (record.KeyID != "" || record.Provider != "") {
+				if _, err := a.deprovisionOperator(ctx, cfg, *record, policy, "该等级未开通专属模型"); err != nil {
+					failed++
+					continue
+				}
+				converged++
+			}
+			continue
+		}
+		if record != nil && record.State == model.GatewayKeyStateActive &&
+			sameStringSet(record.Models, policy.Models) && record.Limits == policy.Limits &&
+			record.Provider == policy.ProviderID && record.DeviceBaseURL == cfg.deviceBaseURL() {
+			continue // 已是最新，跳过
+		}
+		if _, err := a.ConvergeOperatorMembership(ctx, operator.ID); err != nil {
+			failed++
+			continue
+		}
+		converged++
+	}
+	return converged, failed
+}
+
+// StartMembershipReconciler 启动兜底巡检（默认 10 分钟一次，可用环境变量调整）。
+func (a *API) StartMembershipReconciler(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	go func() {
+		// 启动后先延迟一会儿，避开服务启动期的高峰
+		time.Sleep(30 * time.Second)
+		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			converged, failed := a.ReconcileMembership(ctx)
+			cancel()
+			if converged > 0 || failed > 0 {
+				log.Printf("[gateway] 会员巡检完成：收敛 %d 个，失败 %d 个", converged, failed)
+			}
+			time.Sleep(interval)
+		}
+	}()
 }

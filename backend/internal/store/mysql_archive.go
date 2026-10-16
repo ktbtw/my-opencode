@@ -1232,6 +1232,9 @@ func ensureSchema(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
+	if err := ensureColumn(ctx, db, "operator_gateway_keys", "device_base_url", "ALTER TABLE operator_gateway_keys ADD COLUMN device_base_url VARCHAR(255) NULL AFTER provider"); err != nil {
+		return err
+	}
 	for _, stmt := range gatewayKeySchemaStatements {
 		if strings.TrimSpace(stmt) == "" {
 			continue

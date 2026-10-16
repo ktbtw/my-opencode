@@ -312,3 +312,16 @@ func TestConvergeAgainstRealGateway(t *testing.T) {
 	}
 	t.Log("✅ 撤销完成：网关钥匙已删除")
 }
+
+// 管理地址与推理地址必须分开：设备拿到的是公网推理口。
+func TestGatewayDeviceBaseURLUsesProxyURL(t *testing.T) {
+	cfg := gatewayConfig{BaseURL: "http://127.0.0.1:13051", ProxyURL: "http://114.66.31.184:3050"}
+	if got := cfg.deviceBaseURL(); got != "http://114.66.31.184:3050/v1" {
+		t.Fatalf("设备侧 base_url 应为推理口：got %q", got)
+	}
+	// 没配推理口时回落到管理口（单机部署场景）
+	only := gatewayConfig{BaseURL: "http://gw.local:3051"}
+	if got := only.deviceBaseURL(); got != "http://gw.local:3051/v1" {
+		t.Fatalf("回落到管理口：got %q", got)
+	}
+}
