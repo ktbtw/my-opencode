@@ -100,7 +100,7 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
     final limits = (data['limits'] as Map?)?.cast<String, dynamic>() ?? const {};
     final used = (data['used'] as Map?)?.cast<String, dynamic>() ?? const {};
     final models = (data['models'] as List?) ?? const [];
-    final devices = (data['device_status'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final devices = (data['devices'] as List?) ?? const [];
 
     final totalMicro = _num(limits['max_cost_micro']);
     final usedMicro = _num(used['cost_micro']);
@@ -133,8 +133,8 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
               const SizedBox(height: 12),
               Text(
                 active
-                    ? '额度由网关按调用实时记账，超限后请求会被自动拒绝。'
-                    : '当前等级还没有专属模型额度。',
+                    ? '专属模型在你当前额度内可正常使用；额度用完会暂停，恢复后自动可用。'
+                    : '当前等级还没有专属模型。',
                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.5),
               ),
             ],
@@ -148,15 +148,15 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
               children: [
                 _quotaRow('总额度', usedMicro, totalMicro, '已用', '剩余'),
                 const SizedBox(height: 16),
-                if (dailyMicro > 0) _quotaRow('今日额度', dayUsedMicro, dailyMicro, '今日已用', '今日剩余'),
+                if (dailyMicro > 0) _quotaRow('今日额度', dayUsedMicro, dailyMicro, '已用', '剩余'),
                 if (dailyTokens > 0) ...[
                   const SizedBox(height: 16),
                   // token 是原始计数，不按金额（1e-6）换算
-                  _quotaRow('今日 Token', dayTokens, dailyTokens, '今日已用', '今日剩余', count: true),
+                  _quotaRow('今日 Token 用量', dayTokens, dailyTokens, '已用', '剩余', count: true),
                 ],
                 const SizedBox(height: 12),
                 Text(
-                  '额度按 UTC 日重置${data['reset_at'] != null ? '，下次重置：${_localTime(data['reset_at'].toString())}' : ''}',
+                  _resetText(data['reset_at']),
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
               ],
@@ -168,10 +168,10 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('可用模型', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              const Text('专属模型', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
               const SizedBox(height: 10),
               if (models.isEmpty)
-                const Text('暂无专属模型', style: TextStyle(color: AppColors.textMuted, fontSize: 13))
+                const Text('暂未开通专属模型', style: TextStyle(color: AppColors.textMuted, fontSize: 13))
               else
                 ...models.map((item) {
                   final map = (item as Map).cast<String, dynamic>();
@@ -201,26 +201,31 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('设备下发状态', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                const Text('可用设备', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
-                ...devices.entries.map(
-                  (entry) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _shortMachineId(entry.key),
-                            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                ...devices.map(
+                  (item) {
+                    final map = (item as Map).cast<String, dynamic>();
+                    final name = (map['name'] ?? '').toString();
+                    final ready = map['ready'] == true;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              name,
+                              style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                            ),
                           ),
-                        ),
-                        _statusPill(
-                          entry.value.toString() == 'ok' ? '已生效' : entry.value.toString(),
-                          entry.value.toString() == 'ok' ? AppColors.statusSuccess : AppColors.statusWarning,
-                        ),
-                      ],
-                    ),
-                  ),
+                          _statusPill(
+                            ready ? '已就绪' : '待同步',
+                            ready ? AppColors.statusSuccess : AppColors.statusWarning,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
@@ -228,7 +233,7 @@ class _MembershipUsagePageState extends State<MembershipUsagePage> {
         ],
         const SizedBox(height: 16),
         const Text(
-          '额度用尽或等级到期后，专属模型会自动从设备上撤下；升级/续费后几秒内自动恢复。',
+          '额度用完或会员到期后，专属模型会暂停使用；恢复额度或续费后自动可用。',
           style: TextStyle(color: AppColors.textMuted, fontSize: 12, height: 1.5),
         ),
       ],
@@ -335,15 +340,17 @@ String _amount(double raw, String unit, {bool count = false}) {
   return '$unit$text';
 }
 
+/// 说人话的重置说明：直接给出本地时间点，不暴露内部时区概念。
+String _resetText(Object? resetAt) {
+  final text = _localTime(resetAt?.toString() ?? '');
+  final clock = text.contains(' ') ? text.split(' ').last : text;
+  return '今日额度每天 $clock 重置';
+}
+
 String _localTime(String iso) {
   final parsed = DateTime.tryParse(iso);
   if (parsed == null) return iso;
   final local = parsed.toLocal();
   String two(int v) => v.toString().padLeft(2, '0');
   return '${local.month}月${local.day}日 ${two(local.hour)}:${two(local.minute)}';
-}
-
-String _shortMachineId(String id) {
-  if (id.length <= 14) return id;
-  return '${id.substring(0, 8)}…${id.substring(id.length - 4)}';
 }

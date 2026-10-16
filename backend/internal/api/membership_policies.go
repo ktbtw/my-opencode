@@ -221,6 +221,12 @@ type membershipUsageModel struct {
 	Name string `json:"name"`
 }
 
+// membershipUsageDevice 是额度页展示的一台设备（只给用户看得懂的名字与状态）。
+type membershipUsageDevice struct {
+	Name  string `json:"name"`
+	Ready bool   `json:"ready"`
+}
+
 // membershipUsageCounters 是额度页展示的用量数字（网关按钥匙记账的原始字段）。
 type membershipUsageCounters struct {
 	Requests     int64 `json:"requests"`
@@ -271,7 +277,32 @@ func (a *API) GetMembershipUsage(w http.ResponseWriter, r *http.Request) {
 	resp["active"] = record.State == model.GatewayKeyStateActive
 	resp["state"] = record.State
 	resp["key_last4"] = record.KeyLast4
-	resp["device_status"] = record.Machines
+	// 机器 ID 是内部标识，不下发给用户端：换成设备名（没有名字就用主机名）
+	names := map[string]string{}
+	// 用带用户自定义显示名的设备列表（"我的macmini" 这类），而不是原始主机名
+	machines, err := a.listDevicesForOperator(ctx, operator.ID)
+	if err != nil {
+		machines = a.broker.ListMachines(operator.ID)
+	}
+	for _, machine := range machines {
+		label := strings.TrimSpace(machine.DisplayName)
+		if label == "" {
+			label = strings.TrimSpace(machine.Hostname)
+		}
+		if label != "" {
+			names[machine.MachineID] = label
+		}
+	}
+	devices := make([]membershipUsageDevice, 0, len(record.Machines))
+	for machineID, status := range record.Machines {
+		label := names[machineID]
+		if label == "" {
+			continue // 认不出名字就不展示，避免把内部 ID 泄露给用户
+		}
+		devices = append(devices, membershipUsageDevice{Name: label, Ready: status == "ok"})
+	}
+	sort.Slice(devices, func(i, j int) bool { return devices[i].Name < devices[j].Name })
+	resp["devices"] = devices
 
 	// 实时用量：直接读网关的钥匙记录（网关按钥匙记账，含跨日字段）。
 	cfg := loadGatewayConfig()

@@ -3377,7 +3377,7 @@ function viewChrome(view) {
     membership: {
       eyebrow: "Membership Models",
       title: "会员模型",
-      description: "按等级配置专属模型：对外模型名（别名）、展示名与额度。保存后自动同步到网关并对该等级会员重新下发，设备上的模型列表会立刻更新。",
+      description: "按等级配置专属模型：对外模型名、展示名与额度。保存后立即生效，该等级会员的设备上会自动更新。",
       newText: "",
       canCreate: false,
       emptyTitle: "没有可配置的等级",
@@ -4770,7 +4770,7 @@ function renderMembershipPage() {
   const panels = state.membershipPolicies.map((policy, index) => membershipTierPanel(policy, index, allowed)).join("");
 
   el.grid.innerHTML = `
-    <p class="muted">${gateway.configured ? "网关已连接" : "未配置网关"} · 管理口 ${escapeHtml(gateway.base_url || "-")} · 设备推理口 ${escapeHtml(gateway.device_base_url || "-")} · 网关白名单 ${allowed.length} 个模型${gateway.secret_configured ? "" : " · 未配置钥匙加密密钥"}${warnings.length ? ` · <span class="card-warning">${warnings.map((item) => escapeHtml(item)).join("；")}</span>` : ""}</p>
+    <p class="muted" title="管理地址 ${escapeAttr(gateway.base_url || "-")}｜会员端地址 ${escapeAttr(gateway.device_base_url || "-")}">${gateway.configured ? "服务已连接" : "服务未配置"} · 可发放模型 ${allowed.length} 个${gateway.secret_configured ? "" : " · 密钥未配置"}${warnings.length ? ` · <span class="card-warning">${warnings.map((item) => escapeHtml(item)).join("；")}</span>` : ""}</p>
     ${panels}`;
 
   // 模型下拉统一用控制台自研组件（原生 select 会被隐藏），
@@ -4808,8 +4808,8 @@ function membershipTierPanel(policy, tierIndex, models) {
       (entry, entryIndex) => `
       <div class="membership-model-row" data-entry-index="${entryIndex}">
         <label><span>真实模型</span><select data-field="real_model" data-tier="${tierIndex}" data-entry="${entryIndex}">${optionsFor(entry.real_model)}</select></label>
-        <label><span>对外模型名（别名，= 用户请求里的模型 id）</span><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.alias || "")}" placeholder="留空则用真实模型名" /></label>
-        <label><span>展示名（只给界面看，不影响调用）</span><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.display_name || "")}" placeholder="例如 高级专线 · DeepSeek Flash" /></label>
+        <label><span>对外模型名（会员调用时用）</span><input data-field="alias" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.alias || "")}" placeholder="留空则用真实模型名" /></label>
+        <label><span>展示名（App 里显示的名称）</span><input data-field="display_name" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(entry.display_name || "")}" placeholder="例如 高级专线 · DeepSeek Flash" /></label>
         <button type="button" class="compact-button" data-membership-action="remove-entry">移除</button>
       </div>`
     )
@@ -4830,12 +4830,12 @@ function membershipTierPanel(policy, tierIndex, models) {
           <div class="section-title"><h3>基础</h3><span>标识与开关</span></div>
           <label class="switch-row"><span>发放专属模型</span><input type="checkbox" data-field="enabled" data-tier="${tierIndex}" ${policy.enabled ? "checked" : ""} /></label>
           <div class="form-grid two">
-            <label><span>供应商标识</span><input data-field="provider_id" data-tier="${tierIndex}" value="${escapeAttr(policy.provider_id || "")}" placeholder="cc-pro" /></label>
-            <label><span>分组名</span><input data-field="display_name" data-tier="${tierIndex}" value="${escapeAttr(policy.display_name || "")}" placeholder="高级专线" /></label>
+            <label><span>分组标识</span><input data-field="provider_id" data-tier="${tierIndex}" value="${escapeAttr(policy.provider_id || "")}" placeholder="cc-pro" /></label>
+            <label><span>分组名称</span><input data-field="display_name" data-tier="${tierIndex}" value="${escapeAttr(policy.display_name || "")}" placeholder="高级专线" /></label>
           </div>
         </section>
         <section class="form-section">
-          <div class="section-title"><h3>额度</h3><span>网关按钥匙记账，超限自动拒绝</span></div>
+          <div class="section-title"><h3>额度</h3><span>额度用尽后该等级会员的调用会被拒绝</span></div>
           <div class="form-grid three">
             <label><span>日额度（$）</span><input data-field="daily_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.daily_cost_micro))}" placeholder="8" /></label>
             <label><span>总额度（$）</span><input data-field="max_cost" data-tier="${tierIndex}" value="${escapeAttr(membershipDollars(limits.max_cost_micro))}" placeholder="300" /></label>
@@ -4843,7 +4843,7 @@ function membershipTierPanel(policy, tierIndex, models) {
           </div>
         </section>
         <section class="form-section">
-          <div class="section-title"><h3>模型包</h3><span>真实模型＝网关转发用；别名＝用户请求里的 id；展示名＝界面文字</span></div>
+          <div class="section-title"><h3>模型包</h3><span>真实模型必须在白名单内；对外模型名＝会员调用时用的名字</span></div>
           ${rows || '<p class="muted">还没有模型，点下面的按钮添加。</p>'}
           <div class="card-actions">
             <button type="button" class="secondary-button" data-membership-action="add-entry">添加模型</button>
