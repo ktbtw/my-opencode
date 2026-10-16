@@ -1037,6 +1037,7 @@ func relayErrorText(err error) string {
 func decodeSaveAIConfigInput(payload any) (model.DeviceAIConfigInfo, error) {
 	var input struct {
 		Provider   string                    `json:"provider"`
+		Name       string                    `json:"name"`
 		BaseURL    string                    `json:"base_url"`
 		ConsoleURL string                    `json:"console_url"`
 		APIKey     string                    `json:"api_key"`
@@ -1047,6 +1048,7 @@ func decodeSaveAIConfigInput(payload any) (model.DeviceAIConfigInfo, error) {
 		Models     []model.DeviceAIModelInfo `json:"models"`
 		Config     struct {
 			Provider   string                    `json:"provider"`
+			Name       string                    `json:"name"`
 			BaseURL    string                    `json:"base_url"`
 			ConsoleURL string                    `json:"console_url"`
 			APIKey     string                    `json:"api_key"`
@@ -1076,6 +1078,7 @@ func decodeSaveAIConfigInput(payload any) (model.DeviceAIConfigInfo, error) {
 		Model:        firstNonEmpty(input.Config.Model, input.Model),
 		Force:        input.Force,
 		Managed:      input.Managed || input.Config.Managed,
+		Name:         firstNonEmpty(input.Config.Name, input.Name),
 		Models:       models,
 	}, nil
 }

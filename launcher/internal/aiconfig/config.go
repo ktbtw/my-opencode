@@ -689,7 +689,7 @@ func Save(input model.DeviceAIConfigInfo) (*model.DeviceAIConfigInfo, error) {
 	}
 	if input.Managed {
 		// 会员 provider 只写进 opencode 运行时合并的私有文件，用户配置里保持干净。
-		block := asMap(applyConfigInput(map[string]any{}, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Models, input.Force, false, true)["provider"])[input.Provider]
+		block := asMap(applyConfigInput(map[string]any{}, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Name, input.Models, input.Force, false, true)["provider"])[input.Provider]
 		if block == nil {
 			return nil, errors.New("会员 provider 构造失败")
 		}
@@ -712,7 +712,7 @@ func Save(input model.DeviceAIConfigInfo) (*model.DeviceAIConfigInfo, error) {
 		}
 		return parseInfo(configPath, currentRaw)
 	}
-	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Models, input.Force, false, input.Managed)
+	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKeyMasked, input.APIMode, input.Model, input.Name, input.Models, input.Force, false, input.Managed)
 	raw, err := marshalConfig(updated)
 	if err != nil {
 		return nil, err
@@ -882,7 +882,7 @@ func LoadWithModels(input model.DeviceAIConfigInput) (*model.DeviceAIConfigInfo,
 	if err != nil {
 		return nil, err
 	}
-	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKey, input.APIMode, input.Model, models, len(models) > 0, true, input.Managed)
+	updated := applyConfigInput(parsed, input.Provider, input.BaseURL, input.ConsoleURL, input.APIKey, input.APIMode, input.Model, input.Name, models, len(models) > 0, true, input.Managed)
 	raw, err := marshalConfig(updated)
 	if err != nil {
 		return nil, err
@@ -1138,7 +1138,7 @@ func joinModelRef(providerID, modelID string) string {
 	return providerID + "/" + modelID
 }
 
-func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, apiKey, apiMode, modelID string, models []model.DeviceAIModelInfo, force, preserveOverrides bool, managed bool) map[string]any {
+func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, apiKey, apiMode, modelID, providerName string, models []model.DeviceAIModelInfo, force, preserveOverrides bool, managed bool) map[string]any {
 	if parsed == nil {
 		parsed = map[string]any{}
 	}
@@ -1149,7 +1149,10 @@ func applyConfigInput(parsed map[string]any, providerID, baseURL, consoleURL, ap
 	delete(parsed, "enabled_providers")
 	providers := ensureMapField(parsed, "provider")
 	providerCfg := ensureMapValue(providers, providerID)
-	if strings.TrimSpace(asString(providerCfg["name"])) == "" {
+	if name := strings.TrimSpace(providerName); name != "" {
+		// 平台下发的供应商名（例如"会员专属"）优先于 id
+		providerCfg["name"] = name
+	} else if strings.TrimSpace(asString(providerCfg["name"])) == "" {
 		providerCfg["name"] = providerID
 	}
 	if strings.TrimSpace(asString(providerCfg["npm"])) == "" {

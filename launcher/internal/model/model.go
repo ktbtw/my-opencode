@@ -191,7 +191,9 @@ type DeviceAIProviderInfo struct {
 
 type DeviceAIConfigInfo struct {
 	// Managed 表示该 provider 由会员服务托管：对用户隐藏，保存时保留。
-	Managed      bool                   `json:"managed,omitempty"`
+	Managed bool `json:"managed,omitempty"`
+	// Name 是设备上显示的供应商名（例如"会员专属"）。
+	Name         string                 `json:"name,omitempty"`
 	Exists       bool                   `json:"exists"`
 	ConfigPath   string                 `json:"config_path,omitempty"`
 	Provider     string                 `json:"provider,omitempty"`
@@ -211,6 +213,8 @@ type DeviceAIConfigInfo struct {
 
 type DeviceAIConfigInput struct {
 	Provider string `json:"provider,omitempty"`
+	// Name 是设备上显示的供应商名（例如"会员专属"）。
+	Name string `json:"name,omitempty"`
 	// Managed 表示这个 provider 由会员服务托管：对用户隐藏，但保存时保留。
 	Managed    bool   `json:"managed,omitempty"`
 	BaseURL    string `json:"base_url,omitempty"`

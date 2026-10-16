@@ -428,11 +428,13 @@ func (a *API) deliverMemberProvider(ctx context.Context, cfg gatewayConfig, oper
 			Managed:  true,
 			AgentID:  machine.MachineID,
 			Provider: policy.ProviderID,
+			Name:     membershipProviderName(policy),
 			BaseURL:  baseURL,
 			APIKey:   plainKey,
 			APIMode:  apiMode,
 			Config: model.DeviceAIConfig{
 				Provider: policy.ProviderID,
+				Name:     membershipProviderName(policy),
 				BaseURL:  baseURL,
 				APIKey:   plainKey,
 				APIMode:  apiMode,
@@ -474,6 +476,14 @@ func (a *API) clearMemberProvider(ctx context.Context, operatorID int64, provide
 		results[machine.MachineID] = "已清理"
 	}
 	return results
+}
+
+// membershipProviderName 是设备上显示的供应商名：控制台配了就用它，否则用"会员专属"。
+func membershipProviderName(policy model.MembershipModelPolicy) string {
+	if name := strings.TrimSpace(policy.DisplayName); name != "" {
+		return name
+	}
+	return "会员专属"
 }
 
 func gatewayDeviceModels(policy model.MembershipModelPolicy) []model.DeviceAIModel {

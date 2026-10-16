@@ -74,3 +74,27 @@ func TestStripManagedProvidersNoopWithoutMarker(t *testing.T) {
 		t.Fatalf("无托管 provider 时不应改写：%s", got)
 	}
 }
+
+// 平台下发的供应商名要写进 provider.name（原来是空则回退成 provider id）。
+func TestProviderNameFromPlatform(t *testing.T) {
+	parsed := applyConfigInput(map[string]any{}, "cc-pro", "http://gw/v1", "", "sk-key", "chat", "", "会员专属", nil, true, false, true)
+	block := asMap(asMap(parsed["provider"])["cc-pro"])
+	if got := strings.TrimSpace(asString(block["name"])); got != "会员专属" {
+		t.Fatalf("供应商名应为 会员专属，实际 %q", got)
+	}
+
+	// 没传名字时保持原样（空则回退成 id）
+	parsed = applyConfigInput(map[string]any{}, "cc-pro", "http://gw/v1", "", "sk-key", "chat", "", "", nil, true, false, true)
+	block = asMap(asMap(parsed["provider"])["cc-pro"])
+	if got := asString(block["name"]); got != "cc-pro" {
+		t.Fatalf("未传名字时应回退成 id，实际 %q", got)
+	}
+
+	// 已存在自定义名字且平台没传 → 不要被覆盖
+	seed := map[string]any{"provider": map[string]any{"cc-pro": map[string]any{"name": "我自己起的"}}}
+	parsed = applyConfigInput(seed, "cc-pro", "http://gw/v1", "", "sk-key", "chat", "", "", nil, true, false, true)
+	block = asMap(asMap(parsed["provider"])["cc-pro"])
+	if got := asString(block["name"]); got != "我自己起的" {
+		t.Fatalf("不应覆盖已有名字，实际 %q", got)
+	}
+}

@@ -159,7 +159,7 @@ func TestCatalogDefaultsRoundTripWithoutBecomingManual(t *testing.T) {
 	catalogFixture(t)
 	cfg := &model.DeviceAIConfigInfo{Provider: "relay", Models: []model.DeviceAIModelInfo{{ID: "gpt-5.4"}}}
 	EnrichWithOpenCodeCatalog(cfg, catalogMetadata())
-	parsed := applyConfigInput(map[string]any{}, "relay", "https://relay.test", "", "fixture-key", "responses", "gpt-5.4", cfg.Models, true, false, false)
+	parsed := applyConfigInput(map[string]any{}, "relay", "https://relay.test", "", "fixture-key", "responses", "gpt-5.4", "", cfg.Models, true, false, false)
 	models := asMap(asMap(asMap(parsed["provider"])["relay"])["models"])
 	reloaded := parseModels(models, "relay")
 	if len(reloaded) != 1 || reloaded[0].ManualContext != 0 || reloaded[0].ManualOutput != 0 || reloaded[0].PresetContext != 1000000 || reloaded[0].PresetOutput != 128000 {

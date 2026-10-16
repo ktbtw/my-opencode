@@ -783,7 +783,9 @@ type ArtifactFailedPayload struct {
 }
 
 type DeviceAIConfig struct {
-	Provider   string          `json:"provider"`
+	Provider string `json:"provider"`
+	// Name 是设备上显示的供应商名（例如"会员专属"）。
+	Name       string          `json:"name,omitempty"`
 	BaseURL    string          `json:"base_url,omitempty"`
 	ConsoleURL string          `json:"console_url,omitempty"`
 	APIKey     string          `json:"api_key,omitempty"`
@@ -887,6 +889,8 @@ type DeviceAIConfigListModelsPayload struct {
 type DeviceAIConfigSavePayload struct {
 	AgentID  string `json:"agent_id"`
 	Provider string `json:"provider"`
+	// Name 是设备上显示的供应商名（例如"会员专属"）。
+	Name string `json:"name,omitempty"`
 	// Managed 表示该 provider 由平台托管：启动器侧对用户隐藏，保存时保留。
 	Managed    bool           `json:"managed,omitempty"`
 	BaseURL    string         `json:"base_url,omitempty"`

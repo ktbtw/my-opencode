@@ -4923,7 +4923,7 @@ function membershipTierPanel(policy, tierIndex, models) {
           <label class="switch-row"><span>发放专属模型</span><input type="checkbox" data-field="enabled" data-tier="${tierIndex}" ${policy.enabled ? "checked" : ""} /></label>
           <div class="form-grid two">
             <label><span>分组标识</span><input data-field="provider_id" data-tier="${tierIndex}" value="${escapeAttr(policy.provider_id || "")}" placeholder="cc-pro" /></label>
-            <label><span>分组名称</span><input data-field="display_name" data-tier="${tierIndex}" value="${escapeAttr(policy.display_name || "")}" placeholder="高级专线" /></label>
+            <label><span>供应商名（设备上显示）</span><input data-field="provider_name" data-tier="${tierIndex}" value="${escapeAttr(policy.display_name || "")}" placeholder="会员专属" /></label>
           </div>
         </section>
         <section class="form-section">
@@ -4968,7 +4968,8 @@ function readMembershipForm() {
       return;
     }
     if (field === "provider_id") { policy.provider_id = node.value.trim(); return; }
-    if (field === "display_name") { policy.display_name = node.value.trim(); return; }
+    // 注意：供应商名用 provider_name，避免和模型行的"展示名"（display_name）撞名
+    if (field === "provider_name") { policy.display_name = node.value.trim(); return; }
     if (field === "preset_modality") {
       const entry = policy.entries[Number(node.dataset.entry)];
       if (!entry) return;
