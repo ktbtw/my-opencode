@@ -95,6 +95,14 @@ type TaskEventSequenceReader interface {
 	LatestEventSequence(taskID string) (int64, error)
 }
 
+// TaskEventMaintainer 维护 task_events 体积：合并连续 delta、清理保留期外事件、
+// 回填截断历史里超大的工具输出。
+type TaskEventMaintainer interface {
+	CompactDeltaEvents(ctx context.Context, olderThan time.Time, taskLimit int) (int, error)
+	PruneEvents(ctx context.Context, before time.Time, batch int) (int, error)
+	TruncateLargeToolEvents(ctx context.Context, batch int) (int, error)
+}
+
 // EventCursor is an ordered, stable database cursor. The pair is required
 // because sent_at is not unique under bursty event production.
 type EventCursor struct {

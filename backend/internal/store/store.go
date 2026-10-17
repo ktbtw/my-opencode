@@ -1424,6 +1424,30 @@ func (m *Memory) ListOperatorGatewayKeys(ctx context.Context, limit int) ([]mode
 	return m.archive.ListOperatorGatewayKeys(ctx, limit)
 }
 
+// CompactDeltaEvents 合并连续 delta（见 TaskEventMaintainer）。
+func (m *Memory) CompactDeltaEvents(ctx context.Context, olderThan time.Time, taskLimit int) (int, error) {
+	if maintainer, ok := m.archive.(TaskEventMaintainer); ok {
+		return maintainer.CompactDeltaEvents(ctx, olderThan, taskLimit)
+	}
+	return 0, nil
+}
+
+// PruneEvents 清理保留期外的事件（见 TaskEventMaintainer）。
+func (m *Memory) PruneEvents(ctx context.Context, before time.Time, batch int) (int, error) {
+	if maintainer, ok := m.archive.(TaskEventMaintainer); ok {
+		return maintainer.PruneEvents(ctx, before, batch)
+	}
+	return 0, nil
+}
+
+// TruncateLargeToolEvents 回填截断超大工具输出（见 TaskEventMaintainer）。
+func (m *Memory) TruncateLargeToolEvents(ctx context.Context, batch int) (int, error) {
+	if maintainer, ok := m.archive.(TaskEventMaintainer); ok {
+		return maintainer.TruncateLargeToolEvents(ctx, batch)
+	}
+	return 0, nil
+}
+
 func (m *Memory) UpsertMembershipTierPolicy(ctx context.Context, policy model.MembershipTierPolicy) error {
 	return m.archive.UpsertMembershipTierPolicy(ctx, policy)
 }

@@ -215,6 +215,7 @@ func New() (*App, error) {
 		a.overlayHub.Publish(operatorID, "device.metrics", update)
 	})
 	go a.cleanStuckTasks()
+	go a.maintainTaskEvents()
 	if a.projectMemoryEnabled {
 		go a.projectMemoryLoop()
 	}
@@ -1032,6 +1033,66 @@ func (a *App) taskActivityLease(t *model.Task) (time.Time, time.Duration) {
 		timeout = a.goalHeartbeatTimeout
 	}
 	return last, timeout
+}
+
+// task_events 维护参数：每 10 分钟压缩一次；180 天保留期；delta 静置 1 小时才合并。
+const (
+	taskEventMaintainTick = 10 * time.Minute
+	taskEventRetention    = 180 * 24 * time.Hour
+	taskEventDeltaSettle  = time.Hour
+)
+
+// maintainTaskEvents 定期压缩 task_events，避免历史事件无限增长占满磁盘：
+//  1. 合并同一次回复里连续的 delta（重建结果等价，行数大幅下降）
+//  2. 回填截断历史里超大的 tool_updated 工具输出
+//  3. 清理保留期外的事件（completed 永久保留，老对话仍能看到最终答复）
+func (a *App) maintainTaskEvents() {
+	time.Sleep(90 * time.Second)
+	ticker := time.NewTicker(taskEventMaintainTick)
+	defer ticker.Stop()
+	first := true
+	for {
+		a.runTaskEventMaintenance(first)
+		first = false
+		<-ticker.C
+	}
+}
+
+func (a *App) runTaskEventMaintenance(aggressive bool) {
+	taskLimit := 400
+	truncateLimit := 500
+	pruneRounds := 5
+	if aggressive {
+		// 首轮尽快把存量降下来，之后按常规节奏增量维护
+		taskLimit = 4000
+		truncateLimit = 5000
+		pruneRounds = 20
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if merged, err := a.store.CompactDeltaEvents(ctx, time.Now().Add(-taskEventDeltaSettle), taskLimit); err != nil {
+		log.Printf("[events] 合并 delta 失败: %v", err)
+	} else if merged > 0 {
+		log.Printf("[events] 已合并 %d 条 delta", merged)
+	}
+	if truncated, err := a.store.TruncateLargeToolEvents(ctx, truncateLimit); err != nil {
+		log.Printf("[events] 截断工具输出失败: %v", err)
+	} else if truncated > 0 {
+		log.Printf("[events] 已截断 %d 条工具输出", truncated)
+	}
+	for round := 0; round < pruneRounds; round++ {
+		removed, err := a.store.PruneEvents(ctx, time.Now().Add(-taskEventRetention), 20000)
+		if err != nil {
+			log.Printf("[events] 清理历史事件失败: %v", err)
+			break
+		}
+		if removed > 0 {
+			log.Printf("[events] 已清理 %d 条保留期外事件", removed)
+		}
+		if removed < 20000 {
+			break
+		}
+	}
 }
 
 func (a *App) cleanStuckTasks() {

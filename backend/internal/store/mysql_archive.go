@@ -187,6 +187,8 @@ func (m *MySQLArchive) AppendEventWithID(event *model.Event) error {
 	if event == nil {
 		return nil
 	}
+	// 归档副本截断超长工具输出（实时通道不受影响）
+	truncateArchivedToolOutput(event)
 	// task_events.sent_at is DATETIME(0). The live SSE cursor must use the same
 	// precision as the persisted key or later rows from that second can be lost.
 	event.SentAt = event.SentAt.UTC().Truncate(time.Second)
