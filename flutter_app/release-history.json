@@ -1,5 +1,13 @@
 [
   {
+    "version": "1.6.128",
+    "version_code": 275,
+    "released_at": "",
+    "items": [
+      "思考强度选项按从强到弱排序（最大 → 极高 → 高 → 中 → 低 → 最小 → 关闭），不再受配置里的顺序影响"
+    ]
+  },
+  {
     "version": "1.6.127",
     "version_code": 274,
     "released_at": "",

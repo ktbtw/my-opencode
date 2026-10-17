@@ -9,6 +9,7 @@ import '../../../core/services/connection_telemetry.dart';
 import '../../../shared/grok_context_limit.dart';
 import 'chat_model.dart';
 import 'model_log.dart';
+import '../../../shared/thinking_variant.dart';
 
 void _chatDiag(String stage, [Map<String, Object?> data = const {}]) {
   debugPrint('[ChatDiag] $stage $data');
@@ -1693,7 +1694,8 @@ class ChatRepository {
             member: memberModel,
             armor: armorModel,
             name: '$name / $modelName',
-            variants: variants,
+            // 思考档位按"越强越靠前"排序，避免配置里的 key 顺序直接决定 UI 顺序
+            variants: sortThinkingVariants(variants),
             image: m['image'] == true,
             inputModalities: inputModalities,
             outputModalities: outputModalities,
