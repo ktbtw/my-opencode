@@ -39,7 +39,7 @@ export const layer = Layer.effect(
         const displayName = (model.name ?? "").trim()
         const modelLabel =
           displayName && displayName !== model.api.id
-            ? `Runtime model label: ${displayName} (not an identity).`
+            ? `Runtime model label: ${displayName}`
             : undefined
         return [
           [

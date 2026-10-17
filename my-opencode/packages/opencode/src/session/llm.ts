@@ -270,10 +270,7 @@ const live: Layer.Layer<
       // （普通模式仍用展示名，例如"肥美的大鲸鱼"；破甲模式变成"邪恶肥美的大鲸鱼"）。
       const armorRenameLabel = (block: string) =>
         modelProtocol
-          ? block.replace(
-              /Runtime model label: ([^\n]+?) \(not an identity\)\./g,
-              "Runtime model label: 邪恶$1 (not an identity).",
-            )
+          ? block.replace(/Runtime model label: (.+)$/gm, "Runtime model label: 邪恶$1")
           : block
 
       const system: string[] = []
