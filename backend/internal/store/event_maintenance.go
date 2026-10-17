@@ -16,16 +16,48 @@ import (
 // 只有数据库副本截断，避免单条 tool_updated 动辄几 MB。
 const ArchiveToolOutputLimit = 32 * 1024
 
+// 归档时单个工具事件的整体上限（工具输出截断后仍超限时，裁剪附件内容）。
+const archiveToolPayloadLimit = 256 * 1024
+
+// 归档时单个附件文本的上限。
+const archiveAttachmentTextLimit = 4 * 1024
+
+// capArchivedToolPayload 在工具输出截断后仍超过整体上限时，裁剪附件内容
+// （附件多为 base64 图片/文件，单条可达数 MB）。只保留元信息，实时事件不受影响。
+func capArchivedToolPayload(event *model.Event) {
+	if event == nil || event.Type != "tool_updated" || event.Tool == nil {
+		return
+	}
+	encoded, err := json.Marshal(event.Tool)
+	if err != nil || len(encoded) <= archiveToolPayloadLimit {
+		return
+	}
+	for index := range event.Tool.Attachments {
+		part := &event.Tool.Attachments[index]
+		if len(part.Text) > archiveAttachmentTextLimit {
+			part.Text = truncateUTF8(part.Text, archiveAttachmentTextLimit) + "（附件内容已归档）"
+		}
+		if part.Source != nil {
+			part.Source = nil
+			if strings.TrimSpace(part.Description) == "" {
+				part.Description = "附件内容已归档"
+			}
+		}
+	}
+}
+
 // truncateArchivedToolOutput 在归档前截断超长工具输出（只改副本，不影响实时事件）。
 func truncateArchivedToolOutput(event *model.Event) {
 	if event == nil || event.Tool == nil || event.Type != "tool_updated" {
 		return
 	}
 	if len(event.Tool.Output) <= ArchiveToolOutputLimit {
+		capArchivedToolPayload(event)
 		return
 	}
 	event.Tool.Output = truncateUTF8(event.Tool.Output, ArchiveToolOutputLimit)
 	event.Tool.OutputTruncated = true
+	capArchivedToolPayload(event)
 }
 
 // truncateUTF8 按字节截断但保证不切断多字节字符。
@@ -53,7 +85,7 @@ SELECT task_id
 FROM task_events
 WHERE sent_at < ?
 GROUP BY task_id
-HAVING SUM(event_type = 'delta') > 1
+HAVING SUM(event_type = 'delta') > 50
 ORDER BY MAX(sent_at) ASC
 LIMIT ?`, olderThan, taskLimit)
 	if err != nil {
@@ -264,10 +296,11 @@ func (m *MySQLArchive) TruncateLargeToolEvents(ctx context.Context, batch int) (
 		if err := json.Unmarshal([]byte(current.payload), &event); err != nil {
 			continue
 		}
-		if event.Tool == nil || len(event.Tool.Output) <= ArchiveToolOutputLimit {
+		if event.Tool == nil {
 			continue
 		}
 		truncateArchivedToolOutput(&event)
+		capArchivedToolPayload(&event)
 		encoded, err := json.Marshal(event)
 		if err != nil {
 			continue
