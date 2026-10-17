@@ -4903,17 +4903,26 @@ function membershipTierPanel(policy, tierIndex, models) {
         <details class="membership-preset">
           <summary>参数预设（上下文 / 最大输出 / 输入方式 / 思考强度）</summary>
           <div class="preset-actions">
-            <span class="preset-actions-label">一键预设</span>
-            ${Object.entries(MEMBERSHIP_PRESET_TEMPLATES).map(([key, item]) => `
-              <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="${key}">${item.label}</button>`).join("")}
-            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="auto">智能填充</button>
-            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="clear">清空</button>
+            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="auto">按模型智能填充</button>
+            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="clear">清空全部</button>
           </div>
           <div class="preset-section">
             <span class="preset-label">容量</span>
             <div class="preset-grid cols-2">
-              <label class="preset-field"><span>上下文（tokens，0=不限）</span><input data-field="preset_context" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.context_limit ? String(preset.context_limit) : "")}" placeholder="128000" /></label>
-              <label class="preset-field"><span>最大输出（tokens，0=不限）</span><input data-field="preset_output" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.output_limit ? String(preset.output_limit) : "")}" placeholder="8192" /></label>
+              <div class="preset-field">
+                <span>上下文（tokens，0=不限）</span>
+                <input data-field="preset_context" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.context_limit ? String(preset.context_limit) : "")}" placeholder="128000" />
+                <div class="preset-values">
+                  ${MEMBERSHIP_CONTEXT_PRESETS.map((value) => `<button type="button" class="preset-value-chip${Number(preset.context_limit) === value ? " is-active" : ""}" data-membership-action="apply-value" data-preset="context:${value}">${formatPresetTokens(value)}</button>`).join("")}
+                </div>
+              </div>
+              <div class="preset-field">
+                <span>最大输出（tokens，0=不限）</span>
+                <input data-field="preset_output" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.output_limit ? String(preset.output_limit) : "")}" placeholder="8192" />
+                <div class="preset-values">
+                  ${MEMBERSHIP_OUTPUT_PRESETS.map((value) => `<button type="button" class="preset-value-chip${Number(preset.output_limit) === value ? " is-active" : ""}" data-membership-action="apply-value" data-preset="output:${value}">${formatPresetTokens(value)}</button>`).join("")}
+                </div>
+              </div>
             </div>
           </div>
           <div class="preset-section">
@@ -4935,7 +4944,12 @@ function membershipTierPanel(policy, tierIndex, models) {
             </div>
           </div>
           <div class="preset-section">
-            <span class="preset-label">思考强度<small>勾一档=固定，勾多档=用户可切换，都不勾=不预设</small></span>
+            <span class="preset-label preset-label-row">思考强度<small>勾一档=固定，勾多档=用户可切换，都不勾=不预设</small>
+              <span class="preset-inline-actions">
+                <button type="button" class="link-button" data-membership-action="apply-preset" data-preset="reasoning-all">全部添加</button>
+                <button type="button" class="link-button" data-membership-action="apply-preset" data-preset="reasoning-clear">清空</button>
+              </span>
+            </span>
             <div class="preset-grid cols-7">
               ${MEMBERSHIP_REASONING_LEVELS.map(([value, label]) => thinkingChip(value, label)).join("")}
             </div>
@@ -5099,6 +5113,17 @@ const MEMBERSHIP_REASONING_LEVELS = [
   ["max", "最大"],
 ];
 
+// 与 App 的预设保持一致（flutter_app/lib/shared/context_window.dart）
+const MEMBERSHIP_CONTEXT_PRESETS = [128000, 200000, 256000, 400000, 500000, 1000000, 2000000];
+const MEMBERSHIP_OUTPUT_PRESETS = [4096, 8192, 16384, 32000, 128000, 384000];
+
+function formatPresetTokens(value) {
+  const n = Number(value) || 0;
+  if (n >= 1000000) return `${n % 1000000 === 0 ? n / 1000000 : (n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
 const MEMBERSHIP_PRESET_TEMPLATES = {
   chat:     { label: "通用对话",        input: ["text"],          output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: [] },
   vision:   { label: "视觉 + 思考",     input: ["text", "image"], output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: ["minimal", "low", "medium", "high"] },
@@ -5145,7 +5170,23 @@ function handleMembershipAction(action, tierIndex, entryIndex, presetKey) {
     loadMembershipPolicies();
     return;
   }
-  if (action === "apply-preset" && entryIndex >= 0) {
+  if (action === "apply-value" && entryIndex >= 0) {
+    // 字段级快捷填入（与 App 的预设 chips 一致）：只改这一项，不动其它设置
+    const entry = policy.entries[entryIndex] || {};
+    const [kind, raw] = String(presetKey || "").split(":");
+    const value = Number(raw) || 0;
+    if (kind === "context" || kind === "output") {
+      entry.preset = { ...(entry.preset || {}) };
+      if (kind === "context") entry.preset.context_limit = value;
+      else entry.preset.output_limit = value;
+    }
+  } else if (action === "apply-preset" && entryIndex >= 0 && presetKey === "reasoning-all") {
+    const entry = policy.entries[entryIndex] || {};
+    entry.preset = { ...(entry.preset || {}), reasoning_levels: MEMBERSHIP_REASONING_LEVELS.map(([value]) => value) };
+  } else if (action === "apply-preset" && entryIndex >= 0 && presetKey === "reasoning-clear") {
+    const entry = policy.entries[entryIndex] || {};
+    entry.preset = { ...(entry.preset || {}), reasoning_levels: [] };
+  } else if (action === "apply-preset" && entryIndex >= 0) {
     const entry = policy.entries[entryIndex] || {};
     const template = presetKey === "auto" ? inferMembershipPreset(entry) : MEMBERSHIP_PRESET_TEMPLATES[presetKey];
     if (presetKey === "clear") {
