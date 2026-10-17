@@ -4135,11 +4135,19 @@ class _AgentSemanticSelectionDialogState
   String _error = '';
   String _selectedId = '';
   List<DeviceSemanticAgentProfile> _profiles = const [];
+  SemanticPreflightWatcher? _preflightWatcher;
 
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _preflightWatcher?.stop();
+    _preflightWatcher = null;
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -4260,6 +4268,17 @@ class _AgentSemanticSelectionDialogState
         jobId: job.id,
       );
       _syncSemanticPreflightNotification(notifications, operationId, job);
+      // 对话框关闭后仍要刷新通知：交给后台观察者轮询，而不是依赖对话框的 timer
+      _preflightWatcher?.stop();
+      _preflightWatcher = SemanticPreflightWatcher(
+        notifications: notifications,
+        operationId: operationId,
+        jobId: job.id,
+        fetchJob: () => repo.getDeviceAgentSemanticPreflightJob(
+          machineId: widget.device.machineId,
+          jobId: job.id,
+        ),
+      )..start();
       if (!mounted) return;
       final completed = await showDialog<bool>(
         context: context,
@@ -4709,12 +4728,8 @@ class _AgentSemanticPreflightDialogState
       if (latest.finished) {
         _stopPolling();
       }
-      _syncSemanticPreflightNotification(
-        ref.read(appNotificationControllerProvider.notifier),
-        widget.operationId,
-        latest,
-        events: _events,
-      );
+      // 通知由后台 SemanticPreflightWatcher 统一刷新（对话框关闭后仍继续），
+      // 这里只负责对话框自身的进度展示。
       unawaited(_maybePresentUserAction(latest));
     } catch (e) {
       ref

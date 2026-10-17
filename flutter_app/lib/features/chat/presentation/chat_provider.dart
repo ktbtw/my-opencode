@@ -3764,6 +3764,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
           clearQuestion: true,
           cancelRequested: false,
         );
+      } else if (state.pendingQuestionTaskId == taskId) {
+        // 任务已经终止，但提问状态还挂着（例如停止时 _currentTaskId 已重置）
+        state = state.copyWith(clearQuestion: true);
       }
     }
   }
@@ -6056,6 +6059,14 @@ class ChatNotifier extends StateNotifier<ChatState> {
       return;
     }
     _markCurrentStreamingMessageStopping();
+    // 停止任务后待作答的问题/待审批请求已经作废：立刻清掉，
+    // 否则卡片会一直挂在界面上，点提交也必然失败（任务已不存在）。
+    if (state.pendingQuestionTaskId == taskId || state.pendingQuestion != null) {
+      state = state.copyWith(clearQuestion: true);
+    }
+    if (state.pendingApproval != null) {
+      state = state.copyWith(clearApproval: true);
+    }
     _beginOperation('正在停止任务', const [
       ChatOperationStep(
         key: 'phone',
@@ -6205,8 +6216,18 @@ class ChatNotifier extends StateNotifier<ChatState> {
         taskActive: true,
       );
     } catch (e) {
-      state = state.copyWith(error: '问题选择提交失败: $e');
+      // 任务已经结束/被停止时提交必然失败，此时把作废的提问卡片清掉，
+      // 避免界面一直挂着无法取消也无法提交的卡片。
+      state = state.copyWith(
+        error: '问题选择提交失败: $e',
+        clearQuestion: !state.taskActive,
+      );
     }
+  }
+
+  /// 关闭提问卡片（任务已停止或用户主动放弃作答时使用）。
+  void dismissQuestion() {
+    state = state.copyWith(clearQuestion: true);
   }
 
   bool _messageNeedsCatchUp(ChatMessage message) {

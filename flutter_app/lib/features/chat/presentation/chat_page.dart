@@ -1747,6 +1747,11 @@ class _ChatPageState extends ConsumerState<ChatPage>
                                   QuestionBanner(
                                     question: chat.pendingQuestion!,
                                     expandTick: _questionExpandTick,
+                                    onDismiss: () {
+                                      ref
+                                          .read(chatProvider(_chatKey).notifier)
+                                          .dismissQuestion();
+                                    },
                                     onSubmit: (requestId, answers) {
                                       ref
                                           .read(chatProvider(_chatKey).notifier)
@@ -6613,6 +6618,9 @@ class QuestionBanner extends StatefulWidget {
   final void Function(String requestId, List<List<String>> answers) onSubmit;
   final void Function(String requestId) onReject;
 
+  /// 关闭卡片：任务已停止或用户主动放弃作答时使用，避免卡片一直挂在界面上。
+  final VoidCallback? onDismiss;
+
   /// 每次自增都会把收起状态重新展开，用于切回前台或用户试图发消息时提醒。
   final int expandTick;
 
@@ -6621,6 +6629,7 @@ class QuestionBanner extends StatefulWidget {
     required this.question,
     required this.onSubmit,
     required this.onReject,
+    this.onDismiss,
     this.expandTick = 0,
   });
 
@@ -6840,6 +6849,18 @@ class _QuestionBannerState extends State<QuestionBanner>
             icon: const Icon(Icons.keyboard_arrow_up_rounded),
             onPressed: () => _setCollapsed(false),
           ),
+          if (widget.onDismiss != null)
+            IconButton(
+              key: const ValueKey('question-banner-dismiss-collapsed'),
+              tooltip: '关闭',
+              iconSize: 18,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              color: AppColors.textMuted,
+              icon: const Icon(Icons.close_rounded),
+              onPressed: widget.onDismiss,
+            ),
         ],
       ),
     );
@@ -6891,6 +6912,18 @@ class _QuestionBannerState extends State<QuestionBanner>
               icon: const Icon(Icons.keyboard_arrow_down_rounded),
               onPressed: () => _setCollapsed(true),
             ),
+            if (widget.onDismiss != null)
+              IconButton(
+                key: const ValueKey('question-banner-dismiss'),
+                tooltip: '关闭',
+                iconSize: 18,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                color: AppColors.textMuted,
+                icon: const Icon(Icons.close_rounded),
+                onPressed: widget.onDismiss,
+              ),
           ],
         ),
         if (question.questions.length > 1) ...[

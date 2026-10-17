@@ -93,11 +93,9 @@ class AppNotificationHost extends ConsumerWidget {
     AppNotificationController controller,
     AppNotificationRecord record,
   ) {
-    if (record.isTerminal) {
-      controller.dismiss(record.id);
-    } else {
-      controller.hideOperation(record.operationId);
-    }
+    // 一律走 dismiss：synced 作用域会同步删除到服务端，
+    // 否则只做本地隐藏，服务端下一次同步又会把它加回来（表现为"关不掉"）。
+    controller.dismiss(record.id);
   }
 
   void _handleAction(

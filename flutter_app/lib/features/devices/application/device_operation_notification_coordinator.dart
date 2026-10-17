@@ -511,3 +511,65 @@ String formatNotificationBytes(int value) {
   final digits = size >= 100 || index == 0 ? 0 : 1;
   return '${size.toStringAsFixed(digits)} ${units[index]}';
 }
+
+/// 后台预检观察者：预检对话框关闭后继续轮询任务状态并刷新通知，
+/// 避免通知停在「等待同步」且不再随进度变化（此前后台没有轮询）。
+class SemanticPreflightWatcher {
+  SemanticPreflightWatcher({
+    required this.notifications,
+    required this.fetchJob,
+    required this.operationId,
+    required this.jobId,
+    this.interval = const Duration(milliseconds: 900),
+    this.maxDuration = const Duration(minutes: 30),
+  });
+
+  final AppNotificationController notifications;
+  final Future<RuntimePreflightJob?> Function() fetchJob;
+  final String operationId;
+  final String jobId;
+  final Duration interval;
+  final Duration maxDuration;
+
+  Timer? _timer;
+  bool _busy = false;
+  bool _stopped = false;
+  DateTime? _startedAt;
+
+  void start() {
+    _timer?.cancel();
+    _startedAt = DateTime.now();
+    _timer = Timer.periodic(interval, (_) => unawaited(poll()));
+    unawaited(poll());
+  }
+
+  void stop() {
+    _stopped = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Future<void> poll() async {
+    if (_stopped || _busy) return;
+    final started = _startedAt;
+    if (started != null && DateTime.now().difference(started) > maxDuration) {
+      stop();
+      return;
+    }
+    _busy = true;
+    try {
+      final job = await fetchJob();
+      if (job == null || _stopped) return;
+      reconcileSemanticPreflightNotification(
+        notifications: notifications,
+        operationId: operationId,
+        job: job,
+      );
+      if (job.finished) stop();
+    } catch (_) {
+      // 单次失败忽略，下一轮继续
+    } finally {
+      _busy = false;
+    }
+  }
+}
