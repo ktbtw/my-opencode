@@ -48,6 +48,7 @@ enum _CanvasBackground { grid, light, dark }
 
 class _GeneratedImageViewerState extends State<GeneratedImageViewer> {
   late final PageController _pages;
+  final ScrollController _thumbnailScroll = ScrollController();
   late final List<PhotoViewController> _views;
   late int _index;
   final Map<int, Uint8List> _bytes = {};
@@ -78,11 +79,13 @@ class _GeneratedImageViewerState extends State<GeneratedImageViewer> {
     _pages = PageController(initialPage: _index);
     _views = List.generate(widget.images.length, (_) => PhotoViewController());
     _loadAround(_index);
+    _revealThumbnail();
   }
 
   @override
   void dispose() {
     _pages.dispose();
+    _thumbnailScroll.dispose();
     for (final view in _views) {
       view.dispose();
     }
@@ -134,6 +137,20 @@ class _GeneratedImageViewerState extends State<GeneratedImageViewer> {
       duration: const Duration(milliseconds: 230),
       curve: Curves.easeOutCubic,
     );
+  }
+
+  void _revealThumbnail() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_thumbnailScroll.hasClients) return;
+      final position = _thumbnailScroll.position;
+      final target = (_index * 72 - (position.viewportDimension - 64) / 2)
+          .clamp(0.0, position.maxScrollExtent);
+      _thumbnailScroll.animateTo(
+        target,
+        duration: const Duration(milliseconds: 230),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   double get _fitScale {
@@ -449,6 +466,7 @@ class _GeneratedImageViewerState extends State<GeneratedImageViewer> {
               onPageChanged: (index) {
                 setState(() => _index = index);
                 _loadAround(index);
+                _revealThumbnail();
               },
               builder: (_, index) {
                 final bytes = _bytes[index];
@@ -493,7 +511,7 @@ class _GeneratedImageViewerState extends State<GeneratedImageViewer> {
                   minScale: PhotoViewComputedScale.contained * .1,
                   initialScale: PhotoViewComputedScale.contained,
                   maxScale: math.max(
-                    8,
+                    8.0,
                     math.max(
                           _viewport.width / size.width,
                           _viewport.height / size.height,
@@ -695,6 +713,18 @@ class _GeneratedImageViewerState extends State<GeneratedImageViewer> {
             style: const TextStyle(fontSize: 11),
           ),
           selected: _background == value,
+          selectedColor: AppColors.primaryLight,
+          backgroundColor: AppColors.surface,
+          labelStyle: TextStyle(
+            color: _background == value
+                ? AppColors.primary
+                : AppColors.textSecondary,
+          ),
+          side: BorderSide(
+            color: _background == value
+                ? AppColors.primaryMuted
+                : AppColors.borderLight,
+          ),
           showCheckmark: false,
           onSelected: (_) => setState(() => _background = value),
         ),
@@ -704,51 +734,55 @@ class _GeneratedImageViewerState extends State<GeneratedImageViewer> {
   Widget _thumbnails() => SizedBox(
     height: 70,
     child: ListView.separated(
+      controller: _thumbnailScroll,
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       itemCount: widget.images.length,
       separatorBuilder: (_, _) => const SizedBox(width: 8),
-      itemBuilder: (_, index) => Tooltip(
-        message: widget.images[index].filename,
-        child: Semantics(
-          button: true,
-          selected: index == _index,
-          label: '查看第 ${index + 1} 张图片',
-          child: InkWell(
-            onTap: () => _goTo(index),
-            borderRadius: BorderRadius.circular(9),
-            child: Container(
-              width: 64,
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(9),
-                border: Border.all(
-                  color: index == _index
-                      ? AppColors.primary
-                      : AppColors.borderLight,
-                  width: index == _index ? 2 : 1,
+      itemBuilder: (_, index) {
+        _load(index);
+        return Tooltip(
+          message: widget.images[index].filename,
+          child: Semantics(
+            button: true,
+            selected: index == _index,
+            label: '查看第 ${index + 1} 张图片',
+            child: InkWell(
+              onTap: () => _goTo(index),
+              borderRadius: BorderRadius.circular(9),
+              child: Container(
+                width: 64,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(9),
+                  border: Border.all(
+                    color: index == _index
+                        ? AppColors.primary
+                        : AppColors.borderLight,
+                    width: index == _index ? 2 : 1,
+                  ),
                 ),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(5),
-                child: _bytes[index] == null
-                    ? Center(
-                        child: Text(
-                          '${index + 1}',
-                          style: const TextStyle(color: AppColors.textMuted),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(5),
+                  child: _bytes[index] == null
+                      ? Center(
+                          child: Text(
+                            '${index + 1}',
+                            style: const TextStyle(color: AppColors.textMuted),
+                          ),
+                        )
+                      : Image.memory(
+                          _bytes[index]!,
+                          fit: BoxFit.cover,
+                          cacheWidth: 128,
                         ),
-                      )
-                    : Image.memory(
-                        _bytes[index]!,
-                        fit: BoxFit.cover,
-                        cacheWidth: 128,
-                      ),
+                ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     ),
   );
 }

@@ -106,8 +106,13 @@ class VideoPlayerControls extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (!isDesktop)
-              Align(alignment: Alignment.centerLeft, child: _TimeLabel(
-                position: formatDuration(position), duration: formatDuration(duration))),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: _TimeLabel(
+                  position: formatDuration(position),
+                  duration: formatDuration(duration),
+                ),
+              ),
             _SeekBar(
               progress: progress,
               buffered: buffered,
@@ -144,10 +149,11 @@ class VideoPlayerControls extends StatelessWidget {
                   tooltip: '快进 10 秒',
                 ),
                 const SizedBox(width: 6),
-                if (isDesktop) _TimeLabel(
-                  position: formatDuration(position),
-                  duration: formatDuration(duration),
-                ),
+                if (isDesktop)
+                  _TimeLabel(
+                    position: formatDuration(position),
+                    duration: formatDuration(duration),
+                  ),
 
                 // 桌面端：进度条已在上方，这里放音量
                 if (isDesktop) ...[

@@ -5,6 +5,46 @@ import 'package:chat_codex_app/features/chat/presentation/video_player/player_ic
 import 'package:chat_codex_app/features/chat/presentation/video_player/video_player_controls.dart';
 
 void main() {
+  group('精确跳转时间', () {
+    test('支持秒数、分秒与时分秒', () {
+      expect(
+        VideoPlayerControls.parseTimestamp(' 90 '),
+        const Duration(seconds: 90),
+      );
+      expect(
+        VideoPlayerControls.parseTimestamp('01:30'),
+        const Duration(seconds: 90),
+      );
+      expect(
+        VideoPlayerControls.parseTimestamp('1:02:03'),
+        const Duration(seconds: 3723),
+      );
+      expect(
+        VideoPlayerControls.parseTimestamp('61:00'),
+        const Duration(minutes: 61),
+      );
+      expect(VideoPlayerControls.parseTimestamp('0'), Duration.zero);
+    });
+    test('拒绝无效或溢出的分秒', () {
+      for (final input in [
+        '',
+        '-1',
+        '1.5',
+        '1:60',
+        '1:99:00',
+        'abc',
+        ':10',
+        '1:2:3:4',
+        '999999999999999999999',
+      ]) {
+        expect(
+          VideoPlayerControls.parseTimestamp(input),
+          isNull,
+          reason: input,
+        );
+      }
+    });
+  });
   group('时长格式化', () {
     test('补零到 mm:ss', () {
       expect(

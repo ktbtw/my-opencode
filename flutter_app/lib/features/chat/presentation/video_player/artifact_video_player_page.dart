@@ -127,6 +127,10 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
       controller.addListener(_onTick);
       await controller.setLooping(_looping);
       await controller.setPlaybackSpeed(_speed);
+      if (!mounted || generation != _openGeneration) {
+        await controller.dispose();
+        return;
+      }
       setState(() {
         _controller = controller;
         _initializing = false;
@@ -141,9 +145,9 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
       await controller.play();
       _scheduleHide();
     } catch (error) {
-      debugPrint('TRACE catch before dispose: $error');
+      controller.removeListener(_onTick);
+      if (_controller == controller) _controller = null;
       await controller.dispose();
-      debugPrint('TRACE catch after dispose');
       if (!mounted || generation != _openGeneration) return;
       setState(() {
         _initializing = false;
@@ -155,6 +159,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
   /// 续播：回到上次离开的位置（接近结尾则从头开始）。
   Future<void> _restorePosition(VideoPlayerController controller) async {
     final saved = await PlayerProgressStore.read(widget.taskId, _current.id);
+    if (!mounted || controller != _controller) return;
     if (saved == null || saved <= Duration.zero) return;
     final duration = controller.value.duration;
     if (duration > Duration.zero &&
@@ -859,6 +864,18 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
                   style: const TextStyle(fontSize: 11),
                 ),
                 selected: speed == _speed,
+                selectedColor: AppColors.primaryLight,
+                backgroundColor: AppColors.surface,
+                labelStyle: TextStyle(
+                  color: speed == _speed
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
+                ),
+                side: BorderSide(
+                  color: speed == _speed
+                      ? AppColors.primaryMuted
+                      : AppColors.borderLight,
+                ),
                 showCheckmark: false,
                 visualDensity: VisualDensity.compact,
                 onSelected: (_) => _setSpeed(speed),
@@ -1194,6 +1211,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
         index >= _playlist.length) {
       return;
     }
+    _openGeneration++;
     final old = _controller;
     if (old != null) {
       unawaited(
@@ -1216,9 +1234,7 @@ class _ArtifactVideoPlayerPageState extends State<ArtifactVideoPlayerPage> {
       _ended = false;
     });
     old?.removeListener(_onTick);
-    debugPrint('TRACE before dispose');
     await old?.dispose();
-    debugPrint('TRACE after dispose');
     if (mounted) await _open();
   }
 

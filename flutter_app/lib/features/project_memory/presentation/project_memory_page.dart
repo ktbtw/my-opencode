@@ -401,7 +401,7 @@ class _ProjectMemoryPageState extends ConsumerState<ProjectMemoryPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   subtitle: Text(
-                    selectedModel?.metaKey ??
+                    selectedModel?.displayRef ??
                         (models.isEmpty ? '设备没有可用模型' : '点击搜索并选择设备模型'),
                   ),
                   trailing: const Icon(Icons.search),

@@ -10388,7 +10388,7 @@ class _ModelLatencyTestSheetState
 
   @override
   Widget build(BuildContext context) {
-    final modelLabel = widget.model.metaKey;
+    final modelLabel = widget.model.displayRef;
     final variant = widget.variant?.trim();
     final snapshot = _ModelLatencyLiveSnapshot.from(
       result: _result,
@@ -10515,7 +10515,7 @@ class _ModelLatencyTestSheetState
 
   String _buildLogText() {
     final buffer = StringBuffer();
-    buffer.writeln('model=${widget.model.metaKey}');
+    buffer.writeln('model=${widget.model.displayRef}');
     final variant = widget.variant?.trim();
     if (variant != null && variant.isNotEmpty) {
       buffer.writeln('variant=$variant');
@@ -12265,9 +12265,18 @@ class _QueueItemRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final inserting = item.status == ChatQueueItemStatus.inserting;
+    ModelInfo? matchedModel;
+    for (final model in availableModels) {
+      if (model.metaKey == item.modelRef) {
+        matchedModel = model;
+        break;
+      }
+    }
     final modelLabel = item.modelRef.isEmpty
         ? '默认模型'
-        : item.modelRef.split('/').last;
+        : (matchedModel?.member == true
+            ? matchedModel!.displayModelName
+            : item.modelRef.split('/').last);
     return Material(
       color: AppColors.surface,
       child: Container(

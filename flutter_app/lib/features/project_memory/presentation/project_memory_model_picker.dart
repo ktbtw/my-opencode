@@ -105,7 +105,7 @@ class _ProjectMemoryModelPickerState extends State<_ProjectMemoryModelPicker> {
                           title: Text(
                             model.name.isEmpty ? model.metaKey : model.name,
                           ),
-                          subtitle: Text(model.metaKey),
+                          subtitle: Text(model.displayProviderName),
                           trailing: isSelected
                               ? const Icon(
                                   Icons.check,

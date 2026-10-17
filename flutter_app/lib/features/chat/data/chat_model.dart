@@ -1988,6 +1988,11 @@ class ModelInfo {
   String get displayModelName =>
       modelName.trim().isEmpty ? modelID : modelName.trim();
 
+  /// 展示用的模型标识：会员模型给"供应商 · 模型"的白标名，其它模型仍用 provider/model。
+  /// 测速、队列、项目记忆等界面统一用它，避免把内部别名暴露给用户。
+  String get displayRef =>
+      member ? '$displayProviderName · $displayModelName' : metaKey;
+
   String get contextWindowLabel => formatContextWindow(contextLimit);
 
   /// 选择模型列表内的紧凑展示：只保留容量数字，省略“窗口”二字。
