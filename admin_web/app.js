@@ -4773,6 +4773,38 @@ function renderMembershipStats() {
   el.statDisabled.textContent = tiers.length - active;
 }
 
+// 参数预设面板的展开状态：整页重绘后按 tier:entry 恢复，
+// 否则点一次"一键预设"面板就会自动收起（<details> 被重建、open 属性丢失）。
+const membershipPresetOpen = new Set();
+
+function membershipPresetKey(node) {
+  const entry = node.closest(".membership-model-entry");
+  const tier = node.closest("[data-tier-index]");
+  if (!entry || !tier) return "";
+  return `${tier.dataset.tierIndex}:${entry.dataset.entryIndex}`;
+}
+
+function restoreMembershipPresetState() {
+  el.grid.querySelectorAll(".membership-preset").forEach((node) => {
+    const key = membershipPresetKey(node);
+    if (key && membershipPresetOpen.has(key)) node.open = true;
+  });
+}
+
+// toggle 事件不冒泡，用捕获阶段记录展开/收起
+document.addEventListener(
+  "toggle",
+  (event) => {
+    const node = event.target;
+    if (!(node instanceof HTMLElement) || !node.classList.contains("membership-preset")) return;
+    const key = membershipPresetKey(node);
+    if (!key) return;
+    if (node.open) membershipPresetOpen.add(key);
+    else membershipPresetOpen.delete(key);
+  },
+  true,
+);
+
 function renderMembershipPage() {
   syncViewChrome();
   renderMembershipStats();
@@ -4787,10 +4819,15 @@ function renderMembershipPage() {
   const allowed = gateway.allowed_models || [];
   const warnings = state.membershipWarnings || [];
   const panels = state.membershipPolicies.map((policy, index) => membershipTierPanel(policy, index, allowed)).join("");
+  const scrollY = window.scrollY;
 
   el.grid.innerHTML = `
     <p class="muted" title="管理地址 ${escapeAttr(gateway.base_url || "-")}｜会员端地址 ${escapeAttr(gateway.device_base_url || "-")}">${gateway.configured ? "服务已连接" : "服务未配置"} · 可发放模型 ${allowed.length} 个${gateway.secret_configured ? "" : " · 密钥未配置"}${warnings.length ? ` · <span class="card-warning">${warnings.map((item) => escapeHtml(item)).join("；")}</span>` : ""}</p>
     ${panels}`;
+
+  // 重绘会重建 <details> 并可能改变页面高度：恢复展开状态与滚动位置
+  restoreMembershipPresetState();
+  requestAnimationFrame(() => window.scrollTo(0, scrollY));
 
   // 模型下拉统一用控制台自研组件（原生 select 会被隐藏），
   // 卡片每次重绘都要重新增强，并清掉已脱离文档的旧实例。
