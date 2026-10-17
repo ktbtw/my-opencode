@@ -324,18 +324,48 @@ body.membership-view .recommendation-card { overflow: visible; }
 
 .quota-group[style*="display: none"] { display: none !important; }
 
-/* 模型参数预设：折叠面板 + 多模态开关 */
+/* 模型参数预设：折叠面板 + 分区 + 紧凑勾选块 */
 .membership-model-entry { display: grid; gap: 8px; margin-bottom: 10px; }
-.membership-preset { border: 1px solid var(--border-light); border-radius: 10px; padding: 10px 12px; }
+.membership-preset { border: 1px solid var(--border-light); border-radius: var(--radius-md); padding: 10px 12px; }
 .membership-preset summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
-.membership-preset[open] summary { margin-bottom: 10px; color: var(--text-primary); }
-.preset-modalities { margin-top: 10px; }
-.preset-check { padding: 8px 10px; }
-.preset-check input { width: 18px; height: 18px; accent-color: var(--primary); box-shadow: none; }
+.membership-preset[open] summary { margin-bottom: 6px; color: var(--text); }
 
 /* 一键预设按钮行 */
-.preset-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 4px; }
-.preset-actions .muted { margin-right: 2px; }
+.preset-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 4px; }
+.preset-actions-label { font-size: 12px; color: var(--text-muted); margin-right: 2px; }
+.preset-actions .compact-button { padding: 5px 10px; font-size: 12px; }
 
-/* 思考强度：7 档一行铺开 */
-.preset-levels { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* 分区 */
+.preset-section { margin-top: 12px; }
+.preset-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.preset-label small { font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+
+/* 网格 */
+.preset-grid { display: grid; gap: 6px; }
+.preset-grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.preset-grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.preset-grid.cols-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+
+/* 勾选块 */
+.preset-chip {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 34px; padding: 6px 9px; box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 12px; color: var(--text);
+  cursor: pointer; user-select: none; transition: border-color .15s, background .15s;
+}
+.preset-chip:hover { border-color: var(--primary); }
+.preset-chip input { width: 15px; height: 15px; margin: 0; flex: none; accent-color: var(--primary); box-shadow: none; }
+.preset-chip span { line-height: 1.2; }
+.preset-chip:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+
+/* 容量输入 */
+.preset-field { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.preset-field input { width: 100%; box-sizing: border-box; }
+
+@media (max-width: 900px) {
+  .preset-grid.cols-7 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .preset-grid.cols-4, .preset-grid.cols-7 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

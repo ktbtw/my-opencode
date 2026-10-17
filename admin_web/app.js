@@ -4850,19 +4850,11 @@ function membershipTierPanel(policy, tierIndex, models) {
         const inputs = preset.input_modalities || [];
         const outputs = preset.output_modalities || [];
         const levels = preset.reasoning_levels || (preset.reasoning ? [preset.reasoning] : []);
-        const modalityBox = (direction, value, label) => {
+        const modalityChip = (direction, value, label) => {
           const list = direction === "input" ? inputs : outputs;
-          return `
-          <label class="switch-row preset-check">
-            <span>${label}</span>
-            <input type="checkbox" data-field="preset_modality" data-direction="${direction}" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${list.includes(value) ? "checked" : ""} />
-          </label>`;
+          return `<label class="preset-chip"><input type="checkbox" data-field="preset_modality" data-direction="${direction}" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${list.includes(value) ? "checked" : ""} /><span>${label}</span></label>`;
         };
-        const thinkingBox = (value, label) => `
-          <label class="switch-row preset-check">
-            <span>${label}</span>
-            <input type="checkbox" data-field="preset_reasoning_level" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${levels.includes(value) ? "checked" : ""} />
-          </label>`;
+        const thinkingChip = (value, label) => `<label class="preset-chip"><input type="checkbox" data-field="preset_reasoning_level" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${value}" ${levels.includes(value) ? "checked" : ""} /><span>${label}</span></label>`;
         return `
       <div class="membership-model-entry" data-entry-index="${entryIndex}">
         <div class="membership-model-row">
@@ -4874,37 +4866,49 @@ function membershipTierPanel(policy, tierIndex, models) {
         <details class="membership-preset">
           <summary>参数预设（上下文 / 最大输出 / 输入方式 / 思考强度）</summary>
           <div class="preset-actions">
-            <span class="muted">一键预设：</span>
+            <span class="preset-actions-label">一键预设</span>
             ${Object.entries(MEMBERSHIP_PRESET_TEMPLATES).map(([key, item]) => `
               <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="${key}">${item.label}</button>`).join("")}
-            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="auto">按模型智能填充</button>
+            <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="auto">智能填充</button>
             <button type="button" class="compact-button" data-membership-action="apply-preset" data-preset="clear">清空</button>
           </div>
-          <div class="form-grid two">
-            <label><span>上下文（tokens，0=不限）</span><input data-field="preset_context" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.context_limit ? String(preset.context_limit) : "")}" placeholder="128000" /></label>
-            <label><span>最大输出（tokens，0=不限）</span><input data-field="preset_output" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.output_limit ? String(preset.output_limit) : "")}" placeholder="8192" /></label>
+          <div class="preset-section">
+            <span class="preset-label">容量</span>
+            <div class="preset-grid cols-2">
+              <label class="preset-field"><span>上下文（tokens，0=不限）</span><input data-field="preset_context" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.context_limit ? String(preset.context_limit) : "")}" placeholder="128000" /></label>
+              <label class="preset-field"><span>最大输出（tokens，0=不限）</span><input data-field="preset_output" data-tier="${tierIndex}" data-entry="${entryIndex}" value="${escapeAttr(preset.output_limit ? String(preset.output_limit) : "")}" placeholder="8192" /></label>
+            </div>
           </div>
-          <div class="form-grid three preset-modalities">
-            ${modalityBox("input", "text", "文本输入")}
-            ${modalityBox("input", "image", "图片输入")}
-            ${modalityBox("input", "audio", "音频输入")}
+          <div class="preset-section">
+            <span class="preset-label">输入方式</span>
+            <div class="preset-grid cols-4">
+              ${modalityChip("input", "text", "文本")}
+              ${modalityChip("input", "image", "图片")}
+              ${modalityChip("input", "audio", "音频")}
+              ${modalityChip("input", "video", "视频")}
+            </div>
           </div>
-          <div class="form-grid three preset-modalities">
-            ${modalityBox("output", "text", "文本输出")}
-            ${modalityBox("output", "image", "图片输出")}
-            ${modalityBox("output", "audio", "音频输出")}
+          <div class="preset-section">
+            <span class="preset-label">输出方式</span>
+            <div class="preset-grid cols-4">
+              ${modalityChip("output", "text", "文本")}
+              ${modalityChip("output", "image", "图片")}
+              ${modalityChip("output", "audio", "音频")}
+              ${modalityChip("output", "video", "视频")}
+            </div>
           </div>
-          <div class="form-grid preset-levels">
-            ${MEMBERSHIP_REASONING_LEVELS.map(([value, label]) => thinkingBox(value, `思考 · ${label}`)).join("")}
+          <div class="preset-section">
+            <span class="preset-label">思考强度<small>勾一档=固定，勾多档=用户可切换，都不勾=不预设</small></span>
+            <div class="preset-grid cols-7">
+              ${MEMBERSHIP_REASONING_LEVELS.map(([value, label]) => thinkingChip(value, label)).join("")}
+            </div>
           </div>
-          <div class="form-grid two preset-modalities">
-            <label class="switch-row preset-check">
-              <span>支持破甲</span>
-              <input type="checkbox" data-field="preset_armor" data-tier="${tierIndex}" data-entry="${entryIndex}" ${preset.supports_armor ? "checked" : ""} />
-            </label>
+          <div class="preset-section">
+            <span class="preset-label">能力</span>
+            <div class="preset-grid cols-4">
+              <label class="preset-chip"><input type="checkbox" data-field="preset_armor" data-tier="${tierIndex}" data-entry="${entryIndex}" ${preset.supports_armor ? "checked" : ""} /><span>支持破甲</span></label>
+            </div>
           </div>
-          <p class="muted">思考强度可多选（关闭/最小/低/中/高/极高/最大，与 App 一致）：勾一档=固定强度，勾多档=用户可在 App 里切换；都不勾=不预设该能力。</p>
-          <p class="muted">「支持破甲」勾选后，该模型也能开启破甲模式（默认只有 DeepSeek 系列支持）。</p>
         </details>
       </div>`;
       }
@@ -5063,6 +5067,7 @@ const MEMBERSHIP_PRESET_TEMPLATES = {
   vision:   { label: "视觉 + 思考",     input: ["text", "image"], output: ["text"], context: 128000,  maxOutput: 8192,  reasoning: ["minimal", "low", "medium", "high"] },
   long:     { label: "长上下文",        input: ["text"],          output: ["text"], context: 1000000, maxOutput: 32768, reasoning: ["low", "medium", "high", "xhigh"] },
   fast:     { label: "短问答 · 无思考", input: ["text"],          output: ["text"], context: 32000,   maxOutput: 4096,  reasoning: [] },
+  video:    { label: "视频生成",        input: ["text"],          output: ["text", "video"], context: 32000, maxOutput: 4096, reasoning: [] },
 };
 
 // 按模型名/展示名猜一套预设，猜不中就按通用对话兜底。
@@ -5087,6 +5092,9 @@ function inferMembershipPreset(entry) {
   }
   if (/(image-gen|dall|生图|imagen)/.test(text)) {
     preset.output = Array.from(new Set([...preset.output, "image"]));
+  }
+  if (/(video|sora|veo|kling|生视频|文生视频)/.test(text)) {
+    preset.output = Array.from(new Set([...preset.output, "video"]));
   }
   return preset;
 }
