@@ -44,7 +44,7 @@ internal fun GlobalOverlayService.connectEventStream() {
                 }
                 handler.post {
                     streamConnected = false
-                    refreshOverlayContent()
+                    updatePanelContent()
                     GlobalOverlayEventBridge.emit(statusSnapshot())
                 }
                 if (destroyed || !backgroundNotificationEnabled) {
@@ -155,7 +155,7 @@ internal fun GlobalOverlayService.readEventStream() {
                 if (destroyed || !backgroundNotificationEnabled || requestScope != notificationCursorScope) return@post
                 streamConnected = true
                 lastStreamError = ""
-                refreshOverlayContent()
+                updatePanelContent()
                 GlobalOverlayEventBridge.emit(statusSnapshot())
             }
             connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->

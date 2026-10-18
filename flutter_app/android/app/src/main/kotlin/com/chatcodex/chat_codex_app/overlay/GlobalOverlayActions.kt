@@ -45,13 +45,13 @@ internal fun GlobalOverlayService.sendTextMessage(text: String) {
     if (agent == null) return toast("暂无可用 Agent")
     if (text.isEmpty() && attachments.isEmpty()) return toast("请输入消息或添加附件")
     composing = true
-    updateComposingUi()
+    syncComposeState()
     executor.execute {
         val task = createTask(agent, text, completion)
         val failureMessage = lastApiError
         handler.post {
             composing = false
-            updateComposingUi()
+            syncComposeState()
             if (task != null) {
                 val outgoingMessage = text.ifBlank {
                     if (attachments.size == 1) "附件：${attachments.first().name}" else "已发送 ${attachments.size} 个附件"
@@ -75,8 +75,7 @@ internal fun GlobalOverlayService.sendTextMessage(text: String) {
                     promoteNextCompletion()
                     showQueuePrompt = currentCompletion == null && completions.isEmpty() && deferredCompletions.isNotEmpty()
                 }
-                refreshOverlayContent()
-                scrollConversationToBottom()
+                updatePanelContent()
                 verifyTaskAfterSend(agent, taskId)
             } else {
                 latestSentMessagesByAgentKey.remove(agent.key)
@@ -157,105 +156,7 @@ internal fun GlobalOverlayService.pickAttachment() {
 internal fun GlobalOverlayService.removeAttachment(index: Int) {
     if (index !in attachments.indices) return
     attachments.removeAt(index)
-    refreshOverlayContent()
+    updatePanelContent()
 }
 
 /** 长按悬浮球弹出的「关闭全局助手」确认框。 */
-internal fun GlobalOverlayService.showStopConfirmation() {
-    if (closeConfirmationDialog?.isShowing == true) return
-    lateinit var dialog: AlertDialog
-    val content = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(22), dp(20), dp(22), dp(16))
-        background = roundedBackground(0xFFFFFFFF.toInt(), 14)
-    }
-    val header = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-    }
-    val icon = ImageView(this).apply {
-        setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-        imageTintList = ColorStateList.valueOf(0xFFDC2626.toInt())
-        background = roundedBackground(0xFFFEE2E2.toInt(), 10)
-        setPadding(dp(10), dp(10), dp(10), dp(10))
-    }
-    header.addView(icon, LinearLayout.LayoutParams(dp(40), dp(40)))
-    val title = TextView(this).apply {
-        text = "关闭全局助手？"
-        setTextColor(0xFF0F1729.toInt())
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
-        setPadding(dp(12), dp(1), 0, 0)
-    }
-    header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-    content.addView(header)
-
-    val message = TextView(this).apply {
-        text = "关闭后将不再显示悬浮图标，也不会在应用启动时自动恢复。"
-        setTextColor(0xFF4A5D7A.toInt())
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        setPadding(0, dp(14), 0, 0)
-    }
-    content.addView(message)
-
-    val actions = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.END
-        setPadding(0, dp(20), 0, 0)
-    }
-    val cancelButton = Button(this).apply {
-        text = "取消"
-        setAllCaps(false)
-        setTextColor(0xFF2563EB.toInt())
-        background = roundedBackground(0xFFFFFFFF.toInt(), 8, 0xFFD0DDEF.toInt())
-        setPadding(dp(14), 0, dp(14), 0)
-        setOnClickListener { dialog.dismiss() }
-    }
-    val closeButton = Button(this).apply {
-        text = "关闭"
-        setAllCaps(false)
-        setTextColor(0xFFFFFFFF.toInt())
-        background = roundedBackground(0xFFDC2626.toInt(), 8)
-        setPadding(dp(16), 0, dp(16), 0)
-        setOnClickListener {
-            dialog.dismiss()
-            getSharedPreferences(FLUTTER_PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putString(ENABLED_PREF_KEY, "false")
-                .apply()
-            disableOverlay()
-        }
-    }
-    actions.addView(cancelButton, LinearLayout.LayoutParams(dp(76), dp(40)))
-    actions.addView(closeButton, LinearLayout.LayoutParams(dp(76), dp(40)).apply {
-        leftMargin = dp(10)
-    })
-    content.addView(actions)
-
-    dialog = AlertDialog.Builder(this)
-        .setView(content)
-        .create()
-    dialog.window?.setType(
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        },
-    )
-    dialog.setOnShowListener {
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        dialog.window?.setLayout(
-            (resources.displayMetrics.widthPixels * 0.82f).toInt(),
-            WindowManager.LayoutParams.WRAP_CONTENT,
-        )
-    }
-    dialog.setOnDismissListener {
-        if (closeConfirmationDialog === dialog) closeConfirmationDialog = null
-    }
-    closeConfirmationDialog = dialog
-    runCatching { dialog.show() }.onFailure {
-        closeConfirmationDialog = null
-        toast("关闭确认框显示失败，请从应用内关闭")
-    }
-}

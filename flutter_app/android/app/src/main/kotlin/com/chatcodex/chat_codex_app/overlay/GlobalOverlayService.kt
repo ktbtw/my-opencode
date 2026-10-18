@@ -162,14 +162,6 @@ class GlobalOverlayService : Service() {
     internal var sendButton: ImageButton? = null
     internal var attachmentLabel: TextView? = null
     internal var panelView: LinearLayout? = null
-    internal var conversationScroll: ScrollView? = null
-    internal var conversationScrollY = 0
-    internal var renderedConversationKey = ""
-    internal var bubbleContainer: FrameLayout? = null
-    internal var bubbleBrand: BrandMarkView? = null
-    internal var bubbleSummary: TextView? = null
-    internal var closeConfirmationDialog: AlertDialog? = null
-    internal var modelPickerPopup: PopupWindow? = null
 
     // ---- 面板几何 ----
     internal var panelWidthPx = 0
@@ -330,9 +322,6 @@ class GlobalOverlayService : Service() {
             }
         }
         unregisterNetworkCallback()
-        modelPickerPopup?.dismiss()
-        closeConfirmationDialog?.dismiss()
-        closeConfirmationDialog = null
         executor.shutdownNow()
         runCatching { unregisterReceiver(attachmentReceiver) }
         root?.let { runCatching { windowManager.removeViewImmediate(it) } }
@@ -347,15 +336,10 @@ class GlobalOverlayService : Service() {
             if (!destroyed) {
                 saveOverlayGeometry()
                 overlayEnabled = false
-                closeConfirmationDialog?.dismiss()
-                closeConfirmationDialog = null
-                modelPickerPopup?.dismiss()
-                modelPickerPopup = null
-                runCatching { unregisterReceiver(attachmentReceiver) }
+                                        runCatching { unregisterReceiver(attachmentReceiver) }
                 root?.let { runCatching { windowManager.removeViewImmediate(it) } }
                 root = null
                 panelView = null
-                bubbleContainer = null
                 sendButton = null
                 GlobalOverlayEventBridge.emit(mapOf("running" to false, "connected" to streamConnected))
             }
@@ -488,3 +472,13 @@ class GlobalOverlayService : Service() {
         }
     }
 }
+
+/** 悬浮层的运行状态快照（供事件桥与 Flutter 侧查询）。 */
+internal fun GlobalOverlayService.statusSnapshot(): Map<String, Any> = mapOf(
+    "running" to (!stopping && !destroyed && overlayEnabled),
+    "mode" to (composeUiState?.mode?.name ?: "BALL"),
+    "agents" to agents.count { it.online },
+    "busy" to agents.count { it.online && it.taskId.isNotBlank() },
+    "stream_connected" to streamConnected,
+    "has_completion" to (currentCompletion != null),
+)

@@ -17,6 +17,10 @@ import com.chatcodex.chat_codex_app.overlay.compose.FloatingOverlayRoot
 import com.chatcodex.chat_codex_app.overlay.compose.OverlayUiState
 
 /** 悬浮层 UI 状态（服务侧直接改字段，Compose 自动重组）。 */
+internal fun GlobalOverlayService.syncComposeState() {
+    syncComposeStateFromService(ensureComposeState())
+}
+
 internal fun GlobalOverlayService.ensureComposeState(): OverlayUiState {
     val existing = composeUiState
     if (existing != null) return existing
@@ -89,7 +93,6 @@ internal fun GlobalOverlayService.renderComposeOverlay() {
     val params = composeLayoutParams(mode)
     root?.let { runCatching { windowManager.removeView(it) } }
     panelView = null
-    conversationScroll = null
     sendButton = null
     val view = ComposeView(this).apply {
         setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)

@@ -35,7 +35,7 @@ internal fun GlobalOverlayService.applySnapshot(machines: JSONArray) {
     }
     agents = next
     normalizeOnlineSelection()
-    refreshOverlayContent()
+    updatePanelContent()
 }
 
 /** 从 JSON 解析单个 Agent（launcher 类型忽略，返回 null）。 */
@@ -65,14 +65,14 @@ internal fun GlobalOverlayService.upsertAgent(data: JSONObject) {
     }
     agents = if (index < 0) agents + next else agents.toMutableList().apply { this[index] = next }
     normalizeOnlineSelection()
-    refreshOverlayContent()
+    updatePanelContent()
 }
 
 /** 移除指定 Agent。 */
 internal fun GlobalOverlayService.removeAgent(machineId: String, agentId: String) {
     agents = agents.filterNot { it.agentId == agentId && (machineId.isBlank() || it.machineId == machineId) }
     normalizeOnlineSelection()
-    refreshOverlayContent()
+    updatePanelContent()
 }
 
 /** 清理已失效的选中项与对话项（对应 Agent 已离线时）。 */
@@ -80,8 +80,6 @@ internal fun GlobalOverlayService.normalizeOnlineSelection() {
     if (selectedKey.isNotBlank() && agents.none { it.online && it.key == selectedKey }) selectedKey = ""
     if (conversationKey.isNotBlank() && agents.none { it.online && it.key == conversationKey }) {
         conversationKey = ""
-        conversationScrollY = 0
-        renderedConversationKey = ""
     }
 }
 
@@ -163,7 +161,7 @@ internal fun GlobalOverlayService.applyTaskUpdate(task: JSONObject) {
         showQueuePrompt = false
     }
     val conversationOpen = expanded && conversationKey.isNotBlank()
-    if (conversationOpen && active && !completionAdded) updateBubble() else refreshOverlayContent()
+    if (conversationOpen && active && !completionAdded) updateBubble() else updatePanelContent()
 }
 
 /** 关闭当前完成卡片。 */
@@ -189,7 +187,7 @@ internal fun GlobalOverlayService.acknowledgeCompletionFor(agent: AgentState) {
     showQueuePrompt = currentCompletion == null &&
         completions.isEmpty() &&
         deferredCompletions.isNotEmpty()
-    refreshOverlayContent()
+    updatePanelContent()
 }
 
 /** 从排队队列取出下一条完成记录作为当前展示。 */
@@ -218,51 +216,3 @@ internal fun GlobalOverlayService.deferCurrentCompletion() {
     showQueuePrompt = currentCompletion == null && completions.isEmpty() && deferredCompletions.isNotEmpty()
 }
 
-/** 构建「还有 N 个 Agent 已完成」的稍后处理提示卡片。 */
-internal fun GlobalOverlayService.buildQueuePrompt(): View {
-    val box = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(10), dp(9), dp(10), dp(9))
-        background = roundedBackground(0xFFFFFBEB.toInt(), 0xFFFCD34D.toInt(), 10)
-    }
-    box.addView(TextView(this).apply {
-        text = "还有 ${deferredCompletions.size} 个 Agent 已完成"
-        textSize = 13f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setTextColor(0xFF92400E.toInt())
-    })
-    box.addView(TextView(this).apply {
-        text = "可以现在继续查看，也可以稍后从悬浮图标继续处理。"
-        textSize = 11f
-        setTextColor(0xFF92400E.toInt())
-        setPadding(0, dp(4), 0, dp(4))
-    })
-    val actions = LinearLayout(this).apply { gravity = Gravity.END }
-    actions.addView(TextView(this).apply {
-        text = "继续处理"
-        textSize = 12f
-        gravity = Gravity.CENTER
-        setTextColor(0xFF92400E.toInt())
-        setPadding(dp(12), 0, dp(12), 0)
-        setOnClickListener {
-            showQueuePrompt = false
-            promoteDeferredCompletion()
-            refreshOverlayContent()
-        }
-    }, LinearLayout.LayoutParams(dp(86), dp(32)))
-    actions.addView(TextView(this).apply {
-        text = "稍后"
-        textSize = 12f
-        gravity = Gravity.CENTER
-        setTextColor(0xFF4A5D7A.toInt())
-        setOnClickListener {
-            showQueuePrompt = false
-            expanded = false
-            refreshOverlayContent()
-        }
-    }, LinearLayout.LayoutParams(dp(52), dp(32)))
-    box.addView(actions)
-    return box.apply {
-        layoutParams = LinearLayout.LayoutParams(-1, dp(106)).also { it.bottomMargin = dp(8) }
-    }
-}
