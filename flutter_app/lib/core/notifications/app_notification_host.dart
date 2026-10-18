@@ -23,13 +23,16 @@ class AppNotificationHost extends ConsumerWidget {
     final media = MediaQuery.of(context);
     final mobile = media.size.width < 600;
     final foreground = ref.watch(appForegroundProvider);
+    // 最新优先：顶部胶囊只显示 records.first，按插入顺序排会让最旧的
+    // （可能卡住不动的那条）永远占着位置，表现为"新通知看不到、旧通知一直卡着"。
     final active = state.active
         .where(
           (record) =>
               record.unread &&
               !(state.foregroundChat?.matchesCompletion(record) ?? false),
         )
-        .toList(growable: false);
+        .toList(growable: false)
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
     return Stack(
       fit: StackFit.expand,
