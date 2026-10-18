@@ -430,13 +430,30 @@ func (a *API) semanticAgentProfiles(includeDisabled bool) ([]model.SemanticAgent
 		return nil, err
 	}
 	globalPrompts, _ := a.store.ListSemanticAgentModelPromptPresets(false)
+	// 技能列表只查一次：原来每个 Agent 各查一遍（N+1），Agent 一多列表加载就明显变慢
+	skills, skillsErr := a.store.ListSkills(true)
 	for index := range items {
 		items[index].ModelPromptPresets = append(append([]model.SemanticAgentModelPromptPreset(nil), globalPrompts...), items[index].ModelPromptPresets...)
+		if skillsErr == nil {
+			if err := a.expandSemanticAgentReferencesWithSkills(&items[index], skills); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if err := a.expandSemanticAgentReferences(&items[index]); err != nil {
 			return nil, err
 		}
 	}
 	return items, nil
+}
+
+// expandSemanticAgentReferencesWithSkills 使用已加载的技能列表展开引用，避免 N+1 查询。
+func (a *API) expandSemanticAgentReferencesWithSkills(item *model.SemanticAgentProfile, skills []model.Skill) error {
+	if item == nil {
+		return nil
+	}
+	// 复用已有实现，但把它内部的 ListSkills 结果替换为传入的列表
+	return a.expandSemanticAgentReferencesFromSkills(item, skills)
 }
 
 func (a *API) semanticAgentByID(id string, includeDisabled bool) (model.SemanticAgentProfile, error) {
@@ -1080,13 +1097,25 @@ func (a *API) expandSemanticAgentReferences(item *model.SemanticAgentProfile) er
 	if item == nil {
 		return nil
 	}
+	// 没有技能引用时也要继续展开 MCP / 运行时依赖，不能提前返回
+	if len(item.SkillIDs) == 0 {
+		return a.expandSemanticAgentReferencesFromSkills(item, nil)
+	}
+	skills, err := a.store.ListSkills(true)
+	if err != nil {
+		return err
+	}
+	return a.expandSemanticAgentReferencesFromSkills(item, skills)
+}
+
+// expandSemanticAgentReferencesFromSkills 用给定技能列表展开引用（供批量调用方复用）。
+func (a *API) expandSemanticAgentReferencesFromSkills(item *model.SemanticAgentProfile, skills []model.Skill) error {
+	if item == nil {
+		return nil
+	}
 	item.RecommendedMCPConfigs = nil
 	item.MCPDependencies = nil
 	if len(item.SkillIDs) > 0 {
-		skills, err := a.store.ListSkills(true)
-		if err != nil {
-			return err
-		}
 		byID := map[string]model.Skill{}
 		for _, skill := range skills {
 			byID[skill.ID] = skill

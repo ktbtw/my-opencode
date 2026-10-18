@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -80,8 +81,14 @@ func (a *API) UpsertAppNotification(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusBadRequest, map[string]string{"error": "invalid synced notification"})
 		return
 	}
+	recordPreview := string(req.Record)
+	if len(recordPreview) > 320 {
+		recordPreview = recordPreview[:320] + "…"
+	}
+	log.Printf("[notify] 上报 op=%s record=%s", operationID, recordPreview)
 	change, err := a.store.UpsertAppNotification(r.Context(), operator.ID, operationID, req.Record)
 	if err != nil {
+		log.Printf("[notify] 保存失败 op=%s err=%v", operationID, err)
 		write(w, http.StatusInternalServerError, map[string]string{"error": "save notification failed"})
 		return
 	}
@@ -97,6 +104,7 @@ func (a *API) DismissAppNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) mutateAppNotifications(w http.ResponseWriter, r *http.Request, dismiss bool) {
+	_ = dismiss
 	operator, ok := a.currentOperator(r)
 	if !ok {
 		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
@@ -112,8 +120,10 @@ func (a *API) mutateAppNotifications(w http.ResponseWriter, r *http.Request, dis
 		err     error
 	)
 	if dismiss {
+		log.Printf("[notify] 删除 op=%v", req.OperationIDs)
 		changes, err = a.store.DismissAppNotifications(r.Context(), operator.ID, req.OperationIDs)
 	} else {
+		log.Printf("[notify] 标记已读 op=%v", req.OperationIDs)
 		changes, err = a.store.MarkAppNotificationsRead(r.Context(), operator.ID, req.OperationIDs)
 	}
 	if err != nil {

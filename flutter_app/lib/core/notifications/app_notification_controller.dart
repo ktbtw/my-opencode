@@ -363,6 +363,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     String message = '操作已完成',
     List<AppNotificationAction>? actions,
   }) {
+    _logTransition('succeed', operationId, status: 'succeeded', progress: 1);
     final current = _findByOperationId(operationId);
     update(
       operationId: operationId,
@@ -428,6 +429,14 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
     bool expand = true,
   }) {
     final existing = _findByOperationId(record.operationId);
+    if (existing == null || existing.status != record.status || existing.progress != record.progress) {
+      _logTransition(
+        'update',
+        record.operationId,
+        status: record.status.name,
+        progress: record.progress,
+      );
+    }
     if ((existing?.id == record.id && existing?.unread == false) ||
         _pendingReadIds.remove(record.operationId)) {
       record = record.copyWith(unread: false);
@@ -568,6 +577,26 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
 
   /// User-initiated minimize. Remembers the choice so later operations cannot
   /// silently pop the island back open.
+  /// 记录通知状态迁移，便于排查"卡在某个进度"的问题（写入 App 诊断日志）。
+  void _logTransition(
+    String action,
+    String operationId, {
+    String? status,
+    double? progress,
+    String? error,
+  }) {
+    unawaited(AppLogService.log(
+      'notification_$action',
+      level: error == null ? 'info' : 'error',
+      data: {
+        'operation_id': operationId,
+        'status': status,
+        'progress': progress,
+        'error': error,
+      },
+    ));
+  }
+
   void collapse() {
     _collapseTimer?.cancel();
     _userCollapsed = true;
@@ -660,6 +689,7 @@ class AppNotificationController extends StateNotifier<AppNotificationState> {
   }
 
   void dismiss(String id) {
+    _logTransition('dismiss', id, status: 'dismissed');
     AppNotificationRecord? record;
     for (final item in [...state.active, ...state.recent]) {
       if (item.id == id) {
