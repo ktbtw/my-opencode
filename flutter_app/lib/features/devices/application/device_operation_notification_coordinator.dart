@@ -8,6 +8,7 @@ import '../data/device_launcher_model.dart';
 import '../data/device_semantic_agent_model.dart';
 import '../presentation/device_provider.dart';
 import '../../../core/services/app_log_service.dart';
+import '../../../core/services/diag_log.dart';
 
 const _launcherOperationPrefix = 'launcher:update:';
 const _semanticPreflightOperationPrefix = 'semantic-preflight:';
@@ -88,6 +89,10 @@ class DeviceOperationNotificationCoordinator {
       // 兜底：非终态通知超过 10 分钟仍未收到结果就清掉，避免任何原因卡在初始进度
       // （例如设备离线、launcher 状态接口异常、旧版本遗留状态）。
       final staleBefore = now().subtract(const Duration(minutes: 10));
+      DiagLog.emit('coordinator_reconcile', {
+        'active': snapshot.active.length,
+        'targets': records.map((r) => r.operationId).toList(),
+      });
       for (final record in records) {
         if (_disposed) return;
         if (record.createdAt.isBefore(staleBefore)) {
@@ -155,6 +160,11 @@ class DeviceOperationNotificationCoordinator {
       }
       return;
     }
+    DiagLog.emit('preflight_reconcile', {
+      'operation_id': record.operationId,
+      'machine_id': machineId,
+      'job_id': jobId,
+    });
     try {
       final job = await loadPreflightJob(
         machineId: machineId,
@@ -388,6 +398,15 @@ void reconcileSemanticPreflightNotification({
   final expectedJobId = record.metadata[_jobIdKey]?.trim() ?? '';
   if (expectedJobId.isNotEmpty && expectedJobId != job.id.trim()) return;
 
+  DiagLog.emit('preflight_job_state', {
+    'operation_id': operationId,
+    'job_id': job.id,
+    'status': job.status,
+    'step': job.currentStep,
+    'progress': job.progressPercent,
+    'completed': job.completed,
+    'failed': job.failed,
+  });
   if (job.completed) {
     notifications.succeed(
       operationId,

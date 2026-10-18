@@ -1434,6 +1434,7 @@ func (a *App) Router() http.Handler {
 	r.Post("/api/notifications/read", h.MarkAppNotificationsRead)
 	r.Post("/api/notifications/dismiss", h.DismissAppNotifications)
 	r.Post("/api/support/logs", h.ReportSupportLogs)
+	r.Post("/api/diag/log", h.ReportDiagLog)
 	r.Get("/api/auth/captcha", h.GetCaptcha)
 	r.Post("/api/auth/email-code", h.SendEmailCode)
 	r.Post("/api/auth/register", h.Register)
