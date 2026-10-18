@@ -22,6 +22,7 @@ import 'device_skill_model.dart';
 import 'upload_policy.dart';
 import 'upload_diag.dart';
 import 'upload_resume_store.dart';
+import '../../../core/services/diag_log.dart';
 
 typedef DeviceUploadProgressCallback =
     void Function(DeviceUploadProgress progress);
@@ -1259,6 +1260,15 @@ class DeviceRepository {
     );
     final storedUploadId = resume ? UploadResumeStore.read(resumeKey) : null;
     final actualUploadId = uploadId ?? storedUploadId ?? _newUploadId();
+    DiagLog.emit('upload_resume_begin', {
+      'path': path,
+      'size': totalBytes,
+      'resume_enabled': resume,
+      'resume_key': resumeKey,
+      'stored_upload_id': storedUploadId,
+      'using_upload_id': actualUploadId,
+      'reused': storedUploadId != null,
+    });
     if (uploadId == null) {
       await UploadResumeStore.save(resumeKey, actualUploadId);
     }
@@ -1302,6 +1312,14 @@ class DeviceRepository {
           )
         : (received: <int>{}, receivedBytes: 0, resumable: false);
     final received = status.received;
+    DiagLog.emit('upload_resume_status', {
+      'path': path,
+      'upload_id': actualUploadId,
+      'resumable': status.resumable,
+      'received_chunks': received.length,
+      'received_bytes': status.receivedBytes,
+      'total_chunks': totalChunks,
+    });
 
     // 续传时从设备侧真实进度起步，让用户看到「已传多少」而不是从 0 开始。
     // 注意不能用设备上报的 received_bytes：临时文件按声明大小预分配，它的
