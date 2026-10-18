@@ -86,8 +86,23 @@ class DeviceOperationNotificationCoordinator {
                     )),
           )
           .toList(growable: false);
-      // 兜底：非终态通知超过 10 分钟仍未收到结果就清掉，避免任何原因卡在初始进度
-      // （例如设备离线、launcher 状态接口异常、旧版本遗留状态）。
+      // 兜底一：任何非终态通知超过 30 分钟仍未收敛就清理。
+      // 覆盖上传、下载、文件操作等没有自己心跳的场景（例如上传卡在某个分块）。
+      final staleAnyBefore = now().subtract(const Duration(minutes: 30));
+      for (final record in snapshot.active) {
+        if (record.isTerminal || !record.createdAt.isBefore(staleAnyBefore)) {
+          continue;
+        }
+        DiagLog.emit('notification_stale_dismissed', {
+          'operation_id': record.operationId,
+          'kind': record.kind.name,
+          'status': record.status.name,
+          'progress': record.progress,
+          'scope': 'any',
+        });
+        notifications.dismiss(record.id);
+      }
+      // 兜底二：launcher/预检类通知 10 分钟未收敛就清掉（这类任务本身很短）。
       final staleBefore = now().subtract(const Duration(minutes: 10));
       DiagLog.emit('coordinator_reconcile', {
         'active': snapshot.active.length,
