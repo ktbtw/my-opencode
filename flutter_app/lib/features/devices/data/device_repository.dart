@@ -728,12 +728,21 @@ class DeviceRepository {
 
   /// 流式下载到临时文件：分块到达即写盘，不把整个文件读进内存。
   /// 大文件（GB 级）用这个，避免 base64 解码 + 全量拼接导致 OOM。
+  /// 流式下载到临时文件，支持断点续传。
+  ///
+  /// 分块到达即写入磁盘（不进内存），同时把已写入的块号记在旁路清单里；
+  /// 中断后再次下载同一文件会从清单继续，不再从头开始。
+  /// 流式下载到临时文件，支持断点续传。
+  ///
+  /// 每个分块单独落盘（`<临时目录>/dl_<key>/<index>.bin`），因此中断后重试
+  /// 只需补齐缺失的分块，再按顺序拼接成完整文件；内存占用恒定，不会 OOM。
   Future<({String path, int size})> downloadDeviceAgentFileToFile({
     required String machineId,
     required String agentId,
     required String path,
     int chunkSize = defaultDownloadChunkSize,
     int concurrency = defaultDownloadConcurrency,
+    bool resume = true,
     DeviceDownloadProgressCallback? onProgress,
   }) async {
     if (chunkSize <= 0) {
@@ -745,20 +754,36 @@ class DeviceRepository {
       path: path,
     );
     final totalBytes = meta.size;
-    final tempDir = await getTemporaryDirectory();
-    final tempPath = p.join(
-      tempDir.path,
-      'dl_${DateTime.now().microsecondsSinceEpoch}_${p.basename(path)}',
-    );
-    final file = File(tempPath);
-    await file.create(recursive: true);
-    final raf = await file.open(mode: FileMode.write);
     final totalChunks = max(1, (totalBytes / chunkSize).ceil());
+    final tempDir = await getTemporaryDirectory();
+    // 续传标识只跟「哪个设备上的哪个文件、多大」有关，重试时能命中同一批分块。
+    final resumeKey = sha256
+        .convert(utf8.encode('$machineId|$agentId|$path|$totalBytes'))
+        .toString();
+    final chunkDir = Directory(p.join(tempDir.path, 'dl_$resumeKey'));
+    final partPath = p.join(tempDir.path, 'dl_$resumeKey.part');
+
+    final received = <int>{};
+    if (resume && await chunkDir.exists()) {
+      await for (final entity in chunkDir.list()) {
+        if (entity is! File) continue;
+        final name = p.basenameWithoutExtension(entity.path);
+        final index = int.tryParse(name);
+        if (index == null || index < 0 || index >= totalChunks) continue;
+        // 分块长度必须与预期一致，避免半截块污染结果。
+        final expected = min(chunkSize, totalBytes - index * chunkSize);
+        if (await entity.length() == expected) received.add(index);
+      }
+    }
+    await chunkDir.create(recursive: true);
+
     var downloadedBytes = 0;
-    var completedChunks = 0;
+    for (final index in received) {
+      final offset = index * chunkSize;
+      downloadedBytes += min(chunkSize, totalBytes - offset);
+    }
+    var completedChunks = received.length;
     var nextChunk = 0;
-    // 串行化写盘：多个 worker 并发下载，但 RandomAccessFile 的定位写必须排队。
-    Future<void> writeTail = Future<void>.value();
 
     void progress(String stage) {
       onProgress?.call(
@@ -772,14 +797,16 @@ class DeviceRepository {
       );
     }
 
+    progress(received.isEmpty ? '下载分块' : '续传：已有 ${received.length}/$totalChunks 分块');
+
     try {
-      progress('下载分块');
       final workerCount = min(max(1, concurrency), totalChunks);
       Future<void> worker() async {
         while (true) {
           final chunkIndex = nextChunk;
           nextChunk += 1;
           if (chunkIndex >= totalChunks) return;
+          if (received.contains(chunkIndex)) continue;
           final offset = chunkIndex * chunkSize;
           final length = min(chunkSize, totalBytes - offset);
           final chunk = await downloadDeviceAgentFileChunk(
@@ -791,10 +818,12 @@ class DeviceRepository {
             length: length,
           );
           final bytes = Uint8List.fromList(base64Decode(chunk.content));
-          writeTail = writeTail.then((_) async {
-            await raf.setPosition(offset);
-            await raf.writeFrom(bytes);
-          });
+          // 先写临时块再 rename：半截块不会被视为「已下载」。
+          final target = File(p.join(chunkDir.path, '$chunkIndex.bin'));
+          final staging = File('${target.path}.tmp');
+          await staging.writeAsBytes(bytes, flush: true);
+          await staging.rename(target.path);
+          received.add(chunkIndex);
           downloadedBytes += bytes.length;
           completedChunks += 1;
           progress('下载分块');
@@ -802,22 +831,52 @@ class DeviceRepository {
       }
 
       await Future.wait(List.generate(workerCount, (_) => worker()));
-      await writeTail;
-      await raf.flush();
+
+      // 按顺序拼接成完整文件（流式，不占内存）。
+      progress('正在合并分块');
+      final partFile = File(partPath);
+      final sink = await partFile.open(mode: FileMode.write);
+      try {
+        for (var index = 0; index < totalChunks; index++) {
+          final chunkFile = File(p.join(chunkDir.path, '$index.bin'));
+          if (!await chunkFile.exists()) {
+            throw StateError('分块 $index 缺失，请重试');
+          }
+          await sink.setPosition(index * chunkSize);
+          await sink.writeFrom(await chunkFile.readAsBytes());
+        }
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
       progress('下载完成');
-      return (path: tempPath, size: totalBytes);
+      return (path: partPath, size: totalBytes);
     } catch (error) {
-      try {
-        await raf.close();
-        await file.delete();
-      } catch (_) {}
+      // 已下载的分块保留，下次同文件下载会从缺失处继续。
       rethrow;
-    } finally {
-      try {
-        await raf.close();
-      } catch (_) {}
     }
   }
+
+
+  /// 下载并保存完成后清理续传用的分块目录与合并文件。
+  Future<void> clearDownloadResume({
+    required String machineId,
+    required String agentId,
+    required String path,
+    required int size,
+  }) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final key = sha256
+          .convert(utf8.encode('$machineId|$agentId|$path|$size'))
+          .toString();
+      final chunkDir = Directory(p.join(tempDir.path, 'dl_$key'));
+      if (await chunkDir.exists()) await chunkDir.delete(recursive: true);
+      final partFile = File(p.join(tempDir.path, 'dl_$key.part'));
+      if (await partFile.exists()) await partFile.delete();
+    } catch (_) {}
+  }
+
 
   Future<DeviceProjectFile> downloadDeviceAgentFileChunked({
     required String machineId,

@@ -1,6 +1,5 @@
 import '../../../shared/widgets/app_status_icon.dart';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -298,6 +297,7 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
       // 桌面/移动端走流式落盘（分块直接写临时文件），Web 只能拿字节。
       final String? downloadedPath;
       final DeviceProjectFile? file;
+      var downloadedSize = 0;
       if (kIsWeb) {
         file = await repo.downloadDeviceAgentFileChunked(
           machineId: widget.machineId,
@@ -314,6 +314,7 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
           onProgress: reportDownload,
         );
         downloadedPath = result.path;
+        downloadedSize = result.size;
         file = null;
       }
       notifications.succeed(
@@ -350,6 +351,15 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
         message: saved == null ? '${item.name} 已交给浏览器下载' : '${item.name} 已保存',
         actions: [_openFilesAction()],
       );
+      if (downloadedPath != null) {
+        // 保存成功后清掉续传用的临时文件与清单，避免占空间。
+        await repo.clearDownloadResume(
+          machineId: widget.machineId,
+          agentId: widget.agentId,
+          path: item.path,
+          size: downloadedSize,
+        );
+      }
       if (!mounted) return;
       dialogOpen = false;
       Navigator.of(context, rootNavigator: true).maybePop();
