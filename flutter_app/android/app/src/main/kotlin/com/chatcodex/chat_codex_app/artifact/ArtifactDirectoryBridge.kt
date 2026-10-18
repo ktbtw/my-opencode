@@ -28,6 +28,35 @@ class ArtifactDirectoryBridge(private val activity: Activity) {
                     result.error("pick_failed", error.message, null)
                 }
             }
+            // 让用户自己选择用哪个 App 打开，而不是直接跳到默认应用。
+            "openWith" -> {
+                val path = call.argument<String>("path")
+                val uriString = call.argument<String>("uri")
+                val mime = call.argument<String>("mimeType") ?: "application/octet-stream"
+                try {
+                    val uri = when {
+                        !uriString.isNullOrBlank() -> Uri.parse(uriString)
+                        !path.isNullOrBlank() -> androidx.core.content.FileProvider.getUriForFile(
+                            activity,
+                            "${activity.packageName}.fileprovider",
+                            java.io.File(path),
+                        )
+                        else -> throw IllegalArgumentException("缺少文件路径")
+                    }
+                    val view = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val chooser = Intent.createChooser(view, "选择打开方式").apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    activity.startActivity(chooser)
+                    result.success(true)
+                } catch (error: Exception) {
+                    result.error("open_failed", error.message, null)
+                }
+            }
             "saveFilePath" -> {
                 val directory = call.argument<String>("directory")
                 val filename = call.argument<String>("filename")
@@ -52,10 +81,15 @@ class ArtifactDirectoryBridge(private val activity: Activity) {
                         stream.use { output -> source.inputStream().use { input -> input.copyTo(output) } }
                         activity.runOnUiThread {
                             try {
-                                activity.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                val view = Intent(Intent.ACTION_VIEW).apply {
                                     setDataAndType(uri, mime)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                })
+                                }
+                                activity.startActivity(
+                                    Intent.createChooser(view, "选择打开方式").apply {
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    },
+                                )
                             } catch (_: Exception) { }
                             result.success(uri.toString())
                         }
@@ -86,10 +120,15 @@ class ArtifactDirectoryBridge(private val activity: Activity) {
                         stream.use { it.write(bytes) }
                         activity.runOnUiThread {
                             try {
-                                activity.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                val view = Intent(Intent.ACTION_VIEW).apply {
                                     setDataAndType(uri, mime)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                })
+                                }
+                                activity.startActivity(
+                                    Intent.createChooser(view, "选择打开方式").apply {
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    },
+                                )
                             } catch (_: Exception) { /* 即使没有可打开的查看器，文件也已保存成功。 */ }
                             result.success(uri.toString())
                         }

@@ -53,7 +53,7 @@ Future<String?> saveArtifactBytes(
     );
   }
   await file.writeAsBytes(bytes, flush: true);
-  await OpenFilex.open(file.path);
+  await _openWithChooser(file.path, mimeType);
   return file.path;
 }
 
@@ -101,6 +101,22 @@ Future<String?> saveArtifactFile(
     );
   }
   await File(sourcePath).copy(target.path);
-  await OpenFilex.open(target.path);
+  await _openWithChooser(target.path, mimeType);
   return target.path;
+}
+
+/// 打开文件时让用户自己选择应用（Android 走原生 chooser）。
+Future<void> _openWithChooser(String path, String mimeType) async {
+  if (Platform.isAndroid) {
+    try {
+      await const MethodChannel('chat_codex/artifact_directory').invokeMethod(
+        'openWith',
+        {'path': path, 'mimeType': mimeType},
+      );
+      return;
+    } catch (_) {
+      // 原生调用失败时退回系统默认打开方式。
+    }
+  }
+  await OpenFilex.open(path);
 }
