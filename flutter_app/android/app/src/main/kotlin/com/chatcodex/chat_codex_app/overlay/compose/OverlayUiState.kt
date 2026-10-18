@@ -20,6 +20,9 @@ data class CompletionUi(
     val taskId: String,
 )
 
+/** 待发送的附件。 */
+data class AttachmentUi(val name: String)
+
 /** 历史会话条目。 */
 data class SessionUi(
     val sessionId: String,
@@ -48,6 +51,10 @@ class OverlayUiState {
     var sessions by mutableStateOf<List<SessionUi>>(emptyList())
     var currentSessionId by mutableStateOf("")
     var modelLabel by mutableStateOf("")
+    var attachments by mutableStateOf<List<AttachmentUi>>(emptyList())
+    var voiceActive by mutableStateOf(false)
+    var voiceText by mutableStateOf("")
+    var voiceError by mutableStateOf("")
 
     fun switchTo(target: FloatingMode) {
         if (target == mode) return

@@ -147,8 +147,7 @@ internal fun GlobalOverlayService.createTask(agent: AgentState, text: String, co
 
 /** 打开系统文件选择器（收起悬浮面板，避免遮挡）。 */
 internal fun GlobalOverlayService.pickAttachment() {
-    expanded = false
-    renderOverlay()
+    // 选择附件时保持悬浮窗展开，选完直接回到输入状态。
     startActivity(Intent(this, OverlayFilePickerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 

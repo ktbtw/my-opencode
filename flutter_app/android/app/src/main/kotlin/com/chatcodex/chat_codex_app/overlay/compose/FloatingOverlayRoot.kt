@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Send
@@ -65,6 +66,7 @@ private val BorderLight = Color(0xFFD0DDEF)
 private val StatusOnline = Color(0xFF16A34A)
 private val StatusWarning = Color(0xFFD97706)
 private val StatusMuted = Color(0xFF8FA3BF)
+private val TextMuted = Color(0xFF8FA3BF)
 
 /**
  * 悬浮层根组件：球 / 悬浮窗 / 沉浸全屏 / 结果卡片四种形态。
@@ -83,6 +85,10 @@ fun FloatingOverlayRoot(
     onExpand: () -> Unit = {},
     onCollapse: () -> Unit = {},
     onBallTap: (() -> Unit)? = null,
+    onAttach: () -> Unit = {},
+    onRemoveAttachment: (Int) -> Unit = {},
+    onVoiceStart: () -> Unit = {},
+    onVoiceStop: () -> Unit = {},
 ) {
     // 实验 C：去掉 AnimatedContent，直接按 mode 渲染，验证过渡层是否吞掉触摸。
     run {
@@ -105,6 +111,13 @@ fun FloatingOverlayRoot(
                 )
             }
 
+            FloatingMode.VOICE_BALL -> VoiceBall(
+                active = state.voiceActive,
+                text = state.voiceText,
+                error = state.voiceError,
+                onStop = onVoiceStop,
+            )
+
             FloatingMode.WINDOW -> Column(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.Center,
@@ -117,6 +130,10 @@ fun FloatingOverlayRoot(
                     onExpand = onExpand,
                     onSelectSession = onSelectSession,
                     onNewSession = onNewSession,
+                    onAttach = onAttach,
+                    onRemoveAttachment = onRemoveAttachment,
+                    onVoiceStart = onVoiceStart,
+                    onVoiceStop = onVoiceStop,
                 )
             }
 
@@ -156,6 +173,10 @@ fun FloatingOverlayRoot(
                             onExpand = null,
                             onSelectSession = onSelectSession,
                             onNewSession = onNewSession,
+                            onAttach = onAttach,
+                            onRemoveAttachment = onRemoveAttachment,
+                            onVoiceStart = onVoiceStart,
+                            onVoiceStop = onVoiceStop,
                         )
                     }
                 }
@@ -204,6 +225,10 @@ private fun ChatWindow(
     onExpand: (() -> Unit)?,
     onSelectSession: (String) -> Unit,
     onNewSession: () -> Unit,
+    onAttach: () -> Unit,
+    onRemoveAttachment: (Int) -> Unit,
+    onVoiceStart: () -> Unit,
+    onVoiceStop: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     LaunchedEffect(state.messages.size) {
@@ -311,8 +336,49 @@ private fun ChatWindow(
                 }
             }
         }
+        if (state.attachments.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            androidx.compose.foundation.lazy.LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(state.attachments.size) { index ->
+                    val attachment = state.attachments[index]
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(ChipBackground)
+                            .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                            .clickable { onRemoveAttachment(index) }
+                            .padding(horizontal = 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = attachment.name,
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            modifier = Modifier.widthIn(max = 180.dp),
+                        )
+                        Spacer(Modifier.size(4.dp))
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "移除附件",
+                            tint = TextMuted,
+                            modifier = Modifier.size(12.dp),
+                        )
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onAttach, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = "添加附件", tint = TextSecondary)
+            }
+            IconButton(onClick = onVoiceStart, modifier = Modifier.size(40.dp)) {
+                MicGlyph(color = TextSecondary, glyphSize = 22.dp)
+            }
+            Spacer(Modifier.size(4.dp))
             BasicTextField(
                 value = state.input,
                 onValueChange = { state.input = it },

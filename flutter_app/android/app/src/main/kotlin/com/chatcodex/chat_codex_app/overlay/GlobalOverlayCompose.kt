@@ -46,6 +46,7 @@ private fun GlobalOverlayService.composeWindowSize(mode: FloatingMode): Pair<Int
     val metrics = resources.displayMetrics
     return when (mode) {
         FloatingMode.BALL -> dp(168) to dp(168)
+        FloatingMode.VOICE_BALL -> dp(240) to dp(240)
         FloatingMode.WINDOW -> {
             val width = dp(360).coerceAtMost(metrics.widthPixels - dp(24))
             val height = dp(560).coerceAtMost(metrics.heightPixels - dp(120))
@@ -81,7 +82,7 @@ private fun GlobalOverlayService.composeLayoutParams(mode: FloatingMode): Window
                 x = if (bubbleX >= 0) bubbleX else metrics.widthPixels - width - dp(8)
                 y = if (bubbleY >= 0) bubbleY else metrics.heightPixels / 2
             }
-            FloatingMode.WINDOW, FloatingMode.RESULT_DISPLAY -> {
+            FloatingMode.WINDOW, FloatingMode.RESULT_DISPLAY, FloatingMode.VOICE_BALL -> {
                 x = if (panelX >= 0) panelX else (metrics.widthPixels - width) / 2
                 y = if (panelY >= 0) panelY else (metrics.heightPixels - height) / 2
             }
@@ -140,6 +141,10 @@ internal fun GlobalOverlayService.renderComposeOverlay() {
                     onExpand = { applyComposeMode(FloatingMode.FULLSCREEN) },
                     onCollapse = { applyComposeMode(FloatingMode.BALL) },
                     onBallTap = { applyComposeMode(FloatingMode.WINDOW) },
+                    onAttach = { pickAttachment() },
+                    onVoiceStart = { startVoiceBall() },
+                    onVoiceStop = { stopVoiceBall() },
+                    onRemoveAttachment = { index -> removeAttachment(index) },
                 )
             }
         }
@@ -221,6 +226,9 @@ private fun GlobalOverlayService.syncComposeStateFromService(state: OverlayUiSta
         )
     }
     state.currentSessionId = conversationKey
+    state.attachments = attachments.map {
+        com.chatcodex.chat_codex_app.overlay.compose.AttachmentUi(it.name)
+    }
     state.modelLabel = activeAgent?.let { agent ->
         runCatching { selectedModelFor(agent)?.name.orEmpty() }.getOrDefault("")
     }.orEmpty()

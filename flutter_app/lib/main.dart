@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'core/services/app_log_service.dart';
 import 'core/services/global_overlay_service.dart';
 import 'core/services/push_service.dart';
@@ -36,6 +37,13 @@ Future<void> _startBackgroundTaskNotifications() async {
   try {
     final overlay = await GlobalOverlayService.start();
     debugPrint('[Overlay] auto start requested started=$overlay');
+    // 只有真的用上悬浮助手才申请录音权限，语音球要用。
+    if (overlay) {
+      final mic = await Permission.microphone.status;
+      if (!mic.isGranted) {
+        await Permission.microphone.request();
+      }
+    }
   } catch (error) {
     debugPrint('[Overlay] auto start failed: $error');
   }

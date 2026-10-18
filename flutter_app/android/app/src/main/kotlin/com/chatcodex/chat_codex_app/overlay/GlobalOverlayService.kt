@@ -106,6 +106,7 @@ class GlobalOverlayService : Service() {
     internal val executor = Executors.newCachedThreadPool()
     internal var root: FrameLayout? = null
     internal var composeUiState: com.chatcodex.chat_codex_app.overlay.compose.OverlayUiState? = null
+    internal var voiceInput: com.chatcodex.chat_codex_app.overlay.VoiceInput? = null
     internal var overlayLifecycleOwner: com.chatcodex.chat_codex_app.overlay.compose.OverlayLifecycleOwner? = null
     internal var overlayEnabled = false
     @Volatile internal var notificationCursor = 0L
@@ -323,6 +324,8 @@ class GlobalOverlayService : Service() {
             }
         }
         unregisterNetworkCallback()
+        voiceInput?.release()
+        voiceInput = null
         executor.shutdownNow()
         runCatching { unregisterReceiver(attachmentReceiver) }
         root?.let { runCatching { windowManager.removeViewImmediate(it) } }
