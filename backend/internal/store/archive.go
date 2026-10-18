@@ -101,6 +101,7 @@ type TaskEventMaintainer interface {
 	CompactDeltaEvents(ctx context.Context, olderThan time.Time, taskLimit int) (int, error)
 	PruneEvents(ctx context.Context, before time.Time, batch int) (int, error)
 	TruncateLargeToolEvents(ctx context.Context, batch int) (int, error)
+	PruneStalePreflightNotifications(ctx context.Context, before time.Time) (int, error)
 }
 
 // EventCursor is an ordered, stable database cursor. The pair is required

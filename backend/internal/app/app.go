@@ -1075,6 +1075,12 @@ func (a *App) runTaskEventMaintenance(aggressive bool) {
 	} else if merged > 0 {
 		log.Printf("[events] 已合并 %d 条 delta", merged)
 	}
+	// 卡住的预检通知：任务早结束但通知还在服务端，App 每次同步都会拉回来
+	if pruned, err := a.store.PruneStalePreflightNotifications(ctx, time.Now().Add(-time.Hour)); err != nil {
+		log.Printf("[events] 清理卡住的预检通知失败: %v", err)
+	} else if pruned > 0 {
+		log.Printf("[events] 已清理 %d 条卡住的预检通知", pruned)
+	}
 	if truncated, err := a.store.TruncateLargeToolEvents(ctx, truncateLimit); err != nil {
 		log.Printf("[events] 截断工具输出失败: %v", err)
 	} else if truncated > 0 {

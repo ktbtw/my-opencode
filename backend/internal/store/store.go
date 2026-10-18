@@ -1425,6 +1425,14 @@ func (m *Memory) ListOperatorGatewayKeys(ctx context.Context, limit int) ([]mode
 }
 
 // CompactDeltaEvents 合并连续 delta（见 TaskEventMaintainer）。
+// PruneStalePreflightNotifications 清理卡住的预检通知。
+func (m *Memory) PruneStalePreflightNotifications(ctx context.Context, before time.Time) (int, error) {
+	if maintainer, ok := m.archive.(TaskEventMaintainer); ok {
+		return maintainer.PruneStalePreflightNotifications(ctx, before)
+	}
+	return 0, nil
+}
+
 func (m *Memory) CompactDeltaEvents(ctx context.Context, olderThan time.Time, taskLimit int) (int, error) {
 	if maintainer, ok := m.archive.(TaskEventMaintainer); ok {
 		return maintainer.CompactDeltaEvents(ctx, olderThan, taskLimit)

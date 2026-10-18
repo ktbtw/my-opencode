@@ -5548,3 +5548,19 @@ func collectIndentedFrontMatterValue(lines []string, start int) string {
 	}
 	return strings.Join(out, " ")
 }
+
+// PruneStalePreflightNotifications 清理卡住的预检通知：任务早已结束但通知还挂在
+// 服务端，App 每次同步都会把它重新拉回来（表现为"通知关不掉/一直卡住"）。
+func (m *MySQLArchive) PruneStalePreflightNotifications(ctx context.Context, before time.Time) (int, error) {
+	result, err := m.db.ExecContext(ctx, `
+UPDATE app_notifications
+SET deleted = 1, version = version + 1
+WHERE deleted = 0
+  AND operation_id LIKE 'semantic-preflight:%'
+  AND updated_at < ?`, before)
+	if err != nil {
+		return 0, err
+	}
+	affected, _ := result.RowsAffected()
+	return int(affected), nil
+}
