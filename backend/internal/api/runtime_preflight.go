@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,6 +30,7 @@ func (a *API) StartDeviceAgentSemanticPreflight(w http.ResponseWriter, r *http.R
 		write(w, http.StatusBadRequest, map[string]string{"error": "缺少设备或 Agent"})
 		return
 	}
+	log.Printf("[preflight] 创建预检 machine=%s agent=%s", machineID, agentID)
 	if _, ok := a.broker.GetMachine(operator.ID, machineID); !ok {
 		write(w, http.StatusConflict, map[string]string{"error": "设备不在线或无权限"})
 		return
@@ -206,6 +208,8 @@ func (a *API) HandleRuntimePreflightStatus(payload model.RuntimePreflightStatusP
 	if jobID == "" {
 		return fmt.Errorf("预检状态缺少 job_id")
 	}
+	log.Printf("[preflight] 状态上报 job=%s status=%q step=%q progress=%d",
+		jobID, strings.TrimSpace(payload.Status), strings.TrimSpace(payload.CurrentStep), clampPercent(payload.ProgressPercent))
 	lock := runtimePreflightStatusLock(jobID)
 	lock.Lock()
 	defer lock.Unlock()

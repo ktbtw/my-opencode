@@ -4231,6 +4231,15 @@ class _AgentSemanticSelectionDialogState
         widget.agent.agentId,
         job.id,
       );
+      unawaited(AppLogService.log(
+        'semantic_preflight_start',
+        data: {
+          'machine_id': widget.device.machineId,
+          'agent_id': widget.agent.agentId,
+          'job_id': job.id,
+          'operation_id': operationId,
+        },
+      ));
       notifications.start(
         operationId: operationId,
         title: '正在切换 Agent 助手',
@@ -4294,6 +4303,14 @@ class _AgentSemanticSelectionDialogState
       if (!mounted) return;
       ref.invalidate(deviceDetailProvider(widget.device.machineId));
       ref.invalidate(deviceListProvider);
+      unawaited(AppLogService.log(
+        'semantic_preflight_dialog_closed',
+        data: {
+          'job_id': job.id,
+          'operation_id': operationId,
+          'completed': completed == true,
+        },
+      ));
       if (completed == true) {
         Navigator.of(context).pop();
       }
