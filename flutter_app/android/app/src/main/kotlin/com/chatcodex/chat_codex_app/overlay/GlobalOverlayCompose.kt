@@ -64,12 +64,9 @@ private fun GlobalOverlayService.composeLayoutParams(mode: FloatingMode): Window
         @Suppress("DEPRECATION")
         WindowManager.LayoutParams.TYPE_PHONE
     }
-    val flags = if (mode == FloatingMode.BALL) {
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-    } else {
+    // 全程 NOT_FOCUSABLE：悬浮层不需要窗口焦点，聚焦反而会抢走 App 的输入焦点。
+    val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-    }
     return WindowManager.LayoutParams(
         width,
         height,
