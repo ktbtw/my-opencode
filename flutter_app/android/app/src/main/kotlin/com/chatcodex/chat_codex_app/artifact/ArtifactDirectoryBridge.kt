@@ -29,6 +29,33 @@ class ArtifactDirectoryBridge(private val activity: Activity) {
                 }
             }
             // 让用户自己选择用哪个 App 打开，而不是直接跳到默认应用。
+            // 把 SAF 的 content:// 目录解析成可读路径，供界面展示。
+            "describeDirectory" -> {
+                val uriString = call.argument<String>("uri")
+                if (uriString.isNullOrBlank()) {
+                    result.success(null); return
+                }
+                try {
+                    val tree = Uri.parse(uriString)
+                    val docId = DocumentsContract.getTreeDocumentId(tree)
+                    val parts = docId.split(":", limit = 2)
+                    val volume = parts.getOrNull(0).orEmpty()
+                    val relative = parts.getOrNull(1).orEmpty().trim('/')
+                    val volumeLabel = when (volume) {
+                        "primary" -> "内部存储"
+                        "" -> ""
+                        else -> volume
+                    }
+                    val readable = listOf(volumeLabel, relative)
+                        .filter { it.isNotEmpty() }
+                        .joinToString("/")
+                        .ifEmpty { uriString }
+                    result.success(readable)
+                } catch (error: Exception) {
+                    // 解析失败时退回原串，至少不比现在更差。
+                    result.success(uriString)
+                }
+            }
             "openWith" -> {
                 val path = call.argument<String>("path")
                 val uriString = call.argument<String>("uri")

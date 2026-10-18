@@ -11,6 +11,7 @@ import '../../../shared/widgets/app_status_icon.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../../settings/settings_provider.dart';
 import '../project_settings_provider.dart';
+import '../../../core/services/directory_label.dart';
 
 /// 项目设置：只放"这个项目独有"的开关，页头先回答"改的是哪个项目"。
 ///
@@ -31,6 +32,25 @@ class ProjectSettingsPage extends ConsumerStatefulWidget {
 }
 
 class _ProjectSettingsPageState extends ConsumerState<ProjectSettingsPage> {
+  // SAF 的 content:// 目录解析结果（仅用于展示）。
+  String? _resolvedDirectory;
+  String? _resolvedFrom;
+
+  void _ensureDirectoryResolved(String raw) {
+    if (raw.isEmpty || _resolvedFrom == raw) return;
+    _resolvedFrom = raw;
+    final cached = DirectoryLabel.cached(raw);
+    if (cached != null) {
+      _resolvedDirectory = cached;
+      return;
+    }
+    _resolvedDirectory = null;
+    DirectoryLabel.describe(raw).then((value) {
+      if (!mounted) return;
+      setState(() => _resolvedDirectory = value);
+    });
+  }
+
   bool _saving = false;
   bool get _directorySupported =>
       !kIsWeb && defaultTargetPlatform != TargetPlatform.iOS;
@@ -84,14 +104,15 @@ class _ProjectSettingsPageState extends ConsumerState<ProjectSettingsPage> {
     final global = ref.watch(settingsProvider);
     final enabled = settings.loaded && !_saving;
     final customDirectory = settings.downloadDirectory?.trim() ?? '';
+    _ensureDirectoryResolved(customDirectory);
     final hasCustomDirectory = customDirectory.isNotEmpty;
     final directoryValue = !_directorySupported
         ? (kIsWeb ? '由浏览器管理下载位置' : '使用应用默认目录')
         : settings.directoryLabel?.trim().isNotEmpty == true
         ? settings.directoryLabel!.trim()
         : hasCustomDirectory
-        ? customDirectory
-        : '沿用全局：${global.downloadDirectory?.trim().isNotEmpty == true ? global.downloadDirectory!.trim() : '系统默认下载目录'}';
+        ? (_resolvedDirectory ?? '正在解析目录…')
+        : '沿用全局：${global.downloadDirectoryLabel.isNotEmpty ? global.downloadDirectoryLabel : '系统默认下载目录'}';
 
     return Scaffold(
       backgroundColor: AppColors.background,

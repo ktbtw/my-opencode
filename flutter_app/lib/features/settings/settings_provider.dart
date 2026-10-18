@@ -59,11 +59,15 @@ class AppSettings {
   final Map<String, dynamic> subagentOrchestrationRoleModels;
   final String? downloadDirectory;
 
-  /// SAF 授权目录的可读名称；缺失时回退到路径本身。
+  /// SAF 授权目录的可读名称；缺失时给出占位文案，避免把 content:// 原始标识
+  /// 直接暴露在界面上（用户看不懂，也没法据此判断位置）。
   String get downloadDirectoryLabel {
     final label = downloadDirectoryLabelValue?.trim() ?? '';
     if (label.isNotEmpty) return label;
-    return downloadDirectory ?? '';
+    final raw = downloadDirectory?.trim() ?? '';
+    if (raw.isEmpty) return '';
+    if (raw.startsWith('content://')) return '已选择自定义目录';
+    return raw;
   }
 
   final String? downloadDirectoryLabelValue;
