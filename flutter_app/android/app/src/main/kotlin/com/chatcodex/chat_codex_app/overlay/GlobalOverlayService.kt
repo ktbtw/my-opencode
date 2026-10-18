@@ -213,8 +213,17 @@ class GlobalOverlayService : Service() {
         override fun run() {
             if (destroyed) return
             if (backgroundNotificationEnabled) {
+                // 诊断：后台通知链路的关键状态，定位「收不到完成提醒」时看这一行。
+                Log.i(
+                    TAG,
+                    "health check enabled=true foreground=${isChatCodexForeground()} " +
+                        "streamConnected=$streamConnected cursor=$notificationCursor " +
+                        "pending=${pendingNotificationChanges.size} blocked=$notificationDeliveryBlocked",
+                )
                 ensureHealthyEventStream("periodic")
                 if (!isChatCodexForeground()) reconcileNotificationFeed("periodic")
+            } else {
+                Log.i(TAG, "health check enabled=false (后台通知已关闭)")
             }
             handler.postDelayed(this, NOTIFICATION_RECONCILE_INTERVAL_MS)
         }
