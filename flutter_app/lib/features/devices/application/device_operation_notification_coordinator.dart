@@ -124,7 +124,10 @@ class DeviceOperationNotificationCoordinator {
       return;
     }
     try {
-      final state = await loadLauncherState(operation.machineId);
+      // 超时保护：请求挂住会让 _running 永久为 true，整轮巡检停摆
+      final state = await loadLauncherState(
+        operation.machineId,
+      ).timeout(const Duration(seconds: 8));
       if (_disposed) return;
       _unavailableSince.remove(record.operationId);
       reconcileLauncherUpgradeNotification(
@@ -153,7 +156,10 @@ class DeviceOperationNotificationCoordinator {
       return;
     }
     try {
-      final job = await loadPreflightJob(machineId: machineId, jobId: jobId);
+      final job = await loadPreflightJob(
+        machineId: machineId,
+        jobId: jobId,
+      ).timeout(const Duration(seconds: 8));
       if (_disposed) return;
       _unavailableSince.remove(record.operationId);
       reconcileSemanticPreflightNotification(
@@ -577,7 +583,9 @@ class SemanticPreflightWatcher {
     }
     _busy = true;
     try {
-      final job = await fetchJob();
+      // 必须带超时：请求一旦挂住，_busy 会永久为 true，后续轮询全部跳过，
+      // 通知就永远停在第一次拿到的进度（表现为卡在 3%）。
+      final job = await fetchJob().timeout(const Duration(seconds: 8));
       if (job == null || _stopped) return;
       reconcileSemanticPreflightNotification(
         notifications: notifications,
