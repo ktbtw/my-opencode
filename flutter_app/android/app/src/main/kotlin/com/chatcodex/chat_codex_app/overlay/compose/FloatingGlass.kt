@@ -15,17 +15,22 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun Modifier.floatingGlass(
     corner: Dp = 28.dp,
-    tint: Color = Color(0xFF0B1020),
-    alpha: Float = 0.82f,
+    tint: Color = Color(0xFFFFFFFF),
+    alpha: Float = 1f,
 ): Modifier {
     val shape = RoundedCornerShape(corner)
     return this
-        .shadow(24.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+        .shadow(
+            18.dp,
+            shape,
+            ambientColor = Color(0xFF0F1729).copy(alpha = 0.16f),
+            spotColor = Color(0xFF0F1729).copy(alpha = 0.20f),
+        )
         .background(
             brush = Brush.verticalGradient(
                 listOf(
                     tint.copy(alpha = alpha),
-                    tint.copy(alpha = (alpha - 0.06f).coerceAtLeast(0f)),
+                    tint.copy(alpha = alpha),
                 ),
             ),
             shape = shape,
@@ -34,8 +39,8 @@ fun Modifier.floatingGlass(
             width = 1.dp,
             brush = Brush.verticalGradient(
                 listOf(
-                    Color.White.copy(alpha = 0.28f),
-                    Color.White.copy(alpha = 0.06f),
+                    Color(0xFFD0DDEF),
+                    Color(0xFFE8EFF8),
                 ),
             ),
             shape = shape,

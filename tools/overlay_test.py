@@ -49,10 +49,28 @@ def shape():
     return f"window({w}x{h})"
 
 
+def shot_size():
+    """读取当前截图尺寸，判断是否需要旋转映射。"""
+    data = adb("exec-out", "screencap", "-p")
+    import struct
+
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    width, height = struct.unpack(">II", data[16:24])
+    return width, height
+
+
 def tap_shot(sx, sy, note=""):
-    adb("shell", "input", "tap", str(sy), str(SCREEN_W - sx))
+    """截图坐标 -> input 坐标。竖屏直接对应，横屏需要旋转映射。"""
+    size = shot_size()
+    if size and size[0] > size[1]:
+        # 截图被旋转 90°：input (sy, W - sx)
+        ix, iy = sy, size[0] - sx
+    else:
+        ix, iy = sx, sy
+    adb("shell", "input", "tap", str(ix), str(iy))
     time.sleep(2.5)
-    print(f"  点击 {note or (sx, sy)} -> {shape()}")
+    print(f"  点击 {note or (sx, sy)} -> ({ix},{iy}) -> {shape()}")
 
 
 def shot(path=SHOT):

@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,9 +54,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
-private val TextPrimary = Color(0xFFF2F5FF)
-private val TextSecondary = Color(0xFF9AA7C7)
-private val AccentBlue = Color(0xFF0A84FF)
+// 与 Flutter 侧 AppColors 保持一致
+private val TextPrimary = Color(0xFF0F1729)
+private val TextSecondary = Color(0xFF4A5D7A)
+private val AccentBlue = Color(0xFF2563EB)
+private val AccentBlueDeep = Color(0xFF1D4ED8)
+private val SurfaceBackground = Color(0xFFF2F6FC)
+private val ChipBackground = Color(0xFFEFF6FF)
+private val BorderLight = Color(0xFFD0DDEF)
+private val StatusOnline = Color(0xFF16A34A)
+private val StatusWarning = Color(0xFFD97706)
+private val StatusMuted = Color(0xFF8FA3BF)
 
 /**
  * 悬浮层根组件：球 / 悬浮窗 / 沉浸全屏 / 结果卡片四种形态。
@@ -75,13 +84,9 @@ fun FloatingOverlayRoot(
     onCollapse: () -> Unit = {},
     onBallTap: (() -> Unit)? = null,
 ) {
-    AnimatedContent(
-        targetState = state.mode,
-        transitionSpec = {
-            fadeIn(tween(180)) togetherWith fadeOut(tween(140))
-        },
-        label = "overlayMode",
-    ) { mode ->
+    // 实验 C：去掉 AnimatedContent，直接按 mode 渲染，验证过渡层是否吞掉触摸。
+    run {
+        val mode = state.mode
         when (mode) {
             FloatingMode.BALL -> Box(
                 modifier = Modifier.fillMaxSize(),
@@ -121,13 +126,14 @@ fun FloatingOverlayRoot(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.34f))
+                            .background(Color(0xFF0F1729).copy(alpha = 0.30f))
                             .clickable { state.backToBall() },
                     )
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .offset { IntOffset(0, dragOffset.roundToInt()) }
+                            .padding(top = 36.dp)
                             .pointerInput(Unit) {
                                 detectVerticalDragGestures(
                                     onDragEnd = {
@@ -142,7 +148,6 @@ fun FloatingOverlayRoot(
                                 }
                             },
                     ) {
-                        AgentStrip(state = state)
                         ChatWindow(
                             state = state,
                             immersive = true,
@@ -210,7 +215,7 @@ private fun ChatWindow(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 72.dp)
-            .floatingGlass(corner = 30.dp, alpha = 0.9f)
+            .floatingGlass(corner = 30.dp)
     } else {
         Modifier
             .widthIn(max = 360.dp)
@@ -245,6 +250,10 @@ private fun ChatWindow(
             IconButton(onClick = onClose) {
                 Icon(Icons.Filled.Close, contentDescription = "收起", tint = TextSecondary)
             }
+        }
+        if (immersive) {
+            Spacer(Modifier.height(10.dp))
+            AgentStrip(state = state)
         }
         if (state.sessions.isNotEmpty() || state.currentSessionId.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
@@ -292,8 +301,8 @@ private fun ChatWindow(
                                     .widthIn(max = 260.dp)
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(
-                                        if (mine) AccentBlue.copy(alpha = 0.9f)
-                                        else Color.White.copy(alpha = 0.08f),
+                                        if (mine) AccentBlue
+                                        else SurfaceBackground,
                                     )
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
                             )
@@ -313,7 +322,8 @@ private fun ChatWindow(
                 modifier = Modifier
                     .weight(1f)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
+                    .background(SurfaceBackground)
+                    .border(1.dp, BorderLight, CircleShape)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 decorationBox = { inner ->
                     if (state.input.isEmpty()) {
@@ -358,7 +368,8 @@ private fun AgentStrip(state: OverlayUiState) {
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White.copy(alpha = 0.08f))
+                    .background(ChipBackground)
+                    .border(1.dp, BorderLight, RoundedCornerShape(14.dp))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -368,9 +379,9 @@ private fun AgentStrip(state: OverlayUiState) {
                         .clip(CircleShape)
                         .background(
                             when {
-                                !agent.online -> Color(0xFF778294)
-                                agent.busy -> Color(0xFFFFB020)
-                                else -> Color(0xFF34C759)
+                                !agent.online -> StatusMuted
+                                agent.busy -> StatusWarning
+                                else -> StatusOnline
                             },
                         ),
                 )
@@ -382,7 +393,7 @@ private fun AgentStrip(state: OverlayUiState) {
                 )
                 if (agent.busy) {
                     Spacer(Modifier.size(6.dp))
-                    Text("运行中", color = Color(0xFFFFB020), fontSize = 10.sp)
+                    Text("运行中", color = StatusWarning, fontSize = 10.sp)
                 }
             }
         }
@@ -400,10 +411,8 @@ private fun SessionChip(label: String, selected: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .widthIn(max = 140.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (selected) AccentBlue.copy(alpha = 0.85f)
-                else Color.White.copy(alpha = 0.08f),
-            )
+            .background(if (selected) AccentBlue else ChipBackground)
+            .border(1.dp, if (selected) AccentBlue else BorderLight, RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
     )

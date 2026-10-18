@@ -7,7 +7,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -110,10 +110,13 @@ internal fun GlobalOverlayService.renderComposeOverlay() {
         setViewTreeSavedStateRegistryOwner(lifecycleOwner)
         setContent {
             MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = Color(0xFF0A84FF),
-                    background = Color(0xFF0B1020),
-                    surface = Color(0xFF111A30),
+                colorScheme = lightColorScheme(
+                    primary = Color(0xFF2563EB),
+                    onPrimary = Color(0xFFFFFFFF),
+                    background = Color(0xFFF2F6FC),
+                    onBackground = Color(0xFF0F1729),
+                    surface = Color(0xFFFFFFFF),
+                    onSurface = Color(0xFF0F1729),
                 ),
             ) {
                 FloatingOverlayRoot(
@@ -165,6 +168,8 @@ internal fun GlobalOverlayService.renderComposeOverlay() {
 internal fun GlobalOverlayService.applyComposeMode(mode: FloatingMode) {
     val state = ensureComposeState()
     state.switchTo(mode)
+    // 同步 expanded，否则后续内容更新会把球重新弹回窗口。
+    expanded = mode != FloatingMode.BALL
     renderComposeOverlay()
 }
 

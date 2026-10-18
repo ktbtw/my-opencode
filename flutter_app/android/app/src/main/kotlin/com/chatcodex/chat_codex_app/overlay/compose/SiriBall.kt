@@ -36,10 +36,11 @@ import kotlin.math.sin
 /** 球体状态：空闲 / 按下 / 思考中 / 回复中。 */
 enum class BallState { Idle, Pressing, Loading, Replying }
 
-private val MainColor = Color(0xFF0A84FF)
-private val AccentPurple = Color(0xFFBF5AF2)
-private val AccentPink = Color(0xFFFF375F)
-private val AccentCyan = Color(0xFF64D2FF)
+// 与 App 主色一致：主蓝 + 靛蓝 + 天蓝 + 浅蓝
+private val MainColor = Color(0xFF2563EB)
+private val AccentPurple = Color(0xFF6366F1)
+private val AccentPink = Color(0xFF38BDF8)
+private val AccentCyan = Color(0xFFBFD7FF)
 
 /**
  * Siri 风格悬浮球：Canvas 绘制、四色光斑、呼吸/涟漪动效、拖拽与点击。
