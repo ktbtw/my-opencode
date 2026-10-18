@@ -12,6 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -107,7 +108,7 @@ fun SiriBall(
 
     Box(
         modifier = Modifier
-            .size(ballSize * 3f)
+            .fillMaxSize()
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
