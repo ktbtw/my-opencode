@@ -4240,54 +4240,6 @@ class _AgentSemanticSelectionDialogState
           'operation_id': operationId,
         },
       ));
-      notifications.start(
-        operationId: operationId,
-        title: '正在切换 Agent 助手',
-        message: '正在创建运行时与 MCP 预检任务',
-        progressMode: AppNotificationProgressMode.determinate,
-        displayStyle: AppNotificationDisplayStyle.stages,
-        progress: 0,
-        kind: AppNotificationKind.mcp,
-        scope: AppNotificationScope.synced,
-        sourceLabel: widget.device.hostname,
-        metadata: {
-          'machine_id': widget.device.machineId,
-          'agent_id': widget.agent.agentId,
-        },
-        stages: const [
-          AppNotificationStage(label: '运行时', active: true),
-          AppNotificationStage(label: 'MCP'),
-          AppNotificationStage(label: 'Skill'),
-          AppNotificationStage(label: '应用'),
-        ],
-        actions: [
-          AppNotificationAction(
-            label: '查看设备',
-            type: AppNotificationActionType.openRoute,
-            payload: {'route': '/devices/${widget.device.machineId}'},
-            primary: true,
-          ),
-        ],
-      );
-      attachSemanticPreflightMetadata(
-        notifications: notifications,
-        operationId: operationId,
-        machineId: widget.device.machineId,
-        agentId: widget.agent.agentId,
-        jobId: job.id,
-      );
-      _syncSemanticPreflightNotification(notifications, operationId, job);
-      // 对话框关闭后仍要刷新通知：交给后台观察者轮询，而不是依赖对话框的 timer
-      _preflightWatcher?.stop();
-      _preflightWatcher = SemanticPreflightWatcher(
-        notifications: notifications,
-        operationId: operationId,
-        jobId: job.id,
-        fetchJob: () => repo.getDeviceAgentSemanticPreflightJob(
-          machineId: widget.device.machineId,
-          jobId: job.id,
-        ),
-      )..start();
       if (!mounted) return;
       final completed = await showDialog<bool>(
         context: context,
@@ -4313,6 +4265,56 @@ class _AgentSemanticSelectionDialogState
       ));
       if (completed == true) {
         Navigator.of(context).pop();
+      } else {
+        // 预检期间由「切换检测」对话框展示进度；用户选择转入后台时
+        // 才创建后台通知，避免同一件事同时出现两条进度不一致的通知。
+        notifications.start(
+          operationId: operationId,
+          title: '正在切换 Agent 助手',
+          message: '正在创建运行时与 MCP 预检任务',
+          progressMode: AppNotificationProgressMode.determinate,
+          displayStyle: AppNotificationDisplayStyle.stages,
+          progress: 0,
+          kind: AppNotificationKind.mcp,
+          scope: AppNotificationScope.synced,
+          sourceLabel: widget.device.hostname,
+          metadata: {
+            'machine_id': widget.device.machineId,
+            'agent_id': widget.agent.agentId,
+          },
+          stages: const [
+            AppNotificationStage(label: '运行时', active: true),
+            AppNotificationStage(label: 'MCP'),
+            AppNotificationStage(label: 'Skill'),
+            AppNotificationStage(label: '应用'),
+          ],
+          actions: [
+            AppNotificationAction(
+              label: '查看设备',
+              type: AppNotificationActionType.openRoute,
+              payload: {'route': '/devices/${widget.device.machineId}'},
+              primary: true,
+            ),
+          ],
+        );
+        attachSemanticPreflightMetadata(
+          notifications: notifications,
+          operationId: operationId,
+          machineId: widget.device.machineId,
+          agentId: widget.agent.agentId,
+          jobId: job.id,
+        );
+        _syncSemanticPreflightNotification(notifications, operationId, job);
+        _preflightWatcher?.stop();
+        _preflightWatcher = SemanticPreflightWatcher(
+          notifications: notifications,
+          operationId: operationId,
+          jobId: job.id,
+          fetchJob: () => repo.getDeviceAgentSemanticPreflightJob(
+            machineId: widget.device.machineId,
+            jobId: job.id,
+          ),
+        )..start();
       }
     } catch (e) {
       if (operationId.isEmpty) {
