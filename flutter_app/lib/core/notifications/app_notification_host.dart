@@ -10,6 +10,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 import 'app_notification_controller.dart';
 import 'app_notification_model.dart';
+import '../services/diag_log.dart';
 
 class AppNotificationHost extends ConsumerWidget {
   final Widget child;
@@ -34,6 +35,18 @@ class AppNotificationHost extends ConsumerWidget {
         .toList(growable: false)
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+    DiagLog.emit('host_render', {
+      'active_total': state.active.length,
+      'visible': active
+          .map((r) => {
+                'op': r.operationId,
+                'status': r.status.name,
+                'progress': r.progress,
+                'unread': r.unread,
+              })
+          .toList(),
+      'collapsed': state.collapsed,
+    });
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -49,13 +62,10 @@ class AppNotificationHost extends ConsumerWidget {
             left: mobile ? 8 : 16,
             child: Align(
               alignment: Alignment.topCenter,
-              child: AnimatedSize(
-                duration: media.disableAnimations
-                    ? Duration.zero
-                    : const Duration(milliseconds: 360),
-                curve: Curves.easeOutCubic,
-                alignment: Alignment.topCenter,
-                child: state.collapsed
+              // 不再对通知容器做尺寸动画：AnimatedSize/AnimatedSwitcher 嵌在
+              // Stack + Align 里会对自身尺寸反复布局，内容高度变化时容易把
+              // 渲染管线拖住（表现为整屏不再刷新、点哪都没反应）。
+              child: state.collapsed
                     ? _NotificationIsland(
                         records: active,
                         onTap: controller.expand,
@@ -74,7 +84,6 @@ class AppNotificationHost extends ConsumerWidget {
                         onAction: (record, action) =>
                             _handleAction(controller, record, action),
                       ),
-              ),
             ),
           ),
         if (state.centerOpen)
