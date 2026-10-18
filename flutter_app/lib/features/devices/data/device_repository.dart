@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -23,6 +24,8 @@ import 'upload_policy.dart';
 import 'upload_diag.dart';
 import 'upload_resume_store.dart';
 import '../../../core/services/diag_log.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 typedef DeviceUploadProgressCallback =
     void Function(DeviceUploadProgress progress);
@@ -721,6 +724,99 @@ class DeviceRepository {
     );
     final file = (data['file'] as Map<String, dynamic>?) ?? data;
     return DeviceProjectFile.fromJson(file);
+  }
+
+  /// 流式下载到临时文件：分块到达即写盘，不把整个文件读进内存。
+  /// 大文件（GB 级）用这个，避免 base64 解码 + 全量拼接导致 OOM。
+  Future<({String path, int size})> downloadDeviceAgentFileToFile({
+    required String machineId,
+    required String agentId,
+    required String path,
+    int chunkSize = defaultDownloadChunkSize,
+    int concurrency = defaultDownloadConcurrency,
+    DeviceDownloadProgressCallback? onProgress,
+  }) async {
+    if (chunkSize <= 0) {
+      throw ArgumentError.value(chunkSize, 'chunkSize', '必须大于 0');
+    }
+    final meta = await createDeviceAgentFileDownload(
+      machineId: machineId,
+      agentId: agentId,
+      path: path,
+    );
+    final totalBytes = meta.size;
+    final tempDir = await getTemporaryDirectory();
+    final tempPath = p.join(
+      tempDir.path,
+      'dl_${DateTime.now().microsecondsSinceEpoch}_${p.basename(path)}',
+    );
+    final file = File(tempPath);
+    await file.create(recursive: true);
+    final raf = await file.open(mode: FileMode.write);
+    final totalChunks = max(1, (totalBytes / chunkSize).ceil());
+    var downloadedBytes = 0;
+    var completedChunks = 0;
+    var nextChunk = 0;
+    // 串行化写盘：多个 worker 并发下载，但 RandomAccessFile 的定位写必须排队。
+    Future<void> writeTail = Future<void>.value();
+
+    void progress(String stage) {
+      onProgress?.call(
+        DeviceDownloadProgress(
+          downloadedBytes: downloadedBytes,
+          totalBytes: totalBytes,
+          completedChunks: completedChunks,
+          totalChunks: totalChunks,
+          stage: stage,
+        ),
+      );
+    }
+
+    try {
+      progress('下载分块');
+      final workerCount = min(max(1, concurrency), totalChunks);
+      Future<void> worker() async {
+        while (true) {
+          final chunkIndex = nextChunk;
+          nextChunk += 1;
+          if (chunkIndex >= totalChunks) return;
+          final offset = chunkIndex * chunkSize;
+          final length = min(chunkSize, totalBytes - offset);
+          final chunk = await downloadDeviceAgentFileChunk(
+            machineId: machineId,
+            agentId: agentId,
+            path: path,
+            chunkIndex: chunkIndex,
+            offset: offset,
+            length: length,
+          );
+          final bytes = Uint8List.fromList(base64Decode(chunk.content));
+          writeTail = writeTail.then((_) async {
+            await raf.setPosition(offset);
+            await raf.writeFrom(bytes);
+          });
+          downloadedBytes += bytes.length;
+          completedChunks += 1;
+          progress('下载分块');
+        }
+      }
+
+      await Future.wait(List.generate(workerCount, (_) => worker()));
+      await writeTail;
+      await raf.flush();
+      progress('下载完成');
+      return (path: tempPath, size: totalBytes);
+    } catch (error) {
+      try {
+        await raf.close();
+        await file.delete();
+      } catch (_) {}
+      rethrow;
+    } finally {
+      try {
+        await raf.close();
+      } catch (_) {}
+    }
   }
 
   Future<DeviceProjectFile> downloadDeviceAgentFileChunked({

@@ -28,6 +28,43 @@ class ArtifactDirectoryBridge(private val activity: Activity) {
                     result.error("pick_failed", error.message, null)
                 }
             }
+            "saveFilePath" -> {
+                val directory = call.argument<String>("directory")
+                val filename = call.argument<String>("filename")
+                val sourcePath = call.argument<String>("sourcePath")
+                val mime = call.argument<String>("mimeType") ?: "application/octet-stream"
+                if (directory == null || filename.isNullOrBlank() || sourcePath.isNullOrBlank()) {
+                    result.error("arguments", "文件信息不完整", null); return
+                }
+                io.execute {
+                    var created: Uri? = null
+                    try {
+                        val source = java.io.File(sourcePath)
+                        if (!source.exists()) throw IllegalStateException("源文件不存在")
+                        val tree = Uri.parse(directory)
+                        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                        val uri = DocumentsContract.createDocument(activity.contentResolver, parent, mime, filename)
+                            ?: throw IllegalStateException("创建文件失败，请重新选择目录")
+                        created = uri
+                        val stream = activity.contentResolver.openOutputStream(uri, "w")
+                            ?: throw IllegalStateException("打开文件失败，请重新选择目录")
+                        // 流式复制，避免把整个文件读进内存（大文件会 OOM）。
+                        stream.use { output -> source.inputStream().use { input -> input.copyTo(output) } }
+                        activity.runOnUiThread {
+                            try {
+                                activity.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, mime)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                })
+                            } catch (_: Exception) { }
+                            result.success(uri.toString())
+                        }
+                    } catch (error: Exception) {
+                        try { created?.let { activity.contentResolver.delete(it, null, null) } } catch (_: Exception) {}
+                        activity.runOnUiThread { result.error("save_failed", error.message, null) }
+                    }
+                }
+            }
             "saveFile" -> {
                 val directory = call.argument<String>("directory")
                 val filename = call.argument<String>("filename")

@@ -17,6 +17,7 @@ import '../../../shared/widgets/widgets.dart';
 import '../data/artifact_download_saver.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../../core/services/transfer_service.dart';
+import 'package:flutter/foundation.dart';
 
 class ProjectFilesPage extends ConsumerStatefulWidget {
   final String machineId;
@@ -275,24 +276,46 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
     }
     try {
       final repo = ref.read(deviceRepositoryProvider);
-      final file = await repo.downloadDeviceAgentFileChunked(
-        machineId: widget.machineId,
-        agentId: widget.agentId,
-        path: item.path,
-        onProgress: (value) {
-          if (dialogOpen) {
-            progress.value = _TransferProgressView.download(value);
-          }
-          notifications.update(
-            operationId: operationId,
-            message: value.stage,
-            progress: value.totalBytes <= 0
-                ? 0
-                : value.downloadedBytes / value.totalBytes,
-            stages: _fileTransferStages(value.stage),
-          );
-        },
+      await WakelockPlus.enable();
+      await TransferService.start(
+        title: '正在下载 ${item.name}',
+        text: '下载中，可切到后台',
       );
+      void reportDownload(DeviceDownloadProgress value) {
+        if (dialogOpen) {
+          progress.value = _TransferProgressView.download(value);
+        }
+        notifications.update(
+          operationId: operationId,
+          message: value.stage,
+          progress: value.totalBytes <= 0
+              ? 0
+              : value.downloadedBytes / value.totalBytes,
+          stages: _fileTransferStages(value.stage),
+        );
+      }
+
+      // 桌面/移动端走流式落盘（分块直接写临时文件），Web 只能拿字节。
+      final String? downloadedPath;
+      final DeviceProjectFile? file;
+      if (kIsWeb) {
+        file = await repo.downloadDeviceAgentFileChunked(
+          machineId: widget.machineId,
+          agentId: widget.agentId,
+          path: item.path,
+          onProgress: reportDownload,
+        );
+        downloadedPath = null;
+      } else {
+        final result = await repo.downloadDeviceAgentFileToFile(
+          machineId: widget.machineId,
+          agentId: widget.agentId,
+          path: item.path,
+          onProgress: reportDownload,
+        );
+        downloadedPath = result.path;
+        file = null;
+      }
       notifications.succeed(
         operationId,
         title: '设备文件传输完成',
@@ -310,12 +333,17 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
         scope: AppNotificationScope.local,
         actions: [_openFilesAction()],
       );
-      final bytes = Uint8List.fromList(base64Decode(file.content));
-      final saved = await saveArtifactBytes(
-        bytes,
-        filename: file.name.isNotEmpty ? file.name : item.name,
-        mimeType: 'application/octet-stream',
-      );
+      final saved = downloadedPath != null
+          ? await saveArtifactFile(
+              downloadedPath,
+              filename: item.name,
+              mimeType: 'application/octet-stream',
+            )
+          : await saveArtifactBytes(
+              Uint8List.fromList(base64Decode(file!.content)),
+              filename: file.name.isNotEmpty ? file.name : item.name,
+              mimeType: 'application/octet-stream',
+            );
       notifications.succeed(
         localSaveOperationId,
         title: saved == null ? '文件下载已开始' : '文件下载完成',
@@ -336,6 +364,8 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
       downloadError.value = e.toString();
       setState(() => _error = e.toString());
     } finally {
+      await TransferService.stop();
+      await WakelockPlus.disable();
       if (mounted) setState(() => _downloading.remove(item.path));
     }
   }
