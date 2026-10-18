@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -820,4 +821,28 @@ func (a *API) ProjectMemoryJobEvents(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// ClearProjectMemories 一键清空项目记忆（项目结束、目录复用时使用）。
+func (a *API) ClearProjectMemories(w http.ResponseWriter, r *http.Request) {
+	operator, ok := a.currentOperator(r)
+	if !ok {
+		write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	scope, ok := a.projectScopeFromRequest(r, operator)
+	if !ok {
+		write(w, http.StatusNotFound, map[string]string{"error": "project scope not found"})
+		return
+	}
+	removed, err := a.store.ClearProjectMemories(r.Context(), operator.ID, scope.ID)
+	if err != nil {
+		write(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("[project-memory] 清空项目记忆 scope=%s operator=%d removed=%d", scope.ID, operator.ID, removed)
+	_ = a.store.RecordProjectMemoryAudit(r.Context(), model.ProjectMemoryAudit{
+		ScopeID: scope.ID, OperatorID: operator.ID, Action: "clear",
+	})
+	write(w, http.StatusOK, map[string]any{"removed": removed})
 }

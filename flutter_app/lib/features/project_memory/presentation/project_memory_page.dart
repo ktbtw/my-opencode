@@ -289,6 +289,47 @@ class _ProjectMemoryPageState extends ConsumerState<ProjectMemoryPage> {
     );
   }
 
+  /// 一键清空项目记忆（项目结束、目录复用场景）。
+  Future<void> _clearMemories(ProjectScopeModel scope) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('清空项目记忆'),
+        content: Text(
+          '将删除「${scope.displayName}」下的全部项目记忆，且无法恢复。\n'
+          '适合项目已结束、目录要复用给新项目的场景。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final removed = await ref
+          .read(projectMemoryRepositoryProvider)
+          .clearMemories(widget.machineId, scope.id);
+      if (!mounted) return;
+      ref.invalidate(
+        projectMemoryOverviewProvider((
+          machineId: widget.machineId,
+          scopeId: scope.id,
+        )),
+      );
+      showAppFeedback(context, message: '已清空 $removed 条项目记忆');
+    } catch (e) {
+      if (!mounted) return;
+      showAppFeedback(context, message: '清空失败: $e');
+    }
+  }
+
   Future<void> _organize() async {
     try {
       final repo = ref.read(projectMemoryRepositoryProvider);
@@ -594,6 +635,8 @@ class _ProjectMemoryPageState extends ConsumerState<ProjectMemoryPage> {
                       } else if (value == 'settings' &&
                           memorySettings.valueOrNull != null) {
                         _editSettings(memorySettings.valueOrNull!);
+                      } else if (value == 'clear' && scope != null) {
+                        _clearMemories(scope);
                       }
                     },
                     itemBuilder: (context) => [
@@ -613,6 +656,15 @@ class _ProjectMemoryPageState extends ConsumerState<ProjectMemoryPage> {
                           contentPadding: EdgeInsets.zero,
                           leading: AppStatusIcon(Icons.tune_outlined),
                           title: Text('项目记忆设置'),
+                        ),
+                      ),
+                      PopupMenuItem<String>(
+                        value: 'clear',
+                        enabled: machineOnline && scope != null,
+                        child: const ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: AppStatusIcon(Icons.delete_sweep_outlined),
+                          title: Text('清空项目记忆'),
                         ),
                       ),
                     ],

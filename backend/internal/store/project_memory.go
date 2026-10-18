@@ -528,6 +528,16 @@ func (m *Memory) EditProjectMemoryVersion(ctx context.Context, operatorID int64,
 	return nil
 }
 
+// ClearProjectMemories 清空项目下全部记忆（见 MySQLArchive.ClearProjectMemories）。
+func (m *Memory) ClearProjectMemories(ctx context.Context, operatorID int64, scopeID string) (int, error) {
+	if clearer, ok := m.archive.(interface {
+		ClearProjectMemories(context.Context, int64, string) (int, error)
+	}); ok {
+		return clearer.ClearProjectMemories(ctx, operatorID, scopeID)
+	}
+	return 0, nil
+}
+
 func (m *Memory) MarkProjectMemoryDeleted(ctx context.Context, operatorID int64, scopeID, memoryID string, expectedVersion int64) error {
 	if archive, ok := m.projectMemoryArchive(); ok {
 		return archive.MarkProjectMemoryDeleted(ctx, operatorID, scopeID, memoryID, expectedVersion)

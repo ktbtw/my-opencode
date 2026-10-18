@@ -1539,6 +1539,7 @@ func (a *App) Router() http.Handler {
 		r.Get("/api/devices/{machineID}/projects/{scopeID}/memories/{memoryID}", h.GetProjectMemory)
 		r.Patch("/api/devices/{machineID}/projects/{scopeID}/memories/{memoryID}", h.UpdateProjectMemory)
 		r.Delete("/api/devices/{machineID}/projects/{scopeID}/memories/{memoryID}", h.DeleteProjectMemory)
+		r.Delete("/api/devices/{machineID}/projects/{scopeID}/memories", h.ClearProjectMemories)
 		r.Post("/api/devices/{machineID}/projects/{scopeID}/memories/{memoryID}/resolve", h.ResolveProjectMemory)
 		r.Post("/api/devices/{machineID}/projects/{scopeID}/memory-jobs", h.CreateProjectMemoryJob)
 		r.Post("/api/devices/{machineID}/projects/{scopeID}/identity", h.CorrectProjectIdentity)

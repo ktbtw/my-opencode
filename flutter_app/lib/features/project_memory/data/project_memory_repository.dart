@@ -192,4 +192,10 @@ class ProjectMemoryRepository {
       ),
     );
   }
+
+  /// 一键清空项目记忆：项目结束、目录复用时使用，避免旧记忆污染新项目。
+  Future<int> clearMemories(String machineId, String scopeId) async {
+    final json = await ApiClient.delete('${_base(machineId, scopeId)}/memories');
+    return (json['removed'] as num?)?.toInt() ?? 0;
+  }
 }

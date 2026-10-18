@@ -1801,3 +1801,35 @@ func (m *MySQLArchive) projectMemoryDebugSummary(ctx context.Context, scopeID st
 	}
 	return fmt.Sprintf("scope=%s memories=%d", scopeID, count), nil
 }
+
+// ClearProjectMemories 一次性清空某个项目下的全部记忆（标记为 deleted）。
+// 用于「项目结束、目录复用」的场景：用户懒得换目录、手动删文件重开新项目，
+// 旧记忆会污染新项目，需要一键清掉。
+func (m *MySQLArchive) ClearProjectMemories(ctx context.Context, operatorID int64, scopeID string) (int, error) {
+	now := time.Now().UTC()
+	result, err := m.db.ExecContext(ctx, `UPDATE project_memories m JOIN project_scopes s
+ON s.project_scope_id=m.project_scope_id SET m.status='deleted',
+m.statement_text=IF(m.`+projectMemorySensitiveColumn+`=1, '', m.statement_text), m.updated_at=?
+WHERE s.operator_id=? AND s.project_scope_id=? AND m.status<>'deleted'`,
+		now, operatorID, scopeID)
+	if err != nil {
+		return 0, err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return 0, nil
+	}
+	if _, err := m.db.ExecContext(ctx, `UPDATE project_memory_sources src
+JOIN project_memories m ON m.memory_id=src.memory_id
+SET src.excerpt_text=IF(m.`+projectMemorySensitiveColumn+`=1, '', src.excerpt_text)
+WHERE m.project_scope_id=?`, scopeID); err != nil {
+		return int(count), err
+	}
+	if _, err := m.db.ExecContext(ctx,
+		`UPDATE project_scopes SET revision=revision+1, updated_at=? WHERE operator_id=? AND project_scope_id=?`,
+		now, operatorID, scopeID,
+	); err != nil {
+		return int(count), err
+	}
+	return int(count), nil
+}
