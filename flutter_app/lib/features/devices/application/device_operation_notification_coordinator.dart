@@ -259,17 +259,9 @@ void reconcileLauncherUpgradeNotification({
 }) {
   final record = notifications.findByOperationId(operationId);
   if (record == null || record.isTerminal) return;
-  final failed =
-      state.upgradeStage == 'failed' || state.status.toLowerCase() == 'failed';
-  if (failed) {
-    notifications.fail(
-      operationId,
-      title: 'Launcher 升级失败',
-      error: state.lastError.isEmpty ? '设备报告升级失败' : state.lastError,
-      critical: true,
-    );
-    return;
-  }
+  // 先判「已完成」再判失败：launcher 在「无需更新」场景会写 stage=completed
+  // 且 progress=100，但 status 字段可能仍是上一次的失败值，先判 failed 会把
+  // 成功误判成失败，通知就会一直停在初始进度（表现为「都切换完了还显示 3%」）。
   final completedStage =
       state.upgradeStage == 'completed' ||
       state.upgradeStage == 'already_latest';
@@ -280,6 +272,17 @@ void reconcileLauncherUpgradeNotification({
       operationId,
       title: 'Launcher 升级完成',
       message: '设备已切换到 $targetVersion 并完成验证',
+    );
+    return;
+  }
+  final failed =
+      state.upgradeStage == 'failed' || state.status.toLowerCase() == 'failed';
+  if (failed) {
+    notifications.fail(
+      operationId,
+      title: 'Launcher 升级失败',
+      error: state.lastError.isEmpty ? '设备报告升级失败' : state.lastError,
+      critical: true,
     );
     return;
   }
