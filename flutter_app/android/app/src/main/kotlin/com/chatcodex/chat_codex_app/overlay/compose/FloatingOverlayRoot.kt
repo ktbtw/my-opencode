@@ -73,6 +73,7 @@ fun FloatingOverlayRoot(
     onNewSession: () -> Unit = {},
     onExpand: () -> Unit = {},
     onCollapse: () -> Unit = {},
+    onBallTap: (() -> Unit)? = null,
 ) {
     AnimatedContent(
         targetState = state.mode,
@@ -92,7 +93,7 @@ fun FloatingOverlayRoot(
                         state.completion != null -> BallState.Replying
                         else -> BallState.Idle
                     },
-                    onClick = { state.switchTo(FloatingMode.WINDOW) },
+                    onClick = { onBallTap?.invoke() ?: state.switchTo(FloatingMode.WINDOW) },
                     onDragStart = onDragStart,
                     onDrag = onMove,
                     onDragEnd = onDragEnd,

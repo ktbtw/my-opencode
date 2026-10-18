@@ -17,7 +17,10 @@ internal fun Context.dp(value: Int): Int = (value * resources.displayMetrics.den
 internal fun GlobalOverlayService.renderOverlay() {
     if (stopping || destroyed || !overlayEnabled) return
     val state = ensureComposeState()
-    state.mode = if (expanded) FloatingMode.WINDOW else FloatingMode.BALL
+    // 只在球/窗之间跟随 expanded 变化；全屏与结果卡是用户主动切换的，不能覆盖。
+    if (state.mode == FloatingMode.BALL || state.mode == FloatingMode.WINDOW) {
+        state.mode = if (expanded) FloatingMode.WINDOW else FloatingMode.BALL
+    }
     renderComposeOverlay()
 }
 
