@@ -22,6 +22,7 @@ class TransferForegroundService : Service() {
         private const val NOTIFICATION_ID = 4211
         const val EXTRA_TITLE = "title"
         const val EXTRA_TEXT = "text"
+        const val EXTRA_PROGRESS = "progress"
 
         fun start(context: Context, title: String, text: String) {
             val intent = Intent(context, TransferForegroundService::class.java).apply {
@@ -35,6 +36,13 @@ class TransferForegroundService : Service() {
             }
         }
 
+        /** 只更新通知内容/进度，不重启服务。 */
+        fun update(context: Context, title: String, text: String, progress: Int) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val service = TransferForegroundService()
+            manager.notify(NOTIFICATION_ID, service.buildNotification(context, title, text, progress))
+        }
+
         fun stop(context: Context) {
             context.stopService(Intent(context, TransferForegroundService::class.java))
         }
@@ -45,8 +53,9 @@ class TransferForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = intent?.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: "正在传输文件"
         val text = intent?.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: "保持后台运行"
+        val progress = intent?.getIntExtra(EXTRA_PROGRESS, -1) ?: -1
         ensureChannel()
-        startForeground(NOTIFICATION_ID, buildNotification(title, text))
+        startForeground(NOTIFICATION_ID, buildNotification(this, title, text, progress))
         return START_NOT_STICKY
     }
 
@@ -65,15 +74,20 @@ class TransferForegroundService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(title: String, text: String): Notification {
-        val intent = Intent(this, MainActivity::class.java)
+    fun buildNotification(
+        context: Context,
+        title: String,
+        text: String,
+        progress: Int,
+    ): Notification {
+        val intent = Intent(context, MainActivity::class.java)
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         } else {
             PendingIntent.FLAG_UPDATE_CURRENT
         }
-        val pending = PendingIntent.getActivity(this, 0, intent, flags)
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val pending = PendingIntent.getActivity(context, 0, intent, flags)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
@@ -81,6 +95,11 @@ class TransferForegroundService : Service() {
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pending)
-            .build()
+        if (progress >= 0) {
+            builder.setProgress(100, progress.coerceIn(0, 100), false)
+        } else {
+            builder.setProgress(0, 0, true)
+        }
+        return builder.build()
     }
 }

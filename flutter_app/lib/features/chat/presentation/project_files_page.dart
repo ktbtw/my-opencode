@@ -45,6 +45,8 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
   String _error = '';
   List<DeviceDirectoryInfo> _entries = const [];
   final Set<String> _downloading = {};
+  // 前台服务通知的进度刷新节流，避免每个分块都刷系统通知。
+  DateTime _lastTransferNotifyAt = DateTime.fromMillisecondsSinceEpoch(0);
   final Set<String> _selectedPaths = {};
   bool _editing = false;
 
@@ -170,6 +172,20 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
         resume: policy.resumeEnabled,
         onProgress: (value) {
           if (dialogOpen) progress.value = _TransferProgressView.upload(value);
+          // 前台服务通知同步显示百分比（限流，避免每块都刷系统通知）。
+          final percent = value.totalBytes <= 0
+              ? -1
+              : (value.uploadedBytes * 100 ~/ value.totalBytes);
+          final now = DateTime.now();
+          if (now.difference(_lastTransferNotifyAt) >=
+              const Duration(milliseconds: 500)) {
+            _lastTransferNotifyAt = now;
+            TransferService.update(
+              title: '正在上传 $name',
+              text: '$percent%',
+              progress: percent,
+            );
+          }
           notifications.update(
             operationId: operationId,
             message: value.stage,
@@ -283,6 +299,19 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
       void reportDownload(DeviceDownloadProgress value) {
         if (dialogOpen) {
           progress.value = _TransferProgressView.download(value);
+        }
+        final percent = value.totalBytes <= 0
+            ? -1
+            : (value.downloadedBytes * 100 ~/ value.totalBytes);
+        final now = DateTime.now();
+        if (now.difference(_lastTransferNotifyAt) >=
+            const Duration(milliseconds: 500)) {
+          _lastTransferNotifyAt = now;
+          TransferService.update(
+            title: '正在下载 ${item.name}',
+            text: '$percent%',
+            progress: percent,
+          );
         }
         notifications.update(
           operationId: operationId,

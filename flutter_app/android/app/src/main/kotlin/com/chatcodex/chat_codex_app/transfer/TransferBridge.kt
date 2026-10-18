@@ -21,8 +21,9 @@ class TransferBridge(private val context: Context) : MethodChannel.MethodCallHan
             "update" -> {
                 val title = call.argument<String>("title") ?: "正在传输文件"
                 val text = call.argument<String>("text") ?: "保持后台运行"
+                val progress = call.argument<Int>("progress") ?: -1
                 try {
-                    TransferForegroundService.start(context, title, text)
+                    TransferForegroundService.update(context, title, text, progress)
                     result.success(true)
                 } catch (error: Exception) {
                     result.error("update_failed", error.message, null)
