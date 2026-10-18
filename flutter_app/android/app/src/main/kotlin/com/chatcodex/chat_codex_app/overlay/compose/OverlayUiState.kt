@@ -55,6 +55,9 @@ class OverlayUiState {
     var voiceActive by mutableStateOf(false)
     var voiceText by mutableStateOf("")
     var voiceError by mutableStateOf("")
+    var ocrBusy by mutableStateOf(false)
+    var ocrText by mutableStateOf("")
+    var ocrError by mutableStateOf("")
 
     fun switchTo(target: FloatingMode) {
         if (target == mode) return

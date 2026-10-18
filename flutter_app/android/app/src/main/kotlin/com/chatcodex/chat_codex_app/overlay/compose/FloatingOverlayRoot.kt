@@ -89,6 +89,9 @@ fun FloatingOverlayRoot(
     onRemoveAttachment: (Int) -> Unit = {},
     onVoiceStart: () -> Unit = {},
     onVoiceStop: () -> Unit = {},
+    onOcrStart: () -> Unit = {},
+    onOcrClose: () -> Unit = {},
+    onOcrSend: () -> Unit = {},
 ) {
     // 实验 C：去掉 AnimatedContent，直接按 mode 渲染，验证过渡层是否吞掉触摸。
     run {
@@ -118,6 +121,20 @@ fun FloatingOverlayRoot(
                 onStop = onVoiceStop,
             )
 
+            FloatingMode.SCREEN_OCR -> Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                ScreenOcrPanel(
+                    busy = state.ocrBusy,
+                    text = state.ocrText,
+                    error = state.ocrError,
+                    onClose = onOcrClose,
+                    onRetry = onOcrStart,
+                    onSend = onOcrSend,
+                )
+            }
+
             FloatingMode.WINDOW -> Column(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.Center,
@@ -134,6 +151,7 @@ fun FloatingOverlayRoot(
                     onRemoveAttachment = onRemoveAttachment,
                     onVoiceStart = onVoiceStart,
                     onVoiceStop = onVoiceStop,
+                    onOcrStart = onOcrStart,
                 )
             }
 
@@ -177,6 +195,7 @@ fun FloatingOverlayRoot(
                             onRemoveAttachment = onRemoveAttachment,
                             onVoiceStart = onVoiceStart,
                             onVoiceStop = onVoiceStop,
+                            onOcrStart = onOcrStart,
                         )
                     }
                 }
@@ -229,6 +248,7 @@ private fun ChatWindow(
     onRemoveAttachment: (Int) -> Unit,
     onVoiceStart: () -> Unit,
     onVoiceStop: () -> Unit,
+    onOcrStart: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     LaunchedEffect(state.messages.size) {
@@ -267,6 +287,18 @@ private fun ChatWindow(
                     fontSize = 12.sp,
                 )
             }
+            Text(
+                text = "识屏",
+                color = TextSecondary,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(ChipBackground)
+                    .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                    .clickable(onClick = onOcrStart)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            )
+            Spacer(Modifier.size(4.dp))
             if (onExpand != null) {
                 IconButton(onClick = onExpand) {
                     Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "全屏", tint = TextSecondary)

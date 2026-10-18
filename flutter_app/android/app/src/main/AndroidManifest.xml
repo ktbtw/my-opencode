@@ -56,6 +56,18 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <activity
+            android:name=".overlay.ScreenCaptureConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name=".overlay.ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <service
             android:name=".overlay.GlobalOverlayService"
             android:enabled="true"
@@ -193,6 +205,8 @@
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
     <!-- 语音球：录音识别 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- 屏幕识别：一次性截屏 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
 
     <queries>
         <intent>

@@ -7,5 +7,7 @@ enum class FloatingMode {
     VOICE_BALL,
     WINDOW,
     FULLSCREEN,
+    /** 屏幕识别：截屏 OCR 结果面板。 */
+    SCREEN_OCR,
     RESULT_DISPLAY,
 }

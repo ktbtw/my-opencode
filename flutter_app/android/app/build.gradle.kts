@@ -84,6 +84,10 @@ android {
         // Jetpack Compose（androidx.compose.animation-core）要求 minSdk >= 23，
         // 悬浮助手 UI 依赖 Compose，因此这里显式抬到 24。
         minSdk = 24
+        ndk {
+            // 只保留真机 ABI，去掉模拟器用的 x86_64，减小包体
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -119,6 +123,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.animation:animation")
     implementation("androidx.activity:activity-compose:1.8.2")
+    // 屏幕 OCR：内置中文识别模型，离线可用（国内设备拉不到 Play 服务的按需模块）
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
     // 液态玻璃（Android 13+ 真模糊，低版本自动降级）
     implementation("io.github.kyant0:backdrop:1.0.6")
 
