@@ -11,6 +11,7 @@ import com.chatcodex.chat_codex_app.overlay.GlobalOverlayEventBridge
 import com.chatcodex.chat_codex_app.overlay.GlobalOverlayService
 import com.chatcodex.chat_codex_app.overlay.NotificationEventBridge
 import com.chatcodex.chat_codex_app.push.JPushBridge
+import com.chatcodex.chat_codex_app.transfer.TransferBridge
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -139,6 +140,8 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "chat_codex/transfer_service")
+            .setMethodCallHandler(TransferBridge(this))
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "chat_codex/global_overlay",

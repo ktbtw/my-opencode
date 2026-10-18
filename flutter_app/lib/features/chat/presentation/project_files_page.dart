@@ -16,6 +16,7 @@ import '../../../features/devices/presentation/device_provider.dart';
 import '../../../shared/widgets/widgets.dart';
 import '../data/artifact_download_saver.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import '../../../core/services/transfer_service.dart';
 
 class ProjectFilesPage extends ConsumerStatefulWidget {
   final String machineId;
@@ -149,6 +150,11 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
       // 大文件上传期间保持屏幕常亮：灰屏/锁屏会让系统暂停前台网络，
       // 分块请求中断后只能靠续传恢复。
       await WakelockPlus.enable();
+      // 同时拉起前台服务，退到后台/锁屏时系统也不会暂停网络或回收进程。
+      await TransferService.start(
+        title: '正在上传 $name',
+        text: '上传中，可切到后台',
+      );
       final path = _joinPath(_currentPath, name);
       final repo = ref.read(deviceRepositoryProvider);
       // 分块大小与并发数由服务端按会员等级下发：普通 512KB 单并发，会员 5MB 多并发。
@@ -195,6 +201,7 @@ class _ProjectFilesPageState extends ConsumerState<ProjectFilesPage> {
       uploadError.value = e.toString();
       setState(() => _error = e.toString());
     } finally {
+      await TransferService.stop();
       await WakelockPlus.disable();
       if (mounted) setState(() => _uploading = false);
     }
