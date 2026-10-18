@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("kotlin-android")
+    id("org.jetbrains.kotlin.plugin.compose")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -46,6 +47,16 @@ android {
         }
     }
 
+    lint {
+        // AGP 8.7 的 lint 与 Kotlin 2.3 的分析 API 不兼容，该检查会直接崩溃
+        // （NonNullableMutableLiveDataDetector / KaCallableMemberCall），先禁用。
+        disable += "NullSafeMutableLiveData"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -58,8 +69,11 @@ android {
         }
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
+    // Kotlin 2.3 起 kotlinOptions 已移除，改用 compilerOptions DSL。
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        }
     }
 
     defaultConfig {
@@ -67,7 +81,9 @@ android {
         applicationId = "com.chatcodex.chat_codex_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // Jetpack Compose（androidx.compose.animation-core）要求 minSdk >= 23，
+        // 悬浮助手 UI 依赖 Compose，因此这里显式抬到 24。
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -95,6 +111,17 @@ android {
 }
 
 dependencies {
+    // 悬浮助手 UI 用 Jetpack Compose 重写（对齐 Operit 的交互与视觉）。
+    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.animation:animation")
+    implementation("androidx.activity:activity-compose:1.8.2")
+    // 液态玻璃（Android 13+ 真模糊，低版本自动降级）
+    implementation("io.github.kyant0:backdrop:1.0.6")
+
     testImplementation("junit:junit:4.13.2")
     // Notification delivery uses legacy Android shadows, not native graphics.
     testImplementation("org.robolectric:robolectric:4.12.2") {

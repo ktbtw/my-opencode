@@ -24,92 +24,16 @@ import com.chatcodex.chat_codex_app.R
 /** 重新构建并挂载悬浮窗（悬浮球或面板），并播放开启动画。 */
 internal fun GlobalOverlayService.renderOverlay() {
     if (stopping || destroyed || !overlayEnabled) return
-    root?.let { runCatching { windowManager.removeView(it) } }
-    panelView = null
-    conversationScroll = null
-    sendButton = null
-    bubbleContainer = null
-    bubbleBrand = null
-    bubbleSummary = null
-    val container = FrameLayout(this)
-    if (expanded) {
-        container.addView(buildPanel(), FrameLayout.LayoutParams(panelWidthPx, panelHeightPx).apply {
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            rightMargin = dp(8)
-        })
+    // Compose 版悬浮层：球 / 悬浮窗 / 沉浸全屏由同一个状态机驱动。
+    val state = ensureComposeState()
+    state.mode = if (expanded) {
+        com.chatcodex.chat_codex_app.overlay.compose.FloatingMode.WINDOW
     } else {
-        val bubble = buildBubble()
-        container.addView(bubble, FrameLayout.LayoutParams(dp(116), dp(48)).apply {
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
-            rightMargin = dp(6)
-        })
-        updateBubble()
+        com.chatcodex.chat_codex_app.overlay.compose.FloatingMode.BALL
     }
-    val freshWindow = windowParams == null
-    val params = windowParams ?: WindowManager.LayoutParams(
-        WindowManager.LayoutParams.WRAP_CONTENT,
-        WindowManager.LayoutParams.WRAP_CONTENT,
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        },
-        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-        PixelFormat.TRANSLUCENT,
-    ).apply {
-        gravity = Gravity.TOP or Gravity.START
-    }
-    val contentWidth = if (expanded) panelWidthPx + dp(8) else dp(122)
-    val contentHeight = if (expanded) panelHeightPx else dp(48)
-    val maxX = (resources.displayMetrics.widthPixels - contentWidth).coerceAtLeast(0)
-    val maxY = (resources.displayMetrics.heightPixels - contentHeight).coerceAtLeast(0)
-    val savedX = if (expanded) panelX else bubbleX
-    val savedY = if (expanded) panelY else bubbleY
-    if (savedX >= 0 && savedY >= 0) {
-        params.x = savedX.coerceIn(0, maxX)
-        params.y = savedY.coerceIn(0, maxY)
-    } else if (freshWindow || expanded) {
-        params.x = maxX
-        params.y = maxY / 2
-    } else {
-        params.x = params.x.coerceIn(0, maxX)
-        params.y = params.y.coerceIn(0, maxY)
-    }
-    params.gravity = Gravity.TOP or Gravity.START
-    if (expanded) {
-        panelX = params.x
-        panelY = params.y
-    } else {
-        bubbleX = params.x
-        bubbleY = params.y
-    }
-    params.flags = if (expanded) {
-        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-    } else {
-        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-    }
-    windowParams = params
-    root = container
-    runCatching { windowManager.addView(container, params) }
-    // 只对新打开的表面做动画，不要动正在流式更新的内容。
-    val surface = container.getChildAt(0)
-    surface?.apply {
-        pivotX = if (params.x > resources.displayMetrics.widthPixels / 2) {
-            (if (expanded) panelWidthPx else dp(116)).toFloat()
-        } else 0f
-        pivotY = 0f
-        alpha = 0f
-        scaleX = if (expanded) .94f else .88f
-        scaleY = scaleX
-        animate().alpha(1f).scaleX(1f).scaleY(1f)
-            .setDuration(if (expanded) 260L else 200L)
-            .setInterpolator(DecelerateInterpolator(1.6f)).start()
-    }
+    renderComposeOverlay()
 }
 
-/** 从偏好读取面板尺寸与位置。 */
 internal fun GlobalOverlayService.restoreOverlayGeometry() {
     val prefs = getSharedPreferences(GEOMETRY_PREFS, Context.MODE_PRIVATE)
     val maxPanelWidth = (resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(dp(300))

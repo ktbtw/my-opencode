@@ -27,8 +27,12 @@ internal fun GlobalOverlayService.toast(message: String) = Toast.makeText(this, 
 
 /** 发送当前输入框内容（或附件）给选中的 Agent。 */
 internal fun GlobalOverlayService.sendCurrentMessage() {
+    sendTextMessage(input?.text?.toString()?.trim().orEmpty())
+}
+
+/** 用指定文本发送（Compose 悬浮层没有 EditText，直接传文本）。 */
+internal fun GlobalOverlayService.sendTextMessage(text: String) {
     if (composing) return toast("消息正在发送")
-    val text = input?.text?.toString()?.trim().orEmpty()
     val completion = currentCompletion
     val agent = completion?.let { item ->
         agents.firstOrNull {
