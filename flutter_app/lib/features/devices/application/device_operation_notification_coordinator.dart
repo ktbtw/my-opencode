@@ -7,6 +7,7 @@ import '../../../core/notifications/app_notification_model.dart';
 import '../data/device_launcher_model.dart';
 import '../data/device_semantic_agent_model.dart';
 import '../presentation/device_provider.dart';
+import '../../../core/services/app_log_service.dart';
 
 const _launcherOperationPrefix = 'launcher:update:';
 const _semanticPreflightOperationPrefix = 'semantic-preflight:';
@@ -84,8 +85,23 @@ class DeviceOperationNotificationCoordinator {
                     )),
           )
           .toList(growable: false);
+      // 兜底：非终态通知超过 10 分钟仍未收到结果就清掉，避免任何原因卡在初始进度
+      // （例如设备离线、launcher 状态接口异常、旧版本遗留状态）。
+      final staleBefore = now().subtract(const Duration(minutes: 10));
       for (final record in records) {
         if (_disposed) return;
+        if (record.createdAt.isBefore(staleBefore)) {
+          unawaited(AppLogService.log(
+            'notification_stale_dismissed',
+            data: {
+              'operation_id': record.operationId,
+              'status': record.status.name,
+              'progress': record.progress,
+            },
+          ));
+          notifications.dismiss(record.id);
+          continue;
+        }
         if (record.operationId.startsWith(_launcherOperationPrefix)) {
           await _reconcileLauncher(record);
         } else {
