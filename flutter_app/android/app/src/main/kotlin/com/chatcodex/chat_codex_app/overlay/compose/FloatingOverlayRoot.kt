@@ -32,11 +32,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import kotlin.math.roundToInt
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -62,6 +69,10 @@ fun FloatingOverlayRoot(
     onDragEnd: () -> Unit = {},
     onSend: (String) -> Unit = {},
     onClose: () -> Unit = {},
+    onSelectSession: (String) -> Unit = {},
+    onNewSession: () -> Unit = {},
+    onExpand: () -> Unit = {},
+    onCollapse: () -> Unit = {},
 ) {
     AnimatedContent(
         targetState = state.mode,
@@ -88,28 +99,60 @@ fun FloatingOverlayRoot(
                 )
             }
 
-            FloatingMode.WINDOW -> ChatWindow(
-                state = state,
-                immersive = false,
-                onSend = onSend,
-                onClose = { state.backToBall() },
-                onExpand = { state.switchTo(FloatingMode.FULLSCREEN) },
-            )
-
-            FloatingMode.FULLSCREEN -> Box(modifier = Modifier.fillMaxSize()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.34f))
-                        .clickable { state.backToBall() },
-                )
+            FloatingMode.WINDOW -> Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+            ) {
                 ChatWindow(
                     state = state,
-                    immersive = true,
+                    immersive = false,
                     onSend = onSend,
                     onClose = { state.backToBall() },
-                    onExpand = null,
+                    onExpand = onExpand,
+                    onSelectSession = onSelectSession,
+                    onNewSession = onNewSession,
                 )
+            }
+
+            FloatingMode.FULLSCREEN -> {
+                var dragOffset by remember { mutableFloatStateOf(0f) }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.34f))
+                            .clickable { state.backToBall() },
+                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .offset { IntOffset(0, dragOffset.roundToInt()) }
+                            .pointerInput(Unit) {
+                                detectVerticalDragGestures(
+                                    onDragEnd = {
+                                        if (dragOffset > 120f) state.backToBall()
+                                        dragOffset = 0f
+                                    },
+                                    onDragCancel = { dragOffset = 0f },
+                                ) { _, dragAmount ->
+                                    if (dragAmount > 0 || dragOffset > 0) {
+                                        dragOffset = (dragOffset + dragAmount).coerceAtLeast(0f)
+                                    }
+                                }
+                            },
+                    ) {
+                        AgentStrip(state = state)
+                        ChatWindow(
+                            state = state,
+                            immersive = true,
+                            onSend = onSend,
+                            onClose = onCollapse,
+                            onExpand = null,
+                            onSelectSession = onSelectSession,
+                            onNewSession = onNewSession,
+                        )
+                    }
+                }
             }
 
             FloatingMode.RESULT_DISPLAY -> {
@@ -153,6 +196,8 @@ private fun ChatWindow(
     onSend: (String) -> Unit,
     onClose: () -> Unit,
     onExpand: (() -> Unit)?,
+    onSelectSession: (String) -> Unit,
+    onNewSession: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     LaunchedEffect(state.messages.size) {
@@ -183,6 +228,8 @@ private fun ChatWindow(
                     text = when {
                         state.busy -> "思考中…"
                         state.agents.isEmpty() -> "暂无在线 Agent"
+                        state.modelLabel.isNotBlank() ->
+                            "${state.agents.size} 个 Agent · ${state.modelLabel}"
                         else -> "${state.agents.size} 个 Agent · ${state.agents.first().name}"
                     },
                     color = TextSecondary,
@@ -196,6 +243,28 @@ private fun ChatWindow(
             }
             IconButton(onClick = onClose) {
                 Icon(Icons.Filled.Close, contentDescription = "收起", tint = TextSecondary)
+            }
+        }
+        if (state.sessions.isNotEmpty() || state.currentSessionId.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.foundation.lazy.LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                item {
+                    SessionChip(
+                        label = "新对话",
+                        selected = state.currentSessionId.isBlank(),
+                        onClick = onNewSession,
+                    )
+                }
+                items(state.sessions.size) { index ->
+                    val session = state.sessions[index]
+                    SessionChip(
+                        label = session.summary.ifBlank { session.sessionId.take(8) },
+                        selected = session.sessionId == state.currentSessionId,
+                        onClick = { onSelectSession(session.sessionId) },
+                    )
+                }
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -271,4 +340,70 @@ private fun ChatWindow(
             }
         }
     }
+}
+
+/** 顶部 Agent 横滑条：显示在线状态与忙碌状态。 */
+@Composable
+private fun AgentStrip(state: OverlayUiState) {
+    if (state.agents.isEmpty()) return
+    androidx.compose.foundation.lazy.LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(state.agents.size) { index ->
+            val agent = state.agents[index]
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                !agent.online -> Color(0xFF778294)
+                                agent.busy -> Color(0xFFFFB020)
+                                else -> Color(0xFF34C759)
+                            },
+                        ),
+                )
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    text = agent.name.ifBlank { agent.agentId.take(8) },
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                )
+                if (agent.busy) {
+                    Spacer(Modifier.size(6.dp))
+                    Text("运行中", color = Color(0xFFFFB020), fontSize = 10.sp)
+                }
+            }
+        }
+    }
+}
+
+/** 会话标签。 */
+@Composable
+private fun SessionChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = if (selected) Color.White else TextSecondary,
+        fontSize = 11.sp,
+        maxLines = 1,
+        modifier = Modifier
+            .widthIn(max = 140.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (selected) AccentBlue.copy(alpha = 0.85f)
+                else Color.White.copy(alpha = 0.08f),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    )
 }

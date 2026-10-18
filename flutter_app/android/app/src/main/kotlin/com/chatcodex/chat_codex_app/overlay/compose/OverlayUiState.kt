@@ -20,6 +20,13 @@ data class CompletionUi(
     val taskId: String,
 )
 
+/** 历史会话条目。 */
+data class SessionUi(
+    val sessionId: String,
+    val summary: String,
+    val updatedAt: String,
+)
+
 /** 一条对话消息。 */
 data class ChatUi(
     val role: String,
@@ -38,6 +45,9 @@ class OverlayUiState {
     var messages by mutableStateOf<List<ChatUi>>(emptyList())
     var busy by mutableStateOf(false)
     var input by mutableStateOf("")
+    var sessions by mutableStateOf<List<SessionUi>>(emptyList())
+    var currentSessionId by mutableStateOf("")
+    var modelLabel by mutableStateOf("")
 
     fun switchTo(target: FloatingMode) {
         if (target == mode) return

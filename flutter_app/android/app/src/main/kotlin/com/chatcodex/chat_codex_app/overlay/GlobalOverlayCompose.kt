@@ -11,6 +11,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import com.chatcodex.chat_codex_app.overlay.compose.OverlayLifecycleOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
 import com.chatcodex.chat_codex_app.overlay.compose.CompletionUi
 import com.chatcodex.chat_codex_app.overlay.compose.FloatingMode
 import com.chatcodex.chat_codex_app.overlay.compose.FloatingOverlayRoot
@@ -20,6 +23,15 @@ import com.chatcodex.chat_codex_app.overlay.compose.OverlayUiState
 internal fun GlobalOverlayService.syncComposeState() {
     syncComposeStateFromService(ensureComposeState())
 }
+
+internal val GlobalOverlayService.overlayLifecycle: OverlayLifecycleOwner
+    get() {
+        val existing = overlayLifecycleOwner
+        if (existing != null) return existing
+        val created = OverlayLifecycleOwner().also { it.attach() }
+        overlayLifecycleOwner = created
+        return created
+    }
 
 internal fun GlobalOverlayService.ensureComposeState(): OverlayUiState {
     val existing = composeUiState
@@ -94,8 +106,11 @@ internal fun GlobalOverlayService.renderComposeOverlay() {
     root?.let { runCatching { windowManager.removeView(it) } }
     panelView = null
     sendButton = null
+    val lifecycleOwner = overlayLifecycle
     val view = ComposeView(this).apply {
         setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        setViewTreeLifecycleOwner(lifecycleOwner)
+        setViewTreeSavedStateRegistryOwner(lifecycleOwner)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -120,11 +135,18 @@ internal fun GlobalOverlayService.renderComposeOverlay() {
                         }
                     },
                     onSend = { text -> sendComposeMessage(text) },
+                    onSelectSession = { sessionId -> selectComposeSession(sessionId) },
+                    onNewSession = { startComposeNewSession() },
+                    onExpand = { applyComposeMode(FloatingMode.FULLSCREEN) },
+                    onCollapse = { applyComposeMode(FloatingMode.WINDOW) },
                 )
             }
         }
     }
     val container = android.widget.FrameLayout(this).apply {
+        // ComposeView 会沿父链查找 owner，容器上也设一份更稳妥。
+        setViewTreeLifecycleOwner(lifecycleOwner)
+        setViewTreeSavedStateRegistryOwner(lifecycleOwner)
         addView(
             view,
             android.widget.FrameLayout.LayoutParams(
@@ -183,4 +205,40 @@ private fun GlobalOverlayService.syncComposeStateFromService(state: OverlayUiSta
     state.completion = completion?.let {
         CompletionUi(it.title, it.summary, it.taskId)
     }
+    // 当前会话对应的 Agent 与历史会话列表
+    val activeKey = conversationKey.ifBlank {
+        agents.firstOrNull { it.online }?.key.orEmpty()
+    }
+    val activeAgent = agents.firstOrNull { it.key == activeKey }
+    state.sessions = (sessionsByAgentKey[activeKey] ?: emptyList()).map {
+        com.chatcodex.chat_codex_app.overlay.compose.SessionUi(
+            sessionId = it.sessionId,
+            summary = it.summary,
+            updatedAt = it.updatedAt,
+        )
+    }
+    state.currentSessionId = conversationKey
+    state.modelLabel = activeAgent?.let { agent ->
+        runCatching { selectedModelFor(agent)?.name.orEmpty() }.getOrDefault("")
+    }.orEmpty()
+}
+
+/** 切换历史会话。 */
+internal fun GlobalOverlayService.selectComposeSession(sessionId: String) {
+    val agent = agents.firstOrNull { it.key == conversationKey }
+        ?: agents.firstOrNull { it.online }
+        ?: return
+    val session = (sessionsByAgentKey[agent.key] ?: emptyList())
+        .firstOrNull { it.sessionId == sessionId } ?: return
+    selectSession(agent, session)
+    syncComposeState()
+}
+
+/** 开始新对话。 */
+internal fun GlobalOverlayService.startComposeNewSession() {
+    val agent = agents.firstOrNull { it.key == conversationKey }
+        ?: agents.firstOrNull { it.online }
+        ?: return
+    startNewConversation(agent)
+    syncComposeState()
 }

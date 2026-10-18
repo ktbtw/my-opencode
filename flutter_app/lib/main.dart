@@ -32,6 +32,13 @@ Future<void> _startBackgroundTaskNotifications() async {
   } catch (error) {
     debugPrint('[TaskNotifications] service start failed: $error');
   }
+  // 悬浮助手：用户开启过「全局助手」就随 App 启动自动拉起（对齐 Operit）。
+  try {
+    final overlay = await GlobalOverlayService.start();
+    debugPrint('[Overlay] auto start requested started=$overlay');
+  } catch (error) {
+    debugPrint('[Overlay] auto start failed: $error');
+  }
 }
 
 class ChatCodexApp extends ConsumerStatefulWidget {
