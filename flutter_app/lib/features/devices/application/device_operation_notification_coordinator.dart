@@ -91,6 +91,15 @@ class DeviceOperationNotificationCoordinator {
       final staleBefore = now().subtract(const Duration(minutes: 10));
       DiagLog.emit('coordinator_reconcile', {
         'active': snapshot.active.length,
+        'records': snapshot.active
+            .map((r) => {
+                  'op': r.operationId,
+                  'status': r.status.name,
+                  'progress': r.progress,
+                  'terminal': r.isTerminal,
+                  'collapsed': snapshot.collapsed,
+                })
+            .toList(),
         'targets': records.map((r) => r.operationId).toList(),
       });
       for (final record in records) {
