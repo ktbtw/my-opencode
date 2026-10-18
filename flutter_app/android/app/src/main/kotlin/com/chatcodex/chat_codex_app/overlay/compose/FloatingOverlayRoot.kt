@@ -108,7 +108,7 @@ fun FloatingOverlayRoot(
                     state = state,
                     immersive = false,
                     onSend = onSend,
-                    onClose = { state.backToBall() },
+                    onClose = onCollapse,
                     onExpand = onExpand,
                     onSelectSession = onSelectSession,
                     onNewSession = onNewSession,

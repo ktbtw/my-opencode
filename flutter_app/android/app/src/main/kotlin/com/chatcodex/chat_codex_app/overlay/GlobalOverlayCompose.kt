@@ -135,7 +135,7 @@ internal fun GlobalOverlayService.renderComposeOverlay() {
                     onSelectSession = { sessionId -> selectComposeSession(sessionId) },
                     onNewSession = { startComposeNewSession() },
                     onExpand = { applyComposeMode(FloatingMode.FULLSCREEN) },
-                    onCollapse = { applyComposeMode(FloatingMode.WINDOW) },
+                    onCollapse = { applyComposeMode(FloatingMode.BALL) },
                     onBallTap = { applyComposeMode(FloatingMode.WINDOW) },
                 )
             }
