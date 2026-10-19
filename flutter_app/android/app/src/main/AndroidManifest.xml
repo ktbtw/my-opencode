@@ -57,6 +57,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
         <activity
+            android:name=".overlay.OverlayMicPermissionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
             android:name=".overlay.ScreenCaptureConsentActivity"
             android:exported="false"
             android:excludeFromRecents="true"

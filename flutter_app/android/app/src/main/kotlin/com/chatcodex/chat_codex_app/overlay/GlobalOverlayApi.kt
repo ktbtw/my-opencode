@@ -60,8 +60,13 @@ internal fun GlobalOverlayService.performApiRequest(
         val statusCode = connection.responseCode
         val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
         HttpResult(statusCode, stream?.use { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).readText() }.orEmpty())
+    } catch (error: Exception) {
+        // 连接被重置/被系统断开时会抛 SocketException，不接住会直接把后台线程打死（FATAL EXCEPTION）。
+        android.util.Log.w(TAG, "api request failed $path: ${error.message}")
+        lastApiError = "网络异常，请稍后重试"
+        HttpResult(-1, "")
     } finally {
-        connection.disconnect()
+        runCatching { connection.disconnect() }
     }
 }
 
@@ -82,16 +87,18 @@ internal fun GlobalOverlayService.refreshAccessToken(staleToken: String): Boolea
         doInput = true
         doOutput = true
     }
-    try {
+    return try {
         val payload = JSONObject().put("username", username).put("password", password)
         connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
         if (connection.responseCode !in 200..299) return@synchronized false
         val raw = connection.inputStream.use { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).readText() }
         val token = runCatching { JSONObject(raw).optString("access_token") }.getOrDefault("")
-        if (token.isBlank()) return@synchronized false
-        prefs.edit().putString("flutter.access_token", token).commit()
+        token.isNotBlank() && prefs.edit().putString("flutter.access_token", token).commit()
+    } catch (error: Exception) {
+        android.util.Log.w(TAG, "token refresh failed: ${error.message}")
+        false
     } finally {
-        connection.disconnect()
+        runCatching { connection.disconnect() }
     }
 }
 

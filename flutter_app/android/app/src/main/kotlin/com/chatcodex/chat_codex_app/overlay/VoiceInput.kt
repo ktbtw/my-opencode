@@ -49,11 +49,17 @@ internal class VoiceInput(private val context: Context) {
             override fun onEndOfSpeech() = Unit
 
             override fun onPartialResults(partialResults: Bundle?) {
-                firstResult(partialResults)?.let { onPartial?.invoke(it) }
+                firstResult(partialResults)?.let { text ->
+                    // 是否能看到实时字幕，取决于系统识别引擎有没有下发 partial；
+                    // 这行日志用来区分「引擎不给」和「UI 没刷新」。
+                    android.util.Log.i(TAG, "voice partial len=${text.length} ${text.take(24)}")
+                    onPartial?.invoke(text)
+                }
             }
 
             override fun onResults(results: Bundle?) {
                 running = false
+                android.util.Log.i(TAG, "voice final len=${firstResult(results)?.length ?: 0}")
                 firstResult(results)?.let { onFinal?.invoke(it) } ?: onError?.invoke("没有听清")
                 onEnd?.invoke()
             }

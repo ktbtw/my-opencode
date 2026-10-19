@@ -8,6 +8,7 @@ import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.media.Image
 import android.media.ImageReader
+import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Handler
@@ -132,14 +133,37 @@ class ScreenCaptureService : android.app.Service() {
             return
         }
         val manager = getSystemService(MediaProjectionManager::class.java)
-        val projection = manager?.getMediaProjection(
-            ScreenOcrBus.resultCode,
-            ScreenOcrBus.resultData!!,
-        ) ?: run {
+        val resultData = ScreenOcrBus.resultData
+        if (manager == null || resultData == null) {
+            ScreenOcrBus.clearConsent()
             ScreenOcrBus.onError?.invoke("屏幕授权已失效，请重新识别")
             stopSelf()
             return
         }
+        val projection = try {
+            manager.getMediaProjection(ScreenOcrBus.resultCode, resultData)
+        } catch (error: SecurityException) {
+            // Android 14 起授权数据只能消费一次，复用旧 token 会直接抛 SecurityException。
+            ScreenOcrBus.clearConsent()
+            Log.w(OCR_TAG, "getMediaProjection rejected", error)
+            ScreenOcrBus.onError?.invoke("屏幕授权已失效，请重新识别")
+            stopSelf()
+            return
+        } ?: run {
+            ScreenOcrBus.clearConsent()
+            ScreenOcrBus.onError?.invoke("屏幕授权已失效，请重新识别")
+            stopSelf()
+            return
+        }
+        // Android 14 起必须先注册回调再 createVirtualDisplay，否则直接 IllegalStateException。
+        projection.registerCallback(
+            object : MediaProjection.Callback() {
+                override fun onStop() {
+                    Log.i(OCR_TAG, "media projection stopped")
+                }
+            },
+            handler,
+        )
         val metrics = resources.displayMetrics
         val width = metrics.widthPixels
         val height = metrics.heightPixels
@@ -245,6 +269,8 @@ internal fun recognizeBitmap(
         .addOnSuccessListener { result ->
             val text = result.text.trim()
             if (text.isEmpty()) onError("画面里没有识别到文字") else onText(text)
+            runCatching { bitmap.recycle() }
+            onDone()
         }
         .addOnFailureListener { error ->
             val message = error.message.orEmpty()
@@ -262,11 +288,10 @@ internal fun recognizeBitmap(
                 if (downloading) "识别模型下载未完成，请联网后重试"
                 else "识别失败：${message.ifBlank { "未知错误" }}",
             )
-        }
-        .addOnCompleteListener {
-            if (!it.isSuccessful && attempt < 6) return@addOnCompleteListener
-            runCatching { recognizer.close() }
             runCatching { bitmap.recycle() }
             onDone()
+        }
+        .addOnCompleteListener {
+            runCatching { recognizer.close() }
         }
 }

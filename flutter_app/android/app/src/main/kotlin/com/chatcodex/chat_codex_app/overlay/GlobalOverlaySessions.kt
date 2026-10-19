@@ -57,6 +57,15 @@ internal fun GlobalOverlayService.ensureSessionLatestReplyLoaded(agent: AgentSta
             if (latestSessionIdsByAgentKey[agent.key] != sessionId) return@post
             if (reply.isNotBlank()) latestRepliesByAgentKey[agent.key] = reply
             latestReplyLoadedKeys.add(agent.key)
+            // 切到历史会话时，把该会话最近一条回复显示出来，否则点了 chip 面板毫无反馈。
+            val state = composeUiState
+            if (state != null && conversationKey == agent.key &&
+                state.currentSessionId == sessionId && reply.isNotBlank()
+            ) {
+                state.messages = listOf(
+                    com.chatcodex.chat_codex_app.overlay.compose.ChatUi("assistant", reply),
+                )
+            }
             if (conversationKey == agent.key && expanded) updatePanelContent()
         }
     }

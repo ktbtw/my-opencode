@@ -170,6 +170,9 @@ class GlobalOverlayService : Service() {
     internal var panelHeightPx = 0
     internal var panelX = -1
     internal var panelY = -1
+    // 键盘弹起前的窗口位置/高度，键盘收起时还原。
+    internal var imeRestoreY = -1
+    internal var imeRestoreHeight = 0
     internal var bubbleX = -1
     internal var bubbleY = -1
 

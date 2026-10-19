@@ -37,13 +37,8 @@ Future<void> _startBackgroundTaskNotifications() async {
   try {
     final overlay = await GlobalOverlayService.start();
     debugPrint('[Overlay] auto start requested started=$overlay');
-    // 只有真的用上悬浮助手才申请录音权限，语音球要用。
-    if (overlay) {
-      final mic = await Permission.microphone.status;
-      if (!mic.isGranted) {
-        await Permission.microphone.request();
-      }
-    }
+    // 录音权限交给悬浮层的语音球在首次使用时申请：
+    // 启动时就申请一次，用户一旦拒绝就被系统标记成「不再询问」，之后再也弹不出原生授权框。
   } catch (error) {
     debugPrint('[Overlay] auto start failed: $error');
   }

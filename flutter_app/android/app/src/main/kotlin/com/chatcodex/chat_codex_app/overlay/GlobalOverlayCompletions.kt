@@ -137,10 +137,26 @@ internal fun GlobalOverlayService.applyTaskUpdate(task: JSONObject) {
         while (seenCompletionTaskIds.size > 100) seenCompletionTaskIds.remove(seenCompletionTaskIds.first())
         val agentName = agents.firstOrNull { it.agentId == agentId }?.name.orEmpty()
         val result = task.optString("result")
+        val taskSessionId = task.optString("session_id")
         agents.firstOrNull { it.agentId == agentId }?.let { agent ->
             if (result.isNotBlank()) {
                 latestRepliesByAgentKey[agent.key] = result
                 latestReplyLoadedKeys.add(agent.key)
+                // 悬浮窗和全屏沉浸页都只渲染 composeUiState.messages。
+                // 以前完成时只写 latestRepliesByAgentKey，消息列表不更新，
+                // 全屏模式下 Agent 说完话界面毫无反应（只有切会话才从接口拉一次）。
+                val state = composeUiState
+                val sameSession = state != null &&
+                    (state.currentSessionId.isBlank() ||
+                        taskSessionId.isBlank() ||
+                        state.currentSessionId == taskSessionId)
+                val activeKey = conversationKey.ifBlank { selectedKey }
+                if (state != null && activeKey == agent.key && sameSession &&
+                    state.messages.none { it.role == "assistant" && it.text == result }
+                ) {
+                    state.messages = state.messages +
+                        com.chatcodex.chat_codex_app.overlay.compose.ChatUi("assistant", result)
+                }
             }
         }
         val item = CompletionItem(

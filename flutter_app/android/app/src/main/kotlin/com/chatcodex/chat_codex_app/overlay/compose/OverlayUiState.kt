@@ -6,8 +6,11 @@ import androidx.compose.runtime.setValue
 
 /** 悬浮助手展示用的 Agent 概要。 */
 data class AgentUi(
+    /** 服务端唯一键（机器 + Agent + 项目），点击切换对话时回传。 */
+    val key: String,
     val agentId: String,
     val name: String,
+    val device: String,
     val project: String,
     val online: Boolean,
     val busy: Boolean,
@@ -44,9 +47,13 @@ class OverlayUiState {
     var mode by mutableStateOf(FloatingMode.BALL)
     var previousMode by mutableStateOf(FloatingMode.BALL)
     var agents by mutableStateOf<List<AgentUi>>(emptyList())
+    /** 当前对话所属 Agent 的 key，Agent 条据此高亮。 */
+    var activeAgentKey by mutableStateOf("")
     var completion by mutableStateOf<CompletionUi?>(null)
     var messages by mutableStateOf<List<ChatUi>>(emptyList())
     var busy by mutableStateOf(false)
+    /** 当前会话所属 Agent 是否在跑任务（全屏页用它显示「正在执行…」）。 */
+    var activeBusy by mutableStateOf(false)
     var input by mutableStateOf("")
     var sessions by mutableStateOf<List<SessionUi>>(emptyList())
     var currentSessionId by mutableStateOf("")

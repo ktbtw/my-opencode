@@ -8,6 +8,8 @@ internal fun GlobalOverlayService.startScreenOcr() {
     state.ocrBusy = true
     state.ocrText = ""
     state.ocrError = ""
+    // 每次识屏都重新走一次系统授权：Android 14 起同一份授权只能消费一次。
+    ScreenOcrBus.clearConsent()
     applyComposeMode(FloatingMode.SCREEN_OCR)
 
     ScreenOcrBus.onText = { text ->

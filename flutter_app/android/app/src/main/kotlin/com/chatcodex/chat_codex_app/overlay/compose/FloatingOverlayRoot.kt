@@ -6,6 +6,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,13 +28,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.Composable
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.IntOffset
@@ -45,7 +48,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -81,9 +88,12 @@ fun FloatingOverlayRoot(
     onSend: (String) -> Unit = {},
     onClose: () -> Unit = {},
     onSelectSession: (String) -> Unit = {},
+    onSelectAgent: (String) -> Unit = {},
+    onTypingChanged: (Boolean) -> Unit = {},
     onNewSession: () -> Unit = {},
     onExpand: () -> Unit = {},
     onCollapse: () -> Unit = {},
+    onCollapseToWindow: () -> Unit = {},
     onBallTap: (() -> Unit)? = null,
     onAttach: () -> Unit = {},
     onRemoveAttachment: (Int) -> Unit = {},
@@ -93,8 +103,20 @@ fun FloatingOverlayRoot(
     onOcrClose: () -> Unit = {},
     onOcrSend: () -> Unit = {},
 ) {
-    // 实验 C：去掉 AnimatedContent，直接按 mode 渲染，验证过渡层是否吞掉触摸。
-    run {
+    // 用 graphicsLayer 做淡入过渡：同一棵组件树，不会像 AnimatedContent 那样吞掉触摸。
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(state.mode) {
+        appear.snapTo(0f)
+        appear.animateTo(1f, tween(200, easing = FastOutSlowInEasing))
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                alpha = appear.value
+                translationY = (1f - appear.value) * 18f
+            },
+    ) {
         val mode = state.mode
         when (mode) {
             FloatingMode.BALL -> Box(
@@ -146,6 +168,8 @@ fun FloatingOverlayRoot(
                     onClose = onCollapse,
                     onExpand = onExpand,
                     onSelectSession = onSelectSession,
+                    onSelectAgent = onSelectAgent,
+                    onTypingChanged = onTypingChanged,
                     onNewSession = onNewSession,
                     onAttach = onAttach,
                     onRemoveAttachment = onRemoveAttachment,
@@ -155,51 +179,20 @@ fun FloatingOverlayRoot(
                 )
             }
 
-            FloatingMode.FULLSCREEN -> {
-                var dragOffset by remember { mutableFloatStateOf(0f) }
-                Box(modifier = Modifier.fillMaxSize()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color(0xFF0F1729).copy(alpha = 0.30f))
-                            .clickable { state.backToBall() },
-                    )
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .offset { IntOffset(0, dragOffset.roundToInt()) }
-                            .padding(top = 36.dp)
-                            .pointerInput(Unit) {
-                                detectVerticalDragGestures(
-                                    onDragEnd = {
-                                        if (dragOffset > 120f) state.backToBall()
-                                        dragOffset = 0f
-                                    },
-                                    onDragCancel = { dragOffset = 0f },
-                                ) { _, dragAmount ->
-                                    if (dragAmount > 0 || dragOffset > 0) {
-                                        dragOffset = (dragOffset + dragAmount).coerceAtLeast(0f)
-                                    }
-                                }
-                            },
-                    ) {
-                        ChatWindow(
-                            state = state,
-                            immersive = true,
-                            onSend = onSend,
-                            onClose = onCollapse,
-                            onExpand = null,
-                            onSelectSession = onSelectSession,
-                            onNewSession = onNewSession,
-                            onAttach = onAttach,
-                            onRemoveAttachment = onRemoveAttachment,
-                            onVoiceStart = onVoiceStart,
-                            onVoiceStop = onVoiceStop,
-                            onOcrStart = onOcrStart,
-                        )
-                    }
-                }
-            }
+            FloatingMode.FULLSCREEN -> ImmersiveChat(
+                state = state,
+                onSend = onSend,
+                onCloseToBall = onCollapse,
+                onCollapseToWindow = onCollapseToWindow,
+                onAttach = onAttach,
+                onVoiceStart = onVoiceStart,
+                onOcrStart = onOcrStart,
+                onNewSession = onNewSession,
+                onSelectSession = onSelectSession,
+                onSelectAgent = onSelectAgent,
+                onRemoveAttachment = onRemoveAttachment,
+                onTypingChanged = onTypingChanged,
+            )
 
             FloatingMode.RESULT_DISPLAY -> {
                 val completion = state.completion
@@ -243,6 +236,8 @@ private fun ChatWindow(
     onClose: () -> Unit,
     onExpand: (() -> Unit)?,
     onSelectSession: (String) -> Unit,
+    onSelectAgent: (String) -> Unit,
+    onTypingChanged: (Boolean) -> Unit,
     onNewSession: () -> Unit,
     onAttach: () -> Unit,
     onRemoveAttachment: (Int) -> Unit,
@@ -300,42 +295,47 @@ private fun ChatWindow(
             )
             Spacer(Modifier.size(4.dp))
             if (onExpand != null) {
-                IconButton(onClick = onExpand) {
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "全屏", tint = TextSecondary)
+                IconButton(
+                    onClick = onExpand,
+                    modifier = Modifier.semantics { contentDescription = "全屏" },
+                ) {
+                    ExpandGlyph(size = 18.dp, color = TextSecondary)
                 }
             }
             IconButton(onClick = onClose) {
                 Icon(Icons.Filled.Close, contentDescription = "收起", tint = TextSecondary)
             }
         }
-        if (immersive) {
-            Spacer(Modifier.height(10.dp))
-            AgentStrip(state = state)
-        }
-        if (state.sessions.isNotEmpty() || state.currentSessionId.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
-            androidx.compose.foundation.lazy.LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                item {
-                    SessionChip(
-                        label = "新对话",
-                        selected = state.currentSessionId.isBlank(),
-                        onClick = onNewSession,
-                    )
-                }
-                items(state.sessions.size) { index ->
-                    val session = state.sessions[index]
-                    SessionChip(
-                        label = session.summary.ifBlank { session.sessionId.take(8) },
-                        selected = session.sessionId == state.currentSessionId,
-                        onClick = { onSelectSession(session.sessionId) },
-                    )
-                }
+        Spacer(Modifier.height(8.dp))
+        AgentStrip(
+            state = state,
+            onSelect = onSelectAgent,
+            compact = !immersive,
+        )
+        // 会话条常驻：没有历史会话时也要能看到「新对话」入口。
+        Spacer(Modifier.height(8.dp))
+        androidx.compose.foundation.lazy.LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            item {
+                SessionChip(
+                    label = "新对话",
+                    selected = state.currentSessionId.isBlank(),
+                    onClick = onNewSession,
+                )
+            }
+            items(state.sessions.size) { index ->
+                val session = state.sessions[index]
+                SessionChip(
+                    label = session.summary.ifBlank { session.sessionId.take(8) },
+                    selected = session.sessionId == state.currentSessionId,
+                    onClick = { onSelectSession(session.sessionId) },
+                )
             }
         }
         Spacer(Modifier.height(10.dp))
-        Box(modifier = Modifier.weight(1f, fill = immersive)) {
+        // 始终占满剩余高度：否则历史消息一长，卡片会撑出窗口被裁掉（输入框也跟着跑出屏幕）。
+        Box(modifier = Modifier.weight(1f, fill = true)) {
             if (state.messages.isEmpty()) {
                 Column(modifier = Modifier.padding(vertical = 24.dp)) {
                     Text("有什么可以帮你？", color = TextPrimary, fontSize = 15.sp)
@@ -405,20 +405,36 @@ private fun ChatWindow(
         Spacer(Modifier.height(10.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onAttach, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Filled.Add, contentDescription = "添加附件", tint = TextSecondary)
+                AttachmentGlyph(size = 20.dp, color = TextSecondary)
             }
             IconButton(onClick = onVoiceStart, modifier = Modifier.size(40.dp)) {
                 MicGlyph(color = TextSecondary, glyphSize = 22.dp)
             }
             Spacer(Modifier.size(4.dp))
+            val keyboard = LocalSoftwareKeyboardController.current
+            // 输入框自己只会在「焦点变化」时请求键盘：用返回键把键盘收起后焦点还在，
+            // 再点一次不会触发 onFocusChanged，键盘就永远不回来了。
+            // 所以额外监听点击（PressInteraction.Release），每次点都补一次 show。
+            val inputInteraction = remember { MutableInteractionSource() }
+            LaunchedEffect(inputInteraction) {
+                inputInteraction.interactions.collect { interaction ->
+                    if (interaction is PressInteraction.Release) keyboard?.show()
+                }
+            }
             BasicTextField(
                 value = state.input,
                 onValueChange = { state.input = it },
                 singleLine = true,
+                interactionSource = inputInteraction,
                 textStyle = TextStyle(color = TextPrimary, fontSize = 14.sp),
                 cursorBrush = SolidColor(AccentBlue),
                 modifier = Modifier
                     .weight(1f)
+                    // 拿到焦点就主动 show：首次点击时窗口可能刚拿到焦点，等系统自己弹会慢半拍。
+                    .onFocusChanged {
+                        if (it.isFocused) keyboard?.show()
+                        onTypingChanged(it.isFocused)
+                    }
                     .clip(CircleShape)
                     .background(SurfaceBackground)
                     .border(1.dp, BorderLight, CircleShape)
@@ -451,24 +467,30 @@ private fun ChatWindow(
     }
 }
 
-/** 顶部 Agent 横滑条：显示在线状态与忙碌状态。 */
+/** Agent 横滑条：点一下切到该 Agent 的对话，选中项高亮。 */
 @Composable
-private fun AgentStrip(state: OverlayUiState) {
+private fun AgentStrip(
+    state: OverlayUiState,
+    onSelect: (String) -> Unit,
+    compact: Boolean,
+) {
     if (state.agents.isEmpty()) return
     androidx.compose.foundation.lazy.LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(vertical = if (compact) 2.dp else 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(state.agents.size) { index ->
             val agent = state.agents[index]
+            val selected = agent.key == state.activeAgentKey
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
-                    .background(ChipBackground)
-                    .border(1.dp, BorderLight, RoundedCornerShape(14.dp))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .background(if (selected) AccentBlue else ChipBackground)
+                    .border(1.dp, if (selected) AccentBlue else BorderLight, RoundedCornerShape(14.dp))
+                    .clickable { onSelect(agent.key) }
+                    .padding(horizontal = 12.dp, vertical = if (compact) 6.dp else 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
@@ -477,6 +499,7 @@ private fun AgentStrip(state: OverlayUiState) {
                         .clip(CircleShape)
                         .background(
                             when {
+                                selected -> Color.White.copy(alpha = 0.85f)
                                 !agent.online -> StatusMuted
                                 agent.busy -> StatusWarning
                                 else -> StatusOnline
@@ -486,12 +509,17 @@ private fun AgentStrip(state: OverlayUiState) {
                 Spacer(Modifier.size(6.dp))
                 Text(
                     text = agent.name.ifBlank { agent.agentId.take(8) },
-                    color = TextPrimary,
+                    color = if (selected) Color.White else TextPrimary,
                     fontSize = 12.sp,
+                    maxLines = 1,
                 )
                 if (agent.busy) {
                     Spacer(Modifier.size(6.dp))
-                    Text("运行中", color = StatusWarning, fontSize = 10.sp)
+                    Text(
+                        "运行中",
+                        color = if (selected) Color.White.copy(alpha = 0.85f) else StatusWarning,
+                        fontSize = 10.sp,
+                    )
                 }
             }
         }

@@ -61,6 +61,10 @@ internal fun GlobalOverlayService.sendTextMessage(text: String) {
                 latestSentStatesByAgentKey[agent.key] = "sent"
                 latestSentTaskIdsByAgentKey[agent.key] = taskId
                 newConversationKeys.remove(agent.key)
+                // 从悬浮层发出去的消息，会话就是这位 Agent 的：
+                // 不锚定 conversationKey，后面完成回调会认不出该往哪个对话里追加回复。
+                conversationKey = agent.key
+                selectedKey = agent.key
                 task.optString("session_id").takeIf { it.isNotBlank() }?.let {
                     latestSessionIdsByAgentKey[agent.key] = it
                 }
